@@ -205,7 +205,14 @@ python3 -B -m executor_<platform>.toolkit_cli
 如果平台要支持本地 run / cloud run executor，
 则 `main.py` 应遵守：
 
-- [executor-north-bound-contract.md](/Users/HalleyHou/SourceCode/forge_server/studio/src-tauri/starter/executor-north-bound-contract.md)
+- ~~`executor-north-bound-contract.md`~~ <!-- WillNotDo: 当前不实现 executor，此 contract 暂不适用。链接指向仓库内部路径，无法外部访问。-->
+  > **名称推断**："north-bound contract" 在系统架构中指下层组件向上层（broker / Studio）暴露的接口协议。该文件大概率定义了以下内容：
+  > - executor 启动后如何向 broker 声明就绪（handshake / `ready` 消息）
+  > - NDJSON 消息的类型枚举（`request`、`result`、`error`、`heartbeat` 等）
+  > - 请求超时与优雅退出的生命周期约定
+  > - 错误码与错误格式规范
+  >
+  > 如果后续需要实现 executor，应以该文件为准，而非本文档的推断。
 
 并且：
 
@@ -828,7 +835,7 @@ python3 -B -m executor_<platform>.toolkit_cli
 
 1. `executor_<platform>/` 代码目录
 2. `README.md`
-3. 按 [PLATFORM-SUBMISSION-TEMPLATE.zh-CN.md](/Users/HalleyHou/SourceCode/forge_server/studio/src-tauri/src/platform/PLATFORM-SUBMISSION-TEMPLATE.zh-CN.md) 填好的文档
+3. 按 `PLATFORM-SUBMISSION-TEMPLATE.zh-CN.md` 填好的文档 <!-- TODO: 缺少外部文档链接，待补充 -->
 4. 至少 3 条自测记录
 
 如果暂时不支持某些能力，也可以交，但必须：
@@ -860,6 +867,6 @@ python3 -B -m executor_<platform>.toolkit_cli
 
 - 一套可复用的 Python 平台能力库
 - 一套统一的一次性 JSON CLI 协议
-- 一个可选的 executor 入口
+- ~~一个可选的 executor 入口~~ <!-- WillNotDo: 当前未提供 executor 具体实现逻辑 -->
 
 这样你后面整合进 Studio 时，才能真正做到统一，而不是每个平台都特殊处理。
