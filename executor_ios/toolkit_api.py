@@ -613,7 +613,7 @@ def switch_app_env(target: str, env: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 6.2  type_credential  (stub)
+# 6.2  type_credential
 # ---------------------------------------------------------------------------
 
 def type_credential(
@@ -623,4 +623,15 @@ def type_credential(
     field: str,
     skip_clear: bool = False,
 ) -> dict:
-    return _not_implemented("type_credential")
+    from . import secrets  # local import to avoid circular dependency at module level
+
+    value = secrets.get_credential(role, field)
+    if value is None:
+        key = secrets.credential_env_key(role, field)
+        return _err("BAD_TARGET", f"credential not found: {key}")
+
+    result = input_text(target, value)
+
+    # Ensure the plaintext credential never leaks into the response.
+    # input_text returns extra.length (the character count), which is safe.
+    return result
