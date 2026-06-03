@@ -383,25 +383,36 @@
 
 在开始任何 Phase 3 任务前，以下三项必须由团队明确决策并写入文档：
 
-- [ ] **WDA 包配置来源**
-  - `do_prepare()` 需要从"配置"中读取 WDA `.ipa` 的下载 URL，但配置的形式尚未定义
-  - 需确认：使用**环境变量**（如 `WDA_IPA_URL`）、**本地配置文件**（如 `~/.executor_ios.json`）还是其他方式
-  - WDA 的 Bundle ID（用于 `is_prepared()` 的安装检查）是否也从同一配置读取，还是硬编码为 `com.facebook.WebDriverAgentRunner.xctrunner`
-  - 决策结论写入本文档后方可开始实现
+- [x] **WDA 包配置来源**（已决策）
+  - **不负责下载或安装 WDA**，WDA 需由用户提前手动安装到设备上
+  - WDA Bundle ID 从 `~/.executor_ios.json` 读取，字段名为 `wda_bundle_id`；若未配置则默认为 `com.facebook.WebDriverAgentRunner.xctrunner`
+  - `list_targets()` 通过 `AppServiceClient.list_installed_apps()` 检查 WDA 是否已安装：
+    - 已安装 → `state: "online"`
+    - 未安装 → `state: "offline"`（不报错，正常返回，不阻塞其他设备）
+  - `is_prepared()` 只检查 WDA HTTP 进程是否活跃（`GET /status` 在 2 秒内返回 200），**不再检查安装状态**
+  - `do_prepare()` **只负责启动 WDA 进程**，不下载、不安装：
+    - 若 WDA 未安装（`state: "offline"` 的设备）调用 `do_prepare()` → 抛出明确错误，提示用户需先手动安装 WDA
+    - 若 WDA 已安装但未运行 → 通过 pymobiledevice3 启动 WDA xctrunner 进程，等待 HTTP 端点就绪（最多 60 秒）
 
-- [ ] **`do_prepare()` 的触发时机**
-  - 目前 `iOSDevice.is_prepared()` / `do_prepare()` 仅描述了实现逻辑，但没有说明在何处调用：
-    - 方案 A：在 `iOSDevicesManager.list_devices()` 时，对每台新发现的设备自动调用
-    - 方案 B：在每次操作（`screenshot`、`tap` 等）前按需检查，未就绪则调用
-    - 方案 C：完全由外部显式触发（如新增 `prepare` op）
-  - 需确认采用哪种方案，以决定 `toolkit_api.py` 中各操作函数的前置检查逻辑
+- [x] **`do_prepare()` 的触发时机**（已决策：方案 B）
+  - 在每次操作（`screenshot`、`tap`、`dump_ui` 等所有非 `list_targets` 操作）执行前，先调用 `device.is_prepared()`
+  - 若返回 False，则自动调用 `device.do_prepare()` 尝试启动 WDA，再继续执行原始操作
+  - `list_targets` 不触发 `do_prepare()`（设备发现阶段不强制启动 WDA）
+  - `toolkit_api.py` 中每个操作函数的模式：
+    ```python
+    device = manager.get_device(target)
+    if device is None:
+        return _err("BAD_TARGET", ...)
+    if not device.is_prepared():
+        device.do_prepare()   # 按需启动 WDA，失败则抛异常由上层转为 SUBPROCESS 错误
+    return device.screenshot()   # 执行实际操作
+    ```
 
-- [ ] **RSD 注入的具体接口**
-  - §3.0 说 RSD 由"CLI 参数、环境变量或配置文件"注入，但 `toolkit_cli.py` 目前没有对应接收机制
-  - 需确认：
-    - 若用 CLI 参数：`toolkit_cli.py` 的 JSON stdin 中增加 `rsd` 字段，还是单独的命令行参数？
-    - 若用环境变量：具体变量名是什么（如 `IOS_RSD_ADDRESS` / `IOS_RSD_PORT`）？
-    - 注入时机：每次 `toolkit_cli.py` 调用时读取，还是只在 `do_prepare` 前需要？
+- [x] **RSD 注入的具体接口**（已决策：环境变量）
+  - 通过环境变量注入，变量名：`IOS_RSD_ADDRESS`（字符串）和 `IOS_RSD_PORT`（整数）
+  - `iOSDevicesManager` 在注册设备时读取这两个环境变量，写入对应 `iOSDevice` 的 `rsd_address` / `rsd_port`
+  - 每次 `toolkit_cli.py` 启动时均读取（进程级别），无需单独的注入调用
+  - 未设置环境变量时 `rsd_address` / `rsd_port` 为 None；iOS 17+ 设备调用 `do_prepare()` 时若为 None 则抛出明确错误
 
 ---
 
@@ -424,7 +435,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
 **RSD 配置注入方式：**
 
 - `iOSDevice` 增加可选属性：`rsd_address: str | None` 和 `rsd_port: int | None`
-- 由外部（CLI 参数、环境变量或配置文件）注入，不由代码自动发现
+- 通过环境变量注入：`IOS_RSD_ADDRESS`（字符串）和 `IOS_RSD_PORT`（整数），由 `iOSDevicesManager` 在注册设备时读取，不由代码自动发现
 - `do_prepare()` 中的行为：
 
   | 设备系统版本 | RSD 是否已配置 | 行为 |
@@ -465,18 +476,18 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
   - 这样 `local_port` 在整个进程生命周期内持续可用，操作函数可直接用 `self.local_port` 发 HTTP 请求，无需 `asyncio.run()` 包装
 
 - [ ] **实现 `iOSDevice.is_prepared() -> bool`**
-  - 检查条件（两者均需满足）：
-    1. WDA bundle 是否已安装：通过 `pymobiledevice3` 的 `AppServiceClient.list_installed_apps()` 检查是否存在 WDA 的 bundleId（如 `com.facebook.WebDriverAgentRunner.xctrunner` 或自定义 bundleId）
-    2. WDA HTTP 进程是否活跃：向 `http://127.0.0.1:<local_port>/status` 发送 GET 请求，在 2 秒内收到 200 响应则认为活跃
-  - 返回 `True` 当且仅当两个条件均满足
+  - 只检查 WDA HTTP 进程是否活跃：向 `http://127.0.0.1:<local_port>/status` 发送 GET 请求，在 2 秒内收到 200 响应则返回 True，否则返回 False
+  - **不检查安装状态**（安装检查由 `list_targets` 承担，以 `state` 字段体现）
+
+- [ ] **实现 `iOSDevice.is_wda_installed() -> bool`**（供 `list_targets` 使用）
+  - 通过 `pymobiledevice3` 的 `AppServiceClient.list_installed_apps()` 检查 WDA bundleId 是否存在
+  - bundleId 从 `~/.executor_ios.json` 的 `wda_bundle_id` 字段读取，未配置则默认 `com.facebook.WebDriverAgentRunner.xctrunner`
 
 - [ ] **实现 `iOSDevice.do_prepare() -> None`**
-  - 触发条件：`is_prepared()` 返回 False 时调用
+  - 触发条件：`is_prepared()` 返回 False 时（即 WDA 进程未运行）
   - 实现步骤：
-    1. **检查 WDA 是否已安装**
-       - 若未安装：从配置中读取 WDA 包的下载 URL，通过 `requests` 下载 `.ipa` 文件到临时目录
-       - 使用 `pymobiledevice3` 的 `AppServiceClient.install()` 安装 WDA 包
-    2. **启动 WDA 进程**
+    1. **前置检查**：若 WDA 未安装（`is_wda_installed()` 返回 False），直接抛出 `RuntimeError`，提示用户需先手动安装 WDA
+    2. **启动 WDA 进程**（WDA 已安装但未运行）：
        - iOS 16 及以下：通过 lockdown/usbmux 路径（`pymobiledevice3` 标准 API）启动 WDA xctrunner
        - iOS 17+：
          - 检查 `rsd_address` / `rsd_port` 是否已配置，未配置则抛出 `RuntimeError` 并附带提示信息（说明需先启动 XPC tunnel）
@@ -484,7 +495,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
        - 等待 WDA HTTP 端点可用（轮询 `GET /status`，最多等待 60 秒）
     3. **重置 session 缓存**：`self._session_id = None`（WDA 重启后旧 session 必然失效）
     4. 启动完成后 `is_prepared()` 应返回 True
-  - 若下载、安装或启动失败，抛出带描述的异常，由上层决定是否重试
+  - **不负责下载或安装 WDA**，安装失败/未安装时抛出带描述的异常
 
 - [ ] **实现 `iOSDevice._ensure_session() -> str`（session 复用）**
   - 文件：`executor_ios/device.py`（`iOSDevice` 实例方法，私有）
@@ -532,11 +543,6 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
     3. 创建 `iOSDevice` 对象并记录到内部 dict（`rsd_address` / `rsd_port` 初始为 None）
   - 已知设备（UDID 已在 dict 中）跳过，不重复分配端口
 
-- [ ] **实现 RSD 配置注入接口**
-  - `iOSDevicesManager.set_rsd(udid: str, rsd_address: str, rsd_port: int) -> None`
-  - 供外部（CLI 参数或配置文件）在设备注册后写入对应设备的 RSD 信息
-  - 若 UDID 不存在则忽略（不报错）
-
 - [ ] **实现 `iOSDevicesManager.get_device(udid: str) -> iOSDevice | None`**
   - 按 UDID 查询已注册的设备，不存在返回 None
 
@@ -552,10 +558,16 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
     | `_create_session()` 每次新建，不缓存 | `device._ensure_session()` 复用缓存，失效时自动重建 |
     | 无全局设备表 | `iOSDevicesManager` 单例管理所有 `iOSDevice` |
 
-  - `list_targets()` 调用 `manager.list_devices()`，将每个 `iOSDevice` 转换为 target dict
+  - `list_targets()` 调用 `manager.list_devices()`，将每个 `iOSDevice` 转换为 target dict；其中 `state` 字段由 `device.is_wda_installed()` 决定：已安装 → `"online"`，未安装 → `"offline"`
   - 其他操作（`screenshot` 等）通过 `manager.get_device(target)` 取到 `iOSDevice` 对象，委托给对应实例方法
   - target 不存在（`get_device` 返回 None）→ 返回 `BAD_TARGET`
   - 迁移完成后，`toolkit_api.py` 中不再有任何 `asyncio.run()` 调用（全部移入 `device.py` 的后台事件循环）
+
+---
+
+### 3.3 `xpc_tunnel.py`（已删除，Not In Scope）
+
+`device.py` 在 `do_prepare()` 中直接查询 tunneld HTTP API（`127.0.0.1:49151`）获取 RSD 信息，无需独立的查询辅助脚本。`xpc_tunnel.py` 已删除。
 
 ---
 
@@ -566,7 +578,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
 - [ ] 对两台设备分别调用 `screenshot()` 均正常返回
 - [ ] `iOSDevice.is_prepared()` 在 WDA 运行时返回 True，WDA 未启动时返回 False
 - [ ] iOS 17+ 设备上，`do_prepare()` 在未配置 RSD 时抛出明确错误信息
-- [ ] iOS 17+ 设备上，配置 RSD 后（需外部 XPC tunnel 已启动），`do_prepare()` 能完成安装并启动 WDA
+- [ ] iOS 17+ 设备上，`ios_tunneld` 已运行时，`do_prepare()` 能自动查询 tunneld 获取 RSD 并成功启动 WDA
 - [ ] **Session 复用验收**：同一进程内对同一设备连续调用 `tap()` 两次，第二次调用的 `_ensure_session()` **不发起 `POST /session`**（可通过 WDA 访问日志或打桩确认）
 - [ ] **Session 自动重建验收**：手动重启设备上的 WDA xctrunner，之后调用 `tap()` 仍能成功（`_ensure_session()` 检测到旧 session 失效后自动重建）
 - [ ] `toolkit_api.py` 中不再有任何 `asyncio.run()` 调用，所有操作均为同步方法委托给 `iOSDevice`
@@ -579,14 +591,10 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
 |---|---|---|
 | `pymobiledevice3` | 设备发现、usbmux 端口转发、App 安装与启动 | `pip install pymobiledevice3` |
 | `requests` | WDA HTTP 通信 | `pip install requests` |
-| `aioquic`（Python < 3.13） | XPC tunnel（`xpc_tunnel.py` 内部使用） | `pip install aioquic` |
+| `aioquic`（Python < 3.13） | XPC tunnel（`ios_tunneld` 二进制内部使用） | `pip install aioquic` |
 
 > **设备连接方式限制：** 本项目仅支持 **USB 连接**的物理 iOS 设备，Wi-Fi 配对设备（网络发现）不在支持范围内。
 >
-> **WDA 包：** Phase 3 `do_prepare()` 使用，需提前构建并托管到可访问的 HTTP 地址，具体 URL 由部署环境配置提供。
+> **WDA 包：** 需由用户提前手动安装到设备上，本项目不负责下载或安装。WDA Bundle ID 通过 `~/.executor_ios.json` 的 `wda_bundle_id` 字段配置，未配置时默认 `com.facebook.WebDriverAgentRunner.xctrunner`。
 >
-> **XPC tunnel（外部前置条件）：** iOS 17+ 设备使用 `do_prepare()` 启动 WDA 前，需在外部独立运行：
-> ```bash
-> sudo pymobiledevice3 remote tunneld
-> ```
-> 然后通过 `xpc_tunnel.py` 获取 `rsd_address` 和 `rsd_port`，再通过 `iOSDevicesManager.set_rsd()` 注入。本项目代码**不负责**启动或管理 XPC tunnel 进程。
+> **XPC tunnel（外部前置条件）：** iOS 17+ 设备使用 `do_prepare()` 启动 WDA 前，需以 root 权限运行 `ios_tunneld`（由 `tunneld_main.py` 打包而来，建议配置为 LaunchDaemon 自动启动）。`do_prepare()` 会自动查询本地 tunneld HTTP API（`http://127.0.0.1:49151`）获取 RSD 信息，无需手动设置环境变量。tunneld 未运行时 `do_prepare()` 会抛出明确错误提示。本项目代码**不负责**启动或管理 tunneld 进程。

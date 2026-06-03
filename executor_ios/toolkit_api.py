@@ -1,39 +1,18 @@
 """
-toolkit_api.py — iOS platform capability layer (Phase 1).
+toolkit_api.py — iOS platform capability layer (Phase 3).
 
-Each public function is stateless: it spins up an ephemeral usbmux port-forward,
-performs the WDA HTTP operation, then tears everything down.  No global state is
-shared across broker invocations.
+Public functions delegate to iOSDevicesManager and iOSDevice for device
+discovery, persistent port-forwarding, WDA lifecycle management, and session
+reuse.  All asyncio.run() / ephemeral-forward logic from Phase 1 has been
+removed; operations are now fully synchronous and use device.local_port directly.
 
-pymobiledevice3 API notes (v9.x):
-  - usbmux.list_devices()                        -> async, List[MuxDevice]
-  - usbmux.select_device(serial, connection_type) -> async, MuxDevice | None
-  - MuxDevice.connect(port)                       -> async, socket.socket
-  - create_using_usbmux(serial, autopair)         -> async, LockdownClient
-  - LockdownClient.product_version / .product_type / .display_name -> sync properties
+Phase 1 internal helpers (_ok, _err, _wda_get, _xml_to_selectors, etc.) are
+retained here because device.py imports them to avoid duplicating logic.
 """
 
 from __future__ import annotations
 
-import asyncio
-import socket
 import xml.etree.ElementTree as ET
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
-import requests
-
-
-# ---------------------------------------------------------------------------
-# Internal exception
-# ---------------------------------------------------------------------------
-
-class WdaError(Exception):
-    """Raised when a WDA HTTP request fails."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
 
 
 # ---------------------------------------------------------------------------
@@ -56,210 +35,74 @@ def _not_implemented(op: str) -> dict:
 # WDA HTTP helpers
 # ---------------------------------------------------------------------------
 
-def _wda_get(local_port: int, path: str, timeout: float = 15.0) -> dict:
-    """Synchronous GET — only call from a thread, never directly inside an async function."""
-    url = f"http://127.0.0.1:{local_port}{path}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: manager import (deferred to avoid circular import at parse time)
+# ---------------------------------------------------------------------------
+
+def _get_manager():
+    from .device import _manager
+    return _manager
+
+
+def _prepare_device(target: str):
+    """
+    Resolve target UDID to an iOSDevice, auto-starting WDA if needed.
+
+    Returns (device, None) on success, or (None, error_dict) on failure.
+    """
+    manager = _get_manager()
+    device = manager.get_device(target)
+    if device is None:
+        return None, _err("BAD_TARGET", f"Device not found: {target}")
     try:
-        resp = requests.get(url, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
+        if not device.is_prepared():
+            device.do_prepare()
     except Exception as exc:
-        raise WdaError(str(exc)) from exc
-
-
-def _wda_post(local_port: int, path: str, body: dict, timeout: float = 15.0) -> dict:
-    """Synchronous POST — only call from a thread, never directly inside an async function."""
-    url = f"http://127.0.0.1:{local_port}{path}"
-    try:
-        resp = requests.post(url, json=body, timeout=timeout)
-        if not resp.ok:
-            # Include WDA response body in the error message when available
-            try:
-                detail = resp.json().get("value", {})
-                msg = detail.get("message") or detail.get("error") or resp.text
-            except Exception:
-                msg = resp.text
-            raise WdaError(f"HTTP {resp.status_code}: {msg}")
-        return resp.json()
-    except WdaError:
-        raise
-    except Exception as exc:
-        raise WdaError(str(exc)) from exc
-
-
-def _raise_if_wda_error(resp: dict) -> None:
-    """
-    WebDriver protocol returns HTTP 200 even for errors, with the error
-    nested in resp['value']['error'].  Raise WdaError when that field is set.
-    """
-    val = resp.get("value")
-    if isinstance(val, dict) and val.get("error"):
-        msg = val.get("message") or val["error"]
-        raise WdaError(f"WDA error: {val['error']} — {msg}")
-
-
-async def _aget(local_port: int, path: str, timeout: float = 15.0) -> dict:
-    """Async wrapper: runs _wda_get in a thread so the event loop stays free for relay."""
-    resp = await asyncio.to_thread(_wda_get, local_port, path, timeout)
-    _raise_if_wda_error(resp)
-    return resp
-
-
-async def _apost(local_port: int, path: str, body: dict, timeout: float = 15.0) -> dict:
-    """Async wrapper: runs _wda_post in a thread so the event loop stays free for relay."""
-    resp = await asyncio.to_thread(_wda_post, local_port, path, body, timeout)
-    _raise_if_wda_error(resp)
-    return resp
+        return None, _err("SUBPROCESS", str(exc))
+    return device, None
 
 
 # ---------------------------------------------------------------------------
-# Ephemeral usbmux port-forward
+# list_targets
 # ---------------------------------------------------------------------------
 
-def _find_free_port(start: int = 8200) -> int:
-    """Return the first TCP port >= start that is currently unbound."""
-    for port in range(start, start + 200):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return port
-            except OSError:
-                continue
-    raise RuntimeError("No free port found in range 8200–8400")
-
-
-async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    try:
-        while True:
-            data = await reader.read(65536)
-            if not data:
-                break
-            writer.write(data)
-            await writer.drain()
-    finally:
-        writer.close()
-
-
-@asynccontextmanager
-async def _ephemeral_forward(
-    udid: str, device_port: int = 8100
-) -> AsyncIterator[int]:
-    """
-    Async context manager: selects the USB MuxDevice by UDID, starts a local
-    TCP server, and relays each client connection to device_port via usbmux.
-
-    Raises ValueError if the UDID is not found among connected USB devices.
-    """
-    from pymobiledevice3 import usbmux
-
-    mux_device = await usbmux.select_device(udid, connection_type="USB")
-    if mux_device is None:
-        raise ValueError(f"UDID not found among USB devices: {udid}")
-
-    local_port = _find_free_port()
-
-    async def _handle_client(
-        client_reader: asyncio.StreamReader,
-        client_writer: asyncio.StreamWriter,
-    ) -> None:
-        try:
-            # Open a usbmux channel to device_port; returns a blocking socket
-            raw_sock = await mux_device.connect(device_port)
-            raw_sock.setblocking(False)
-            device_reader, device_writer = await asyncio.open_connection(sock=raw_sock)
-            await asyncio.gather(
-                _pipe(client_reader, device_writer),
-                _pipe(device_reader, client_writer),
-                return_exceptions=True,
-            )
-        finally:
-            client_writer.close()
-
-    server = await asyncio.start_server(
-        _handle_client, host="127.0.0.1", port=local_port
-    )
-    async with server:
-        yield local_port
-
-
-# ---------------------------------------------------------------------------
-# WDA session creation (Phase 1: always creates fresh, no caching)
-# ---------------------------------------------------------------------------
-
-async def _create_session(local_port: int) -> str:
-    """
-    POST /session to WDA and return the sessionId string.
-    Raises WdaError on failure.
-    """
-    resp = await _apost(local_port, "/session", {"capabilities": {"alwaysMatch": {}}})
-    session_id = (resp.get("sessionId") or
-                  (resp.get("value") or {}).get("sessionId"))
-    if not session_id:
-        raise WdaError(f"No sessionId in WDA /session response: {resp}")
-    return session_id
-
-
-# ---------------------------------------------------------------------------
-# 2.1  list_targets
-# ---------------------------------------------------------------------------
-
-async def _list_targets_async() -> dict:
-    from pymobiledevice3 import usbmux
-    from pymobiledevice3.lockdown import create_using_usbmux
-
-    devices = await usbmux.list_devices()
+def list_targets() -> dict:
+    manager = _get_manager()
+    devices = manager.list_devices()
     targets = []
-    for dev in devices:
-        if not dev.is_usb:
-            continue
-        udid = dev.serial
-        name = model = os_version = ""
+    for device in devices:
         try:
-            lockdown = await create_using_usbmux(serial=udid, autopair=False)
-            name = getattr(lockdown, "display_name", None) or ""
-            model = getattr(lockdown, "product_type", None) or ""
-            os_version = getattr(lockdown, "product_version", None) or ""
+            wda_installed = device.is_wda_installed()
         except Exception:
-            pass
+            wda_installed = False
         targets.append({
-            "id": udid,
+            "id": device.udid,
             "platform": "ios",
-            "name": name,
-            "state": "online",
+            "name": device.name,
+            "state": "online" if wda_installed else "offline",
             "metadata": {
-                "model": model,
-                "os_version": os_version,
+                "model": device.model,
+                "os_version": device.os_version,
             },
         })
     return _ok({"targets": targets})
 
 
-def list_targets() -> dict:
-    return asyncio.run(_list_targets_async())
-
-
 # ---------------------------------------------------------------------------
-# 3.1  screenshot
+# screenshot
 # ---------------------------------------------------------------------------
-
-async def _screenshot_async(target: str) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            resp = await _aget(local_port, "/screenshot")
-            b64 = resp.get("value", "")
-            return _ok({"mimeType": "image/png", "base64": b64})
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-
 
 def screenshot(target: str) -> dict:
-    return asyncio.run(_screenshot_async(target))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.screenshot()
 
 
 # ---------------------------------------------------------------------------
-# 3.2  dump_ui
+# dump_ui
 # ---------------------------------------------------------------------------
 
 def _parse_bounds(elem: ET.Element) -> str:
@@ -309,96 +152,27 @@ def _xml_to_selectors(root: ET.Element) -> list[dict]:
     return selectors
 
 
-async def _dump_ui_async(target: str) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            resp = await _aget(local_port, "/source?format=xml")
-            xml_str = resp.get("value", "")
-            try:
-                root = ET.fromstring(xml_str)
-                selectors = _xml_to_selectors(root)
-            except ET.ParseError:
-                selectors = []
-            return _ok({
-                "rawMime": "application/xml",
-                "raw": xml_str,
-                "selectors": selectors,
-            })
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-
-
 def dump_ui(target: str) -> dict:
-    return asyncio.run(_dump_ui_async(target))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.dump_ui()
 
 
 # ---------------------------------------------------------------------------
-# 4.1  tap
+# tap
 # ---------------------------------------------------------------------------
-
-async def _tap_async(target: str, x: int, y: int) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            session_id = await _create_session(local_port)
-            await _apost(local_port, f"/session/{session_id}/actions", {
-                "actions": [{
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x, "y": y},
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": 100},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }]
-            })
-            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"tapX": x, "tapY": y}})
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-
 
 def tap(target: str, x: int, y: int) -> dict:
-    return asyncio.run(_tap_async(target, x, y))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.tap(x, y)
 
 
 # ---------------------------------------------------------------------------
-# 4.2  swipe
+# swipe
 # ---------------------------------------------------------------------------
-
-async def _swipe_async(
-    target: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int
-) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            session_id = await _create_session(local_port)
-            await _apost(local_port, f"/session/{session_id}/actions", {
-                "actions": [{
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x1, "y": y1},
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": duration_ms},
-                        {"type": "pointerMove", "duration": duration_ms, "x": x2, "y": y2},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }]
-            })
-            return _ok({
-                "exitCode": 0, "stdout": "", "stderr": "",
-                "extra": {"fromX": x1, "fromY": y1, "toX": x2, "toY": y2, "durationMs": duration_ms},
-            })
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-
 
 def swipe(
     target: str,
@@ -406,11 +180,14 @@ def swipe(
     x2: int, y2: int,
     duration_ms: int = 250,
 ) -> dict:
-    return asyncio.run(_swipe_async(target, x1, y1, x2, y2, duration_ms))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.swipe(x1, y1, x2, y2, duration_ms)
 
 
 # ---------------------------------------------------------------------------
-# 4.3  input_text
+# input_text
 # ---------------------------------------------------------------------------
 
 _INPUT_TEXT_MAX_BYTES = 1024
@@ -429,63 +206,18 @@ def _validate_text(text: str) -> str | None:
     return None
 
 
-async def _input_text_async(target: str, text: str) -> dict:
+def input_text(target: str, text: str) -> dict:
     err_msg = _validate_text(text)
     if err_msg:
         return _err("BAD_TARGET", err_msg)
-
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            session_id = await _create_session(local_port)
-
-            # Primary path: active element value API
-            used_fallback = False
-            try:
-                active_resp = await _aget(local_port, f"/session/{session_id}/element/active")
-                val = active_resp.get("value") or {}
-                elem_id = (val.get("ELEMENT") or
-                           val.get("element-6066-11e4-a52e-4f735466cecf"))
-                if elem_id:
-                    await _apost(
-                        local_port,
-                        f"/session/{session_id}/element/{elem_id}/value",
-                        {"value": list(text), "text": text},
-                    )
-                else:
-                    used_fallback = True
-            except WdaError:
-                used_fallback = True
-
-            # Fallback: W3C key actions character by character
-            if used_fallback:
-                await _apost(local_port, f"/session/{session_id}/actions", {
-                    "actions": [{
-                        "type": "key",
-                        "id": "keyboard",
-                        "actions": [
-                            item
-                            for ch in text
-                            for item in (
-                                {"type": "keyDown", "value": ch},
-                                {"type": "keyUp", "value": ch},
-                            )
-                        ],
-                    }]
-                })
-
-            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"length": len(text)}})
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-
-
-def input_text(target: str, text: str) -> dict:
-    return asyncio.run(_input_text_async(target, text))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.input_text(text)
 
 
 # ---------------------------------------------------------------------------
-# 4.4  key_event
+# key_event
 # ---------------------------------------------------------------------------
 
 _W3C_KEY_MAP: dict[str, str] = {
@@ -504,104 +236,36 @@ _PRESS_BUTTON_MAP: dict[str, str] = {
 _NOT_IMPLEMENTED_KEYS = {"BACK", "MENU", "RECENTS"}
 
 
-async def _key_event_async(target: str, key: str) -> dict:
+def key_event(target: str, key: str) -> dict:
     key_upper = key.upper()
-
     if key_upper in _NOT_IMPLEMENTED_KEYS:
         return _not_implemented(f"key_event({key})")
-
-    # HOME / POWER — try /wda/pressButton first; fall back to /wda/homescreen for HOME
-    if key_upper in _PRESS_BUTTON_MAP:
-        try:
-            async with _ephemeral_forward(target) as local_port:
-                try:
-                    await _apost(local_port, "/wda/pressButton",
-                                 {"name": _PRESS_BUTTON_MAP[key_upper]})
-                except WdaError as exc:
-                    if "404" in exc.message and key_upper == "HOME":
-                        # fallback: some WDA builds expose /wda/homescreen instead
-                        await _apost(local_port, "/wda/homescreen", {})
-                    else:
-                        raise
-                return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"key": key}})
-        except ValueError:
-            return _err("BAD_TARGET", f"Device not found: {target}")
-        except WdaError as exc:
-            return _err("SUBPROCESS", exc.message)
-
-    # W3C key events (ENTER, DEL, TAB, SPACE, ESCAPE)
-    if key_upper in _W3C_KEY_MAP:
-        key_value = _W3C_KEY_MAP[key_upper]
-        try:
-            async with _ephemeral_forward(target) as local_port:
-                session_id = await _create_session(local_port)
-                await _apost(local_port, f"/session/{session_id}/actions", {
-                    "actions": [{
-                        "type": "key",
-                        "id": "keyboard",
-                        "actions": [
-                            {"type": "keyDown", "value": key_value},
-                            {"type": "keyUp", "value": key_value},
-                        ],
-                    }]
-                })
-                return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"key": key}})
-        except ValueError:
-            return _err("BAD_TARGET", f"Device not found: {target}")
-        except WdaError as exc:
-            return _err("SUBPROCESS", exc.message)
-
-    return _not_implemented(f"key_event({key})")
-
-
-def key_event(target: str, key: str) -> dict:
-    return asyncio.run(_key_event_async(target, key))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.key_event(key)
 
 
 # ---------------------------------------------------------------------------
-# 5.1  launch_app
+# launch_app
 # ---------------------------------------------------------------------------
-
-async def _launch_app_async(target: str, package: str) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            session_id = await _create_session(local_port)
-            await _apost(local_port, f"/session/{session_id}/wda/apps/launch",
-                         {"bundleId": package})
-            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"package": package}})
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-    except Exception as exc:
-        return _err("SUBPROCESS", str(exc))
-
 
 def launch_app(target: str, package: str, activity: str | None = None) -> dict:
-    return asyncio.run(_launch_app_async(target, package))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.launch_app(package, activity)
 
 
 # ---------------------------------------------------------------------------
-# 5.2  kill_app
+# kill_app
 # ---------------------------------------------------------------------------
-
-async def _kill_app_async(target: str, package: str) -> dict:
-    try:
-        async with _ephemeral_forward(target) as local_port:
-            session_id = await _create_session(local_port)
-            await _apost(local_port, f"/session/{session_id}/wda/apps/terminate",
-                         {"bundleId": package})
-            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"package": package}})
-    except ValueError:
-        return _err("BAD_TARGET", f"Device not found: {target}")
-    except WdaError as exc:
-        return _err("SUBPROCESS", exc.message)
-    except Exception as exc:
-        return _err("SUBPROCESS", str(exc))
-
 
 def kill_app(target: str, package: str) -> dict:
-    return asyncio.run(_kill_app_async(target, package))
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.kill_app(package)
 
 
 # ---------------------------------------------------------------------------
