@@ -226,7 +226,8 @@ class iOSDevice:
         from pymobiledevice3.services.installation_proxy import InstallationProxyService
 
         try:
-            async with create_using_usbmux(serial=self.udid, autopair=False) as lockdown:
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
                 async with InstallationProxyService(lockdown=lockdown) as iproxy:
                     apps = await iproxy.get_apps(application_type="User")
                     return self._wda_bundle_id in apps
@@ -252,7 +253,7 @@ class iOSDevice:
         if not self.is_wda_installed():
             raise RuntimeError(
                 f"WDA not installed on device {self.udid}. "
-                "Please install WebDriverAgentRunner manually."
+                f"Please install {self._wda_bundle_id} manually."
             )
 
         major = self._ios_major_version()
@@ -299,7 +300,8 @@ class iOSDevice:
         )
         from pymobiledevice3.services.dvt.instruments.process_control import ProcessControl
 
-        async with create_using_usbmux(serial=self.udid, autopair=False) as lockdown:
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
             async with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
                 async with ProcessControl(dvt) as pc:
                     await pc.launch(
@@ -648,7 +650,8 @@ class iOSDevicesManager:
             # Read lockdown metadata
             name = model = os_version = ""
             try:
-                async with create_using_usbmux(serial=udid, autopair=False) as lockdown:
+                lockdown = await create_using_usbmux(serial=udid, autopair=False)
+                async with lockdown:
                     name = getattr(lockdown, "display_name", None) or ""
                     model = getattr(lockdown, "product_type", None) or ""
                     os_version = getattr(lockdown, "product_version", None) or ""
