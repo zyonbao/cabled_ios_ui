@@ -12,7 +12,7 @@ Usage (as packaged binary via LaunchDaemon):
     /Library/Application\ Support/ZoomTA/ios_tunneld
 
 Tunneld listens on 127.0.0.1:49151 and exposes a REST API.
-xpc_tunnel.py queries this API to retrieve RSD info for iOS 17+ devices.
+device.py queries this API to retrieve RSD info for iOS 17+ devices.
 """
 
 from __future__ import annotations

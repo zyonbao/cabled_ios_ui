@@ -1,0 +1,3 @@
+requests==2.32.3
+pymobiledevice3==9.16.0
+aioquic; python_version < "3.13"

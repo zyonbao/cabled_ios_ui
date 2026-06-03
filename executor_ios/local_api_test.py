@@ -10,7 +10,7 @@ Usage:
 import base64
 import json
 
-import toolkit_api as api
+from . import toolkit_api as api
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -182,6 +182,12 @@ def test_not_implemented_stubs(udid: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    '''
+    cd ./ios_ui_ta_proxy
+    python3 -m executor_ios.local_api_test
+    '''
+
+
     UDID = "00008120-000E2D3E1122201E"
     # BUNDLE_ID = "us.zoom.videomeetings"
     # BUNDLE_ID = "hf.zoom.sdk.MobileRTCTASample"
