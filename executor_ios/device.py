@@ -206,6 +206,8 @@ class iOSDevice:
         self._session_id: Optional[str] = None
         self._session_lock = threading.Lock()
         self._wda_bundle_id = wda_bundle_id
+        # Long-lived XCUITest runner task that keeps the WDA test session alive.
+        self._wda_task: Optional["Future[None]"] = None
 
     # ------------------------------------------------------------------
     # WDA lifecycle
@@ -247,6 +249,11 @@ class iOSDevice:
         """
         Start WDA if it is not already running.
 
+        WDA (WebDriverAgentRunner) is an XCUITest bundle, not a regular app, so
+        it must be driven by a testmanagerd session rather than launched
+        directly.  This starts the XCUITest runner as a persistent background
+        task that keeps the session (and therefore WDA) alive.
+
         Raises RuntimeError if WDA is not installed or if RSD info is missing
         for iOS 17+ devices.  After this call returns, is_prepared() is True.
         """
@@ -255,6 +262,12 @@ class iOSDevice:
                 f"WDA not installed on device {self.udid}. "
                 f"Please install {self._wda_bundle_id} manually."
             )
+
+        # If a runner is already alive and WDA responds, reuse it.
+        if self.is_prepared() and self._wda_task is not None and not self._wda_task.done():
+            with self._session_lock:
+                self._session_id = None
+            return
 
         major = self._ios_major_version()
 
@@ -266,80 +279,82 @@ class iOSDevice:
                     "Make sure ios_tunneld is running (it must run as root)."
                 )
             rsd_address, rsd_port = rsd
-            future = asyncio.run_coroutine_threadsafe(
-                self._start_wda_rsd_async(rsd_address, rsd_port), _bg_loop
+            coro = self._run_wda_rsd_async(rsd_address, rsd_port)
+            ctx = (
+                f"iOS 17+ device {self.udid} (tunneld RSD: {rsd_address}:{rsd_port})"
             )
-            try:
-                future.result(timeout=30)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to connect to XPC tunnel for iOS 17+ device {self.udid} "
-                    f"(tunneld RSD: {rsd_address}:{rsd_port}). "
-                    f"Make sure ios_tunneld is running.\nUnderlying error: {exc}"
-                ) from exc
         else:
-            future = asyncio.run_coroutine_threadsafe(
-                self._start_wda_lockdown_async(), _bg_loop
-            )
-            try:
-                future.result(timeout=30)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to start WDA on device {self.udid} (iOS {self.os_version}): {exc}"
-                ) from exc
+            coro = self._run_wda_lockdown_async()
+            ctx = f"device {self.udid} (iOS {self.os_version})"
 
-        self._wait_for_wda(timeout=60)
+        # Submit the XCUITest runner; it blocks until the session ends, so we do
+        # not wait for it to complete — instead poll the WDA HTTP endpoint.
+        self._wda_task = asyncio.run_coroutine_threadsafe(coro, _bg_loop)
+        self._wait_for_wda(timeout=60, ctx=ctx)
         with self._session_lock:
             self._session_id = None
 
-    async def _start_wda_lockdown_async(self) -> None:
-        """Start WDA via lockdown/usbmux (iOS ≤ 16)."""
+    async def _run_wda_lockdown_async(self) -> None:
+        """Run the WDA XCUITest runner via lockdown/usbmux (iOS ≤ 16).
+
+        Blocks until the test session ends; intended to run as a persistent
+        background task so the WDA runner stays alive.
+        """
         from pymobiledevice3.lockdown import create_using_usbmux
-        from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import (
-            DvtSecureSocketProxyService,
+        from pymobiledevice3.services.dvt.testmanaged.xcuitest import (
+            TestConfig,
+            XCUITestService,
         )
-        from pymobiledevice3.services.dvt.instruments.process_control import ProcessControl
 
         lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
         async with lockdown:
-            async with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
-                async with ProcessControl(dvt) as pc:
-                    await pc.launch(
-                        bundle_id=self._wda_bundle_id,
-                        arguments=[],
-                        environment={},
-                        wait_for_debugger=False,
-                        start_suspended=False,
-                    )
+            cfg = await TestConfig.create_for(
+                lockdown, runner_bundle_id=self._wda_bundle_id
+            )
+            await XCUITestService(lockdown).run(cfg)
 
-    async def _start_wda_rsd_async(self, rsd_address: str, rsd_port: int) -> None:
-        """Start WDA via RemoteServiceDiscovery (iOS 17+)."""
+    async def _run_wda_rsd_async(self, rsd_address: str, rsd_port: int) -> None:
+        """Run the WDA XCUITest runner via RemoteServiceDiscovery (iOS 17+).
+
+        Blocks until the test session ends; intended to run as a persistent
+        background task so the WDA runner stays alive.
+        """
         from pymobiledevice3.remote.remote_service_discovery import (
             RemoteServiceDiscoveryService,
         )
-        from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import (
-            DvtSecureSocketProxyService,
+        from pymobiledevice3.services.dvt.testmanaged.xcuitest import (
+            TestConfig,
+            XCUITestService,
         )
-        from pymobiledevice3.services.dvt.instruments.process_control import ProcessControl
 
-        async with RemoteServiceDiscoveryService(
-            (rsd_address, rsd_port)
-        ) as rsd:
-            async with DvtSecureSocketProxyService(lockdown=rsd) as dvt:
-                async with ProcessControl(dvt) as pc:
-                    await pc.launch(
-                        bundle_id=self._wda_bundle_id,
-                        arguments=[],
-                        environment={},
-                        wait_for_debugger=False,
-                        start_suspended=False,
-                    )
+        async with RemoteServiceDiscoveryService((rsd_address, rsd_port)) as rsd:
+            cfg = await TestConfig.create_for(
+                rsd, runner_bundle_id=self._wda_bundle_id
+            )
+            await XCUITestService(rsd).run(cfg)
 
-    def _wait_for_wda(self, timeout: float = 60.0) -> None:
-        """Poll GET /status until WDA responds or timeout is reached."""
+    def _wait_for_wda(self, timeout: float = 60.0, ctx: Optional[str] = None) -> None:
+        """Poll GET /status until WDA responds or timeout is reached.
+
+        If the backing XCUITest runner task exits early (e.g. tunnel/test setup
+        failure), surface its error immediately instead of waiting the full
+        timeout.
+        """
+        ctx = ctx or f"device {self.udid}"
         deadline = time.monotonic() + timeout
         url = f"http://127.0.0.1:{self.local_port}/status"
         while time.monotonic() < deadline:
+            task = self._wda_task
+            if task is not None and task.done():
+                exc = task.exception()
+                if exc is not None:
+                    raise RuntimeError(
+                        f"WDA XCUITest runner exited for {ctx}.\n"
+                        f"Underlying error: {exc}"
+                    ) from exc
+                raise RuntimeError(
+                    f"WDA XCUITest runner exited before becoming reachable for {ctx}"
+                )
             try:
                 resp = requests.get(url, timeout=2.0)
                 if resp.status_code == 200:
@@ -347,7 +362,7 @@ class iOSDevice:
             except Exception:
                 pass
             time.sleep(1.0)
-        raise RuntimeError(f"WDA failed to start within {timeout:.0f}s on {self.udid}")
+        raise RuntimeError(f"WDA failed to start within {timeout:.0f}s on {ctx}")
 
     def _ios_major_version(self) -> int:
         """Parse the major iOS version from os_version (e.g. '17.2.1' → 17)."""
@@ -642,6 +657,9 @@ class iOSDevicesManager:
             for udid in stale_udids:
                 device = self._devices.pop(udid)
                 device._forward_task.cancel()
+                # Tear down the WDA XCUITest session so the runner exits cleanly.
+                if device._wda_task is not None:
+                    device._wda_task.cancel()
 
             new_udids = current_udids - set(self._devices)
 
