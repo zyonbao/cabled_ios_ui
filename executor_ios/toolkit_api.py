@@ -116,6 +116,18 @@ def window_size(target: str) -> dict:
     return device.window_size()
 
 
+def orientation(target: str) -> dict:
+    """Return the device's current screen orientation (enum + clockwise degrees).
+
+    data = {"orientation": "PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|"
+            "LANDSCAPE_RIGHT", "degrees": 0|90|180|270}
+    """
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.orientation()
+
+
 def app_switcher(target: str) -> dict:
     """Open the iOS App Switcher (multitasking / background view)."""
     device, err = _prepare_device(target)

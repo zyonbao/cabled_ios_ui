@@ -101,8 +101,9 @@ slide6_console/
 
 已确认的实现细节：
 
-- **开发态拉起命令**：使用项目 `.venv` 的**绝对路径解释器**，并 `cd` 到仓库根目录后执行 `-m executor_ios.tunneld_main`（保证 root 环境能导入 `executor_ios` 与 `pymobiledevice3`）。打包态则替换为内置 `ios_tunneld` 二进制的绝对路径。
-- **生命周期：app 退出时按需询问是否停止 tunneld**。退出时先探测 tunnel 端口是否仍在运行；若在运行则弹窗让用户选择是否 kill：选择 kill 才停止，否则保留。停止时优先用本会话记录的 pid，否则解析占用该端口的监听进程 pid。注意：被停止进程是 root，kill 需要再次特权操作（如 `osascript ... do shell script "kill <pid>" with administrator privileges`），因此用户选择 kill 时会再弹一次系统授权框；若端口未在运行则退出时不弹窗、不动作。
+- **开发态拉起命令**：使用项目 `.venv` 的**绝对路径解释器**，并 `cd` 到仓库根目录后执行 `-m executor_ios.tunneld_main`（保证 root 环境能导入 `executor_ios` 与 `pymobiledevice3`）。打包态则替换为内置 `ios_tunneld` 二进制的绝对路径。**不修改 `tunneld_main.py`**（保持其原始入口，不做自我 daemon 化）。
+- **非阻塞拉起（真机踩坑结论）**：`osascript ... with administrator privileges` 会让 `do shell script` 一直等到被拉起命令的 stdout/stderr 到 EOF 才返回；而 tunneld（uvicorn + pymobiledevice3）长期持有这些 fd，导致 osascript 直到超时才返回（实测卡满 120s）。因此**用 `subprocess.Popen` 起 osascript 但不等它返回**：tunneld 以前台方式挂在 osascript 下运行（普通后台进程，不是自我 detach 的守护进程），代码改为**轮询端口**确认就绪、用 osascript 提前退出判定"用户取消/失败"。这样授权后几秒即可继续 `prepare`。
+- **生命周期：app 退出时按需询问是否停止 tunneld**。退出时先探测 tunnel 端口是否仍在运行；若在运行则弹窗让用户选择是否 kill：选择 kill 才停止，否则保留。**停止实现**：tunneld 以 root 运行，非特权 `lsof` 看不到其端口，故在一次提权 shell 内 `lsof -ti tcp:49151` 找出 pid 并 `kill`（tunneld 不可靠响应 SIGTERM，故 TERM 后补 `kill -9` 兜底）。因此用户选择 kill 时会再弹一次系统授权框；若端口未在运行则退出时不弹窗、不动作。
 - **iOS 版本判定**：复用 `device.py` 的 `_ios_major_version()` 同款解析（`os_version.split('.')[0]`，`os_version` 形如 `"17.2.1"`），解析失败保守按"需要 tunnel"处理。
 - **平台范围**：本次仅在 macOS 验收（`executor_ios` 当前也仅支持 macOS USB 真机）。
 
@@ -126,6 +127,7 @@ slide6_console/
 - [tunneld 端口写死 49151] → 本次以常量集中管理便于探测；完整可配置化（`~/.executor_ios.json`）作为后续独立变更。
 - [tunneld 以 root 拉起属高风险] → 系统原生授权 + 写死脚本路径 + 命令不拼接外部输入 + 仅绑定 127.0.0.1；授权取消时降级（该 iOS 17+ 设备不可用）而非阻塞整个应用。
 - [osascript 每次拉起都需授权，体验上多一次弹框] → 本次有意接受此权衡（不引入 LaunchDaemon 的安装复杂度）；若 tunnel 已在运行则不会重复弹（先探测后拉起）。量产场景的"一次授权"留作后续 LaunchDaemon/SMAppService 变更。
-- [退出时停止 root tunneld 需再次特权] → 退出时仅在 tunnel 仍运行时弹窗征询；用户选择 kill 才触发停止（并因此再弹一次系统授权），选择保留则不动作。把"是否承担退出时的二次授权"交给用户即时决定。
+- [退出时停止 root tunneld 需再次特权] → 退出时仅在 tunnel 仍运行时弹窗征询；用户选择 kill 才触发停止（在提权 shell 内 `lsof + kill`，TERM 后补 `kill -9`，并因此再弹一次系统授权），选择保留则不动作。把"是否承担退出时的二次授权"交给用户即时决定。
+- [osascript `do shell script` 会阻塞至被拉起命令 stdio 到 EOF] → tunneld 长期持有 fd 会卡满超时；改为 `Popen` 非阻塞起 osascript + 轮询端口确认就绪、osascript 早退判定取消，避免主流程被授权调用拖死。
 - [iOS 主版本解析依赖 `metadata.os_version` 字符串] → 解析失败时保守视为需要 tunnel（按 iOS 17+ 处理）或回退到设备端版本判断，避免漏起 tunnel 导致 prepare 失败。
 - [授权后 tunneld 启动需要时间] → 拉起后带超时轮询端口直至就绪，避免误判为失败。

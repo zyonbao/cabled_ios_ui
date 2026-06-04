@@ -824,6 +824,60 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
+    def orientation(self) -> dict:
+        """Return the device's current screen orientation.
+
+        WDA's `GET /session/{sid}/orientation` only reports the coarse
+        PORTRAIT/LANDSCAPE pair, so it cannot distinguish the two landscape sides
+        or upside-down. `GET /session/{sid}/rotation` exposes the full 4-way via
+        its `z` angle (0/90/180/270), which we prefer and map to a stable enum
+        plus the clockwise degrees needed to rotate a portrait frame upright.
+        The coarse endpoint is used only as a fallback. Anything unexpected falls
+        back to PORTRAIT so callers never crash on an unusual WDA build.
+        """
+        from .toolkit_api import _ok, _err
+
+        # WDA/Appium rotation z convention; the z angle itself is the clockwise
+        # "degrees" needed to bring a portrait frame upright.
+        z_map = {
+            0: "PORTRAIT",
+            90: "LANDSCAPE_LEFT",
+            180: "PORTRAIT_UPSIDE_DOWN",
+            270: "LANDSCAPE_RIGHT",
+        }
+        # Fallback for the coarse /orientation string.
+        normalize = {
+            "PORTRAIT": ("PORTRAIT", 0),
+            "UIA_DEVICE_ORIENTATION_PORTRAIT": ("PORTRAIT", 0),
+            "PORTRAITUPSIDEDOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
+            "UPSIDE_DOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
+            "UIA_DEVICE_ORIENTATION_PORTRAIT_UPSIDEDOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
+            "LANDSCAPELEFT": ("LANDSCAPE_LEFT", 90),
+            "LANDSCAPE": ("LANDSCAPE_LEFT", 90),
+            "UIA_DEVICE_ORIENTATION_LANDSCAPELEFT": ("LANDSCAPE_LEFT", 90),
+            "LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 270),
+            "UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 270),
+        }
+
+        try:
+            # Preferred: full 4-way from /rotation's z angle.
+            try:
+                resp = self._get_with_session_retry("/session/{sid}/rotation")
+                val = resp.get("value") or {}
+                z = (round(float(val.get("z", 0)) / 90) * 90) % 360
+                if z in z_map:
+                    return _ok({"orientation": z_map[z], "degrees": z})
+            except Exception:
+                pass  # fall back to the coarse orientation endpoint
+
+            resp = self._get_with_session_retry("/session/{sid}/orientation")
+            raw = resp.get("value")
+            key = str(raw).upper().replace("-", "").replace(" ", "") if raw else ""
+            orientation, degrees = normalize.get(key, ("PORTRAIT", 0))
+            return _ok({"orientation": orientation, "degrees": degrees})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
     def _app_switcher_w3c(self, cx: float, h: int) -> None:
         """Fallback App Switcher gesture using synthetic W3C touch actions."""
         y_start = h - 2

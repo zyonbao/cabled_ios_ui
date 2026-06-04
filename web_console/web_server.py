@@ -126,6 +126,12 @@ def window_size(target: str) -> dict:
     return _raise_if_error(api.window_size(target))["data"]
 
 
+@app.get("/api/orientation")
+def orientation(target: str) -> dict:
+    """Current screen orientation (enum + clockwise degrees) for rendering."""
+    return _raise_if_error(api.orientation(target))["data"]
+
+
 @app.get("/api/screenshot")
 def screenshot(target: str) -> Response:
     """Return a single raw PNG frame (manual/debug helper).

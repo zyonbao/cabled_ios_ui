@@ -13,15 +13,6 @@ import os
 import sys
 from datetime import datetime
 
-# Opt-in lifecycle tracing: set SLIDE6_DEBUG=1 to print device-lifecycle steps.
-_DEBUG = os.environ.get("SLIDE6_DEBUG", "").strip().lower() not in ("", "0", "false", "no")
-
-
-def _dbg(message: str) -> None:
-    # Lightweight stderr trace for real-device debugging of the device lifecycle.
-    if _DEBUG:
-        print(f"[slide6 {datetime.now():%H:%M:%S}] {message}", file=sys.stderr, flush=True)
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -43,10 +34,27 @@ from .keyboard import KeyboardCapture, KeyboardSender
 from .mirror import MjpegThread, ScreenView
 from .workers import AsyncRunner
 
+# Opt-in lifecycle tracing: set SLIDE6_DEBUG=1 to print device-lifecycle steps.
+_DEBUG = os.environ.get("SLIDE6_DEBUG", "").strip().lower() not in ("", "0", "false", "no")
+
+
+def _dbg(message: str) -> None:
+    # Lightweight stderr trace for real-device debugging of the device lifecycle.
+    if _DEBUG:
+        print(f"[slide6 {datetime.now():%H:%M:%S}] {message}", file=sys.stderr, flush=True)
+
+
 _FPS_CHOICES = [5, 10, 15, 20]
 _DEFAULT_FPS = 10
 _MJPEG_SCALING = 60
 _MJPEG_QUALITY = 70
+
+_ORIENT_LABEL = {
+    "PORTRAIT": "竖屏",
+    "PORTRAIT_UPSIDE_DOWN": "竖屏（倒置）",
+    "LANDSCAPE_LEFT": "横屏（左）",
+    "LANDSCAPE_RIGHT": "横屏（右）",
+}
 
 
 class MainWindow(QMainWindow):
@@ -59,10 +67,10 @@ class MainWindow(QMainWindow):
         self.devices: dict = {}
         self.target = ""
         self.win_size: dict | None = None
+        self.orientation: dict = {"orientation": "PORTRAIT", "degrees": 0}
         self.fps = _DEFAULT_FPS
         self.mirror_thread: MjpegThread | None = None
         self.kbd_on = False
-        self.session_tunnel_pid: int | None = None
 
         self._build_ui()
         self._wire()
@@ -106,18 +114,21 @@ class MainWindow(QMainWindow):
         self.info_os = QLabel("—")
         self.info_udid = QLabel("—")
         self.info_size = QLabel("—")
+        self.info_orient = QLabel("—")
         info.addRow("名称", self.info_name)
         info.addRow("型号", self.info_model)
         info.addRow("系统", self.info_os)
         info.addRow("UDID", self.info_udid)
         info.addRow("分辨率(点)", self.info_size)
+        info.addRow("方向", self.info_orient)
         sidebar.addWidget(info_box)
 
         self.home_btn = QPushButton("主屏幕 (HOME)")
         self.switcher_btn = QPushButton("应用切换 (后台)")
+        self.reload_btn = QPushButton("刷新画面 / 方向")
         self.kbd_btn = QPushButton("键盘输入: 关")
         self.shot_btn = QPushButton("截图并保存")
-        for btn in (self.home_btn, self.switcher_btn, self.kbd_btn, self.shot_btn):
+        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
             btn.setEnabled(False)
             sidebar.addWidget(btn)
 
@@ -139,6 +150,8 @@ class MainWindow(QMainWindow):
         self.fps_combo.activated.connect(self.on_fps_changed)
         self.home_btn.clicked.connect(self.on_home)
         self.switcher_btn.clicked.connect(self.on_switcher)
+        # Per-device refresh: re-run the full select flow for the current device.
+        self.reload_btn.clicked.connect(self.on_select_device)
         self.kbd_btn.clicked.connect(self.on_toggle_keyboard)
         self.shot_btn.clicked.connect(self.on_screenshot)
 
@@ -199,7 +212,10 @@ class MainWindow(QMainWindow):
         target = self.device_combo.currentData()
         self.target = target or ""
         self.win_size = None
+        self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         self.screen.set_window_size(0, 0)
+        self.screen.set_orientation(0)
+        self.info_orient.setText("—")
 
         if not self.target:
             self._fill_info(None)
@@ -241,15 +257,11 @@ class MainWindow(QMainWindow):
         self.screen.set_overlay("正在请求管理员授权并启动 XPC tunnel…")
 
         def work():
+            # launch_tunneld already polls the port and returns True only once the
+            # tunnel is reachable (or False on cancel/failure/timeout).
             _dbg("work: calling launch_tunneld")
-            authorized = tunnel.launch_tunneld()
-            _dbg(f"work: launch_tunneld authorized={authorized}")
-            if not authorized and not tunnel.is_tunnel_running():
-                _dbg("work: not authorized and tunnel not running")
-                return "fail"
-            _dbg("work: waiting until ready")
-            ready = tunnel.wait_until_ready()
-            _dbg(f"work: wait_until_ready={ready}")
+            ready = tunnel.launch_tunneld()
+            _dbg(f"work: launch_tunneld ready={ready}")
             return "ok" if ready else "fail"
 
         self.runner.submit(
@@ -305,6 +317,23 @@ class MainWindow(QMainWindow):
         self.screen.set_window_size(self.win_size["width"], self.win_size["height"])
         self.info_size.setText(f"{self.win_size['width']} × {self.win_size['height']}")
 
+        # Fetch orientation next so frames are rotated upright; non-fatal on failure.
+        self.runner.submit(
+            lambda: api.orientation(target),
+            on_done=lambda r: self._on_orientation(r, target, gen),
+            on_error=lambda _: self._on_orientation(None, target, gen),
+            generation=gen,
+        )
+
+    def _on_orientation(self, result, target: str, gen: int) -> None:
+        if result and result.get("ok"):
+            self.orientation = result["data"]
+        else:
+            self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
+        _dbg(f"on_orientation {self.orientation} gen={gen}")
+        self.screen.set_orientation(self.orientation.get("degrees", 0))
+        self.info_orient.setText(_ORIENT_LABEL.get(self.orientation.get("orientation"), "—"))
+
         # Apply requested framerate, then start the stream (non-fatal on failure).
         self.runner.submit(
             lambda: api.configure_mjpeg(target, self.fps, _MJPEG_SCALING, _MJPEG_QUALITY),
@@ -335,7 +364,7 @@ class MainWindow(QMainWindow):
 
         self._set_status("已连接")
         self.screen.set_overlay(None)
-        for btn in (self.home_btn, self.switcher_btn, self.kbd_btn, self.shot_btn):
+        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
             btn.setEnabled(True)
         self.kbd_capture.setEnabled(True)
 
@@ -355,7 +384,7 @@ class MainWindow(QMainWindow):
             self.mirror_thread = None
         self.screen.clear_frame()
         self._set_keyboard(False)
-        for btn in (self.home_btn, self.switcher_btn, self.kbd_btn, self.shot_btn):
+        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
             btn.setEnabled(False)
         self.kbd_capture.setEnabled(False)
 
@@ -472,5 +501,5 @@ class MainWindow(QMainWindow):
                 QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
-                tunnel.stop_tunneld(self.session_tunnel_pid)
+                tunnel.stop_tunneld()
         event.accept()

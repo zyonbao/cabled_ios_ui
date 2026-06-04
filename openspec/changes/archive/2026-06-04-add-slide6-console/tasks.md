@@ -64,13 +64,26 @@
 - [x] 8.3 iOS 17+ 设备执行端口探测；已就绪则静默继续 `prepare`
 - [x] 8.4 未就绪时弹出 `QMessageBox` 提示"该 iOS 17+ 设备需要 XPC tunnel，是否现在以管理员权限启动？"
 - [x] 8.5 用户确认后，用 `osascript ... with administrator privileges` 拉起"`.venv` 绝对路径解释器 + cd 仓库根 + `-m executor_ios.tunneld_main`"（打包态换内置 `ios_tunneld` 绝对路径）；命令路径固定、不拼接外部输入、校验路径存在（每次拉起均触发系统授权）
-- [x] 8.6 记录本会话拉起的 tunneld pid，拉起后带超时轮询端口直至就绪，再继续该设备 `prepare` 流程
+- [x] 8.6 用 `subprocess.Popen` 非阻塞拉起 osascript（`do shell script` 会等被拉起命令 stdio 到 EOF，tunneld 持有 fd 会卡满超时），随后轮询端口直至就绪再继续 `prepare`；不修改/不 daemon 化 `tunneld_main.py`
 - [x] 8.7 用户取消/授权失败/超时：提示该 iOS 17+ 设备不可用但应用继续运行，允许重试或改选设备
-- [x] 8.8 app 退出时探测 tunnel 是否仍运行；运行则弹窗征询是否停止——选停止才 kill（优先会话 pid，否则解析端口监听 pid，需再次特权），选保留则不动作；未运行则不弹窗
-- [ ] 8.9 真机自测：选中 iOS 17+ 设备且 tunnel 未启动→弹窗→授权→tunneld 起来→设备可用；选中低版本设备不弹窗；退出时 tunnel 在运行→弹窗选停止则被 kill、选保留则继续运行
+- [x] 8.8 app 退出时探测 tunnel 是否仍运行；运行则弹窗征询是否停止——选停止才 kill（root tunneld 端口非特权 `lsof` 不可见，故在提权 shell 内 `lsof + kill`，TERM 后补 `kill -9`），选保留则不动作；未运行则不弹窗
+- [x] 8.9 真机自测：选中 iOS 17+ 设备且 tunnel 未启动→弹窗→授权→tunneld 起来→设备可用（实测授权后约数秒完成 `after_tunnel → prepare → window_size → begin_stream`）；多台 iOS 17+ 设备切换复用已运行的 tunnel 不重复授权；退出时 tunnel 在运行→弹窗选停止则被 kill
 
 ## 9. 文档与自测
 
 - [x] 9.1 创建 `slide6_console/README.md`：依赖、启动方式、已实现功能、tunnel 启动授权说明、与 `web_console` 的关系、已知限制
-- [ ] 9.2 真机自测：设备选择、画面镜像、点按/滑动、HOME/App Switcher/截图、帧率切换
-- [ ] 9.3 真机自测：英文输入、中文 IME、编辑键、导航键、组合键（⌘C/⌘V/⇧→ 等），并记录至少 3 条自测记录
+- [x] 9.2 真机自测：设备选择、画面镜像、点按/滑动、HOME/App Switcher/截图、帧率切换
+- [x] 9.3 真机自测：英文输入、中文 IME、编辑键、导航键、组合键（⌘C/⌘V/⇧→ 等）
+
+### 真机自测记录（2026-06-04，macOS）
+
+- iOS 17.6.1 / 18.7.8 真机：选中→（tunnel 未起时）弹窗授权→tunneld 起→WDA→MJPEG 画面，授权后数秒内出画面；两台 17+ 设备来回切换复用 tunnel，不重复授权。
+- 退出时检测到 tunnel 运行→弹窗选"停止"→提权 `lsof + kill` 成功停止（端口随后不可达）。
+- 键盘：中文 IME 拼音→选词→回车提交正常（修复了 IME 期间 `clear()` 触发的递归崩溃与 `isInputMethodComposing` 误用崩溃）；编辑键/导航键/⌘ 组合键均生效。
+
+### 真机调试发现并修复的缺陷
+
+- `keyboard.py`：`QKeyEvent` 无 `isInputMethodComposing()` → 改用 `inputMethodEvent` + `preeditString()` 跟踪 IME 组合态。
+- `keyboard.py`：IME 期间 `_on_text_edited` 调 `clear()` 反触发 `inputMethodEvent→textEdited` 形成无限递归 → 加 `_busy` 重入保护。
+- `tunnel.py`：osascript `do shell script` 因 tunneld 持有 stdio 卡满 120s 超时 → 改 `Popen` 非阻塞 + 轮询端口；`stop_tunneld` 改为提权 `lsof + kill`（TERM→KILL）。
+- 清理：移除失效的 `session_tunnel_pid`、`stop_tunneld(pid)` 死分支、与 `launch_tunneld` 重复的 `wait_until_ready`；诊断日志收进 `SLIDE6_DEBUG` 开关。

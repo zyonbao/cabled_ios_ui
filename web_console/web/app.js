@@ -21,8 +21,10 @@ const els = {
   infoOs: document.getElementById("info-os"),
   infoUdid: document.getElementById("info-udid"),
   infoSize: document.getElementById("info-size"),
+  infoOrient: document.getElementById("info-orient"),
   homeBtn: document.getElementById("home-btn"),
   switcherBtn: document.getElementById("switcher-btn"),
+  reloadBtn: document.getElementById("reload-btn"),
   kbdBtn: document.getElementById("kbd-btn"),
   shotBtn: document.getElementById("shot-btn"),
   kbd: document.getElementById("kbd-capture"),
@@ -31,7 +33,8 @@ const els = {
 const state = {
   devices: {},          // udid -> device meta
   target: "",           // current selected udid
-  winSize: null,        // { width, height } in WDA points
+  winSize: null,        // { width, height } in WDA points (current orientation)
+  orientation: { orientation: "PORTRAIT", degrees: 0 }, // clockwise degrees to upright
   streaming: false,
   generation: 0,        // bumped on every device switch to kill stale streams
   streamFps: 20,        // requested MJPEG framerate
@@ -111,6 +114,7 @@ function stopStream() {
   setKeyboard(false);
   els.kbdBtn.disabled = true;
   els.shotBtn.disabled = true;
+  els.reloadBtn.disabled = true;
   els.fpsReadout.textContent = "";
   // Clearing src closes the MJPEG connection held open by the browser.
   els.screen.removeAttribute("src");
@@ -125,13 +129,26 @@ function fillInfo(dev) {
   els.infoSize.textContent = state.winSize
     ? `${state.winSize.width} × ${state.winSize.height}`
     : "—";
+  if (els.infoOrient) {
+    els.infoOrient.textContent = state.winSize
+      ? ORIENT_LABEL[state.orientation.orientation] || "—"
+      : "—";
+  }
 }
+
+const ORIENT_LABEL = {
+  PORTRAIT: "竖屏",
+  PORTRAIT_UPSIDE_DOWN: "竖屏（倒置）",
+  LANDSCAPE_LEFT: "横屏（左）",
+  LANDSCAPE_RIGHT: "横屏（右）",
+};
 
 async function onSelectDevice() {
   stopStream();
   const target = els.select.value;
   state.target = target;
   state.winSize = null;
+  state.orientation = { orientation: "PORTRAIT", degrees: 0 };
 
   if (!target) {
     fillInfo(null);
@@ -170,6 +187,15 @@ async function onSelectDevice() {
     if (gen !== state.generation) return;
     if (!sizeRes.ok) throw new Error(await safeDetail(sizeRes));
     state.winSize = await sizeRes.json();
+
+    // Orientation drives how the (native-portrait) MJPEG frame is rotated to
+    // appear upright; failure falls back to portrait rather than blocking.
+    try {
+      const oRes = await fetch(`/api/orientation?target=${encodeURIComponent(target)}`);
+      if (gen !== state.generation) return;
+      if (oRes.ok) state.orientation = await oRes.json();
+    } catch (_) { /* keep portrait default */ }
+
     fillInfo(dev);
     sizePhone();
 
@@ -183,6 +209,7 @@ async function onSelectDevice() {
     setStatus("已连接", "online");
     els.homeBtn.disabled = false;
     els.switcherBtn.disabled = false;
+    els.reloadBtn.disabled = false;
     state.streaming = true;
     els.kbdBtn.disabled = false;
     els.shotBtn.disabled = false;
@@ -225,11 +252,60 @@ function startStream(gen) {
 
 function sizePhone() {
   if (!state.winSize) return;
+  // window_size is already in the current orientation, so its aspect ratio is
+  // landscape when the device is rotated; the container follows it directly.
   const { width, height } = state.winSize;
   els.phone.style.aspectRatio = `${width} / ${height}`;
   els.phone.style.height = "min(86vh, 900px)";
   els.phone.style.width = "auto";
+  applyOrientation();
 }
+
+// Orient the MJPEG frame inside the (current-orientation) container. The
+// broadcaster may already emit current-orientation frames; only rotate when the
+// frame's orientation differs from window_size (compared via natural size). For
+// 90/270 the on-screen width/height swap, so the <img> box is sized from the
+// container rect before rotating.
+// Keep this logic in sync with slide6_console/mirror.py::_rotation_for_frame;
+// `degrees` fully encodes the orientation (0/90/180/270).
+function applyOrientation() {
+  const img = els.screen;
+  if (!state.winSize) return;
+  const winLand = state.winSize.width > state.winSize.height;
+  const fw = img.naturalWidth, fh = img.naturalHeight;
+  // Until the first frame loads, naturalWidth is 0 — assume it already matches
+  // (no rotation); the 'load' listener re-runs this once the size is known.
+  const frameLand = fw > 0 && fh > 0 ? fw > fh : winLand;
+  const degrees = (state.orientation && state.orientation.degrees) || 0;
+  let deg;
+  if (frameLand !== winLand) {
+    // Aspect differs: rotate portrait->landscape using the device angle.
+    deg = degrees === 90 || degrees === 270 ? degrees : 90;
+  } else {
+    // Aspect already matches; only the 180° flip (which aspect can't detect)
+    // still needs correcting for upside-down portrait.
+    deg = degrees === 180 ? 180 : 0;
+  }
+  if (deg === 90 || deg === 270) {
+    const rect = els.phone.getBoundingClientRect();
+    img.style.width = `${rect.height}px`;
+    img.style.height = `${rect.width}px`;
+    img.style.position = "absolute";
+    img.style.left = "50%";
+    img.style.top = "50%";
+    img.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+  } else {
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.position = "static";
+    img.style.left = "";
+    img.style.top = "";
+    img.style.transform = deg === 180 ? "rotate(180deg)" : "none";
+  }
+}
+
+// Re-evaluate rotation once the first frame's natural size is known.
+els.screen.addEventListener("load", applyOrientation);
 
 window.addEventListener("resize", sizePhone);
 
@@ -471,6 +547,9 @@ function flashStatus(msg) {
 
 els.select.addEventListener("change", onSelectDevice);
 els.refresh.addEventListener("click", loadDevices);
+// Per-device refresh: re-run the full select flow (re-prepare, re-read
+// window_size/orientation, reconnect stream) to resync after a rotation.
+els.reloadBtn.addEventListener("click", onSelectDevice);
 els.fps.addEventListener("change", async () => {
   state.streamFps = parseInt(els.fps.value, 10) || 20;
   if (!state.target || !state.streaming) return;

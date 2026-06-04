@@ -16,6 +16,7 @@ from __future__ import annotations
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # The tunneld port currently used by executor_ios (see device.TUNNELD_URL).
@@ -115,8 +116,6 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     except OSError:
         return False
 
-    import time
-
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if is_tunnel_running(timeout=0.3):
@@ -128,39 +127,21 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     return is_tunnel_running(timeout=0.3)
 
 
-def wait_until_ready(timeout: float = 20.0, interval: float = 0.5) -> bool:
-    """Poll the tunnel port until it is reachable or the timeout elapses."""
-    import time
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if is_tunnel_running(timeout=interval):
-            return True
-        time.sleep(interval)
-    return is_tunnel_running(timeout=interval)
-
-
-def stop_tunneld(pid: int | None = None) -> bool:
+def stop_tunneld() -> bool:
     """Stop the tunneld process with administrator privileges.
 
     The daemon runs as root, so a non-privileged ``lsof`` cannot see its socket;
-    therefore the port lookup and kill are performed together inside the elevated
-    shell (``lsof`` under root resolves the listener). A known ``pid`` is killed
-    directly when provided. Returns True if the command was authorized and run.
+    the port lookup and kill therefore run together inside the elevated shell
+    (``lsof`` under root resolves the listener). tunneld does not reliably honor
+    SIGTERM, so this escalates to SIGKILL if the process lingers. Returns True if
+    the command was authorized and run.
     """
-    # tunneld does not always honor SIGTERM, so escalate to SIGKILL if it lingers.
-    if pid is not None:
-        kill_cmd = (
-            f"kill {int(pid)} 2>/dev/null; sleep 1; "
-            f"kill -9 {int(pid)} 2>/dev/null; true"
-        )
-    else:
-        kill_cmd = (
-            f"PIDS=$(lsof -ti tcp:{TUNNELD_PORT}); "
-            f'if [ -n "$PIDS" ]; then kill $PIDS 2>/dev/null; sleep 1; '
-            f"PIDS2=$(lsof -ti tcp:{TUNNELD_PORT}); "
-            f'if [ -n "$PIDS2" ]; then kill -9 $PIDS2; fi; fi'
-        )
+    kill_cmd = (
+        f"PIDS=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f'if [ -n "$PIDS" ]; then kill $PIDS 2>/dev/null; sleep 1; '
+        f"PIDS2=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f'if [ -n "$PIDS2" ]; then kill -9 $PIDS2; fi; fi'
+    )
     applescript = (
         f'do shell script "{_applescript_quote(kill_cmd)}" '
         f"with administrator privileges"

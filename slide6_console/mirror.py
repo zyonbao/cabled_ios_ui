@@ -9,13 +9,19 @@ letterboxed and turns mouse interaction into tap/swipe gestures.
 
 from __future__ import annotations
 
+import os
 import socket
+import sys
 
 from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QWidget
 
 from .gestures import clamp_swipe_duration, is_tap, to_device_point
+
+# Opt-in tracing (shared SLIDE6_DEBUG flag): logs frame vs window_size geometry,
+# which is the ground truth needed to verify the orientation rendering on-device.
+_DEBUG = os.environ.get("SLIDE6_DEBUG", "").strip().lower() not in ("", "0", "false", "no")
 
 # JPEG markers used to slice frames out of the multipart MJPEG stream.
 _SOI = b"\xff\xd8"  # Start Of Image
@@ -111,6 +117,11 @@ class ScreenView(QWidget):
         self._pixmap: QPixmap | None = None
         self._win_w = 0
         self._win_h = 0
+        # Clockwise angle (0/90/180/270) to bring a portrait frame upright. It
+        # fully encodes the orientation, so the enum string is kept out of the
+        # render path (single source of truth).
+        self._degrees = 0
+        self._last_logged: tuple | None = None
         self._press_pos: QPoint | None = None
         self._press_ms = 0
         self._overlay_text = "请选择一个设备"
@@ -123,6 +134,12 @@ class ScreenView(QWidget):
         self._win_w = int(width)
         self._win_h = int(height)
 
+    def set_orientation(self, degrees: int) -> None:
+        # degrees is the clockwise angle to bring a portrait frame upright and
+        # fully encodes the orientation (0/90/180/270); the enum string is only
+        # needed for the sidebar label, handled by the caller.
+        self._degrees = int(degrees) % 360
+
     def set_overlay(self, text: str | None) -> None:
         self._overlay_text = text or ""
         self.update()
@@ -133,9 +150,43 @@ class ScreenView(QWidget):
 
     def on_frame(self, image: QImage) -> None:
         # Always render only the latest frame (implicit frame dropping).
-        self._pixmap = QPixmap.fromImage(image)
+        pixmap = QPixmap.fromImage(image)
+        rot = self._rotation_for_frame(pixmap.width(), pixmap.height())
+        if rot:
+            # 90° multiples are a lossless transpose, so a fast transform keeps
+            # per-frame cost low while orienting the image to match the device.
+            pixmap = pixmap.transformed(QTransform().rotate(rot), Qt.FastTransformation)
+        self._pixmap = pixmap
         self._overlay_text = ""
         self.update()
+
+    def _rotation_for_frame(self, fw: int, fh: int) -> int:
+        """Clockwise degrees to apply to make the broadcaster frame upright.
+
+        The broadcaster already corrects the 90° aspect (portrait↔landscape) but
+        not the 180° flip, so:
+          - rotate 90/270° only when the frame orientation differs from window_size;
+          - add 180° for upside-down portrait, since aspect comparison alone
+            cannot detect a 180° flip.
+
+        Keep this logic in sync with web_console/web/app.js::applyOrientation.
+        """
+        if self._win_w <= 0 or self._win_h <= 0 or fw <= 0 or fh <= 0:
+            rot = 0
+        elif (fw > fh) != (self._win_w > self._win_h):
+            # Aspect differs: rotate portrait->landscape using the device angle.
+            rot = self._degrees if self._degrees in (90, 270) else 90
+        else:
+            # Aspect already matches; only the 180° flip (which aspect can't
+            # detect) still needs correcting for upside-down portrait.
+            rot = 180 if self._degrees == 180 else 0
+        if _DEBUG:
+            sig = (fw, fh, self._win_w, self._win_h, self._degrees, rot)
+            if sig != self._last_logged:
+                self._last_logged = sig
+                print(f"[slide6 mirror] frame={fw}x{fh} win={self._win_w}x{self._win_h} "
+                      f"deg={self._degrees} -> rotate={rot}", file=sys.stderr, flush=True)
+        return rot
 
     # -- geometry ----------------------------------------------------------
 
