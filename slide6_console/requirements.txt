@@ -1,0 +1,3 @@
+# slide6_console depends on the executor_ios package (same repo) plus PySide6.
+# Install executor_ios deps first: pip install -r ../executor_ios/requirements.txt
+PySide6>=6.6
