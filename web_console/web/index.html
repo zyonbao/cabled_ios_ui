@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>iOS 设备控制台</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      iOS 设备控制台
+    </div>
+    <div class="controls">
+      <label class="field">
+        <span>设备</span>
+        <select id="device-select">
+          <option value="">— 选择设备 —</option>
+        </select>
+      </label>
+      <button id="refresh-btn" class="btn" title="刷新设备列表">刷新</button>
+      <label class="field field-fps">
+        <span>帧率</span>
+        <select id="fps-select">
+          <option value="10">10 fps</option>
+          <option value="15">15 fps</option>
+          <option value="20" selected>20 fps</option>
+          <option value="30">30 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </label>
+    </div>
+    <div class="status">
+      <span id="status-dot" class="status-dot"></span>
+      <span id="status-text">未连接</span>
+      <span id="fps-readout" class="fps-readout"></span>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div id="phone" class="phone">
+      <img id="screen" class="screen" alt="设备画面" draggable="false" />
+      <div id="touch" class="touch-layer"></div>
+      <!-- Off-screen field that captures Mac keystrokes (incl. IME / paste). -->
+      <input id="kbd-capture" class="kbd-capture" autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false" />
+      <div id="overlay" class="overlay">
+        <div class="overlay-inner">
+          <div id="spinner" class="spinner hidden"></div>
+          <p id="overlay-text">请选择一个设备</p>
+          <p id="overlay-sub" class="overlay-sub"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <h2>设备信息</h2>
+      <dl id="device-info" class="info">
+        <dt>名称</dt><dd id="info-name">—</dd>
+        <dt>型号</dt><dd id="info-model">—</dd>
+        <dt>系统</dt><dd id="info-os">—</dd>
+        <dt>UDID</dt><dd id="info-udid" class="mono">—</dd>
+        <dt>分辨率(点)</dt><dd id="info-size">—</dd>
+      </dl>
+
+      <h2>快捷操作</h2>
+      <div class="actions">
+        <button id="home-btn" class="btn btn-block" disabled>主屏幕 (HOME)</button>
+        <button id="switcher-btn" class="btn btn-block" disabled>应用切换 (后台)</button>
+        <button id="kbd-btn" class="btn btn-block" disabled>键盘输入: 关</button>
+        <button id="shot-btn" class="btn btn-block" disabled>截图并下载</button>
+      </div>
+
+      <h2>操作提示</h2>
+      <ul class="tips">
+        <li>在画面上<strong>单击</strong> = 点按</li>
+        <li>按住并<strong>拖动</strong> = 滑动</li>
+        <li>开启<strong>键盘输入</strong>后，先点设备上的输入框，再用 Mac 键盘打字（支持中文/退格/回车）</li>
+        <li>未安装 WDA 的设备无法控制</li>
+      </ul>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

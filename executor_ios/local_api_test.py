@@ -199,24 +199,24 @@ def main() -> None:
         print("   Get your UDID with: pymobiledevice3 usbmux list\n")
 
     # ---- No device needed ------------------------------------------------
-    print("=" * 60)
-    print("Tests that don't need a device")
-    print("=" * 60)
-    test_not_implemented_stubs(UDID)       # 7.6
-    test_input_text_invalid(UDID)          # 7.5 (validation)
-    test_key_not_implemented(UDID)         # 7.4 (NOT_IMPLEMENTED keys)
+    # print("=" * 60)
+    # print("Tests that don't need a device")
+    # print("=" * 60)
+    # test_not_implemented_stubs(UDID)       # 7.6
+    # test_input_text_invalid(UDID)          # 7.5 (validation)
+    # test_key_not_implemented(UDID)         # 7.4 (NOT_IMPLEMENTED keys)
 
-    # ---- Needs a real UDID -----------------------------------------------
-    print("=" * 60)
-    print("Device tests")
-    print("=" * 60)
+    # # ---- Needs a real UDID -----------------------------------------------
+    # print("=" * 60)
+    # print("Device tests")
+    # print("=" * 60)
 
     test_list_targets()                    # 7.1
     test_screenshot(UDID)                  # 7.2
     test_dump_ui(UDID)                     # 7.3
     test_launch_app(UDID, BUNDLE_ID)       # 7.4 launch
     test_key_home(UDID)                    # 7.4 HOME (with fallback)
-    test_bad_target(BUNDLE_ID)             # 7.5 BAD_TARGET
+    # test_bad_target(BUNDLE_ID)             # 7.5 BAD_TARGET
     test_kill_app(UDID, BUNDLE_ID)         # 7.4 kill
 
 

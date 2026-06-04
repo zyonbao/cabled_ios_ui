@@ -40,6 +40,10 @@ _bg_thread.start()
 _DEFAULT_WDA_BUNDLE_ID = "com.facebook.WebDriverAgentRunner.xctrunner"
 _CONFIG_PATH = Path.home() / ".executor_ios.json"
 
+# WDA HTTP server and MJPEG broadcaster ports on the device.
+_WDA_DEVICE_PORT = 8100
+_WDA_MJPEG_DEVICE_PORT = 9100
+
 
 def _load_config() -> dict:
     """Read ~/.executor_ios.json; return defaults for any missing field."""
@@ -115,9 +119,9 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
             pass
 
 
-async def _start_forward(udid: str, local_port: int) -> None:
+async def _start_forward(udid: str, local_port: int, device_port: int = 8100) -> None:
     """
-    Persistent asyncio server: forwards local_port → device:8100 via usbmux.
+    Persistent asyncio server: forwards local_port → device:device_port via usbmux.
     Runs forever until cancelled.
     """
     from pymobiledevice3 import usbmux
@@ -131,7 +135,7 @@ async def _start_forward(udid: str, local_port: int) -> None:
             if mux_device is None:
                 client_writer.close()
                 return
-            raw_sock = await mux_device.connect(8100)
+            raw_sock = await mux_device.connect(device_port)
             raw_sock.setblocking(False)
             device_reader, device_writer = await asyncio.open_connection(sock=raw_sock)
             await asyncio.gather(
@@ -152,14 +156,48 @@ async def _start_forward(udid: str, local_port: int) -> None:
         await server.serve_forever()
 
 
-def _launch_forward(udid: str, local_port: int) -> "Future[None]":
+def _launch_forward(udid: str, local_port: int, device_port: int = 8100) -> "Future[None]":
     """Submit _start_forward to the background loop and return its Future."""
-    return asyncio.run_coroutine_threadsafe(_start_forward(udid, local_port), _bg_loop)
+    return asyncio.run_coroutine_threadsafe(
+        _start_forward(udid, local_port, device_port), _bg_loop
+    )
 
 
 # ---------------------------------------------------------------------------
 # WDA session primitive (reused from Phase 1 logic)
 # ---------------------------------------------------------------------------
+
+# W3C WebDriver standard error code returned by WDA when the session id is
+# unknown/expired (spec: https://w3c.github.io/webdriver/#errors). WDA returns
+# it as HTTP 404 with body {"value": {"error": "invalid session id",
+# "message": "Session does not exist", ...}}. The "error" code is stable across
+# WDA versions; the "message" is human text and must NOT be relied upon.
+_W3C_INVALID_SESSION = "invalid session id"
+
+
+class _WdaHTTPError(RuntimeError):
+    """A non-2xx WDA HTTP response, carrying the W3C error code and status."""
+
+    def __init__(self, status_code: int, w3c_error: str, message: str) -> None:
+        super().__init__(f"HTTP {status_code}: {message}")
+        self.status_code = status_code
+        self.w3c_error = w3c_error
+
+
+def _raise_for_wda(resp: "requests.Response") -> None:
+    """Raise a _WdaHTTPError carrying the W3C error code from a WDA response."""
+    detail: dict = {}
+    try:
+        body = resp.json()
+        value = body.get("value", {})
+        if isinstance(value, dict):
+            detail = value
+    except Exception:
+        pass
+    w3c_error = detail.get("error", "") or ""
+    message = detail.get("message") or w3c_error or resp.text
+    raise _WdaHTTPError(resp.status_code, w3c_error, message)
+
 
 def _create_session_sync(local_port: int) -> str:
     """POST /session to WDA synchronously; raise RuntimeError on failure."""
@@ -196,13 +234,18 @@ class iOSDevice:
         os_version: str,
         forward_task: "Future[None]",
         wda_bundle_id: str,
+        mjpeg_local_port: int = 0,
+        mjpeg_forward_task: "Optional[Future[None]]" = None,
     ) -> None:
         self.udid = udid
         self.local_port = local_port
+        # Local port forwarded to the device's WDA MJPEG broadcaster (9100).
+        self.mjpeg_local_port = mjpeg_local_port
         self.name = name
         self.model = model
         self.os_version = os_version
         self._forward_task = forward_task
+        self._mjpeg_forward_task = mjpeg_forward_task
         self._session_id: Optional[str] = None
         self._session_lock = threading.Lock()
         self._wda_bundle_id = wda_bundle_id
@@ -293,6 +336,8 @@ class iOSDevice:
         self._wait_for_wda(timeout=60, ctx=ctx)
         with self._session_lock:
             self._session_id = None
+        # Tune the MJPEG broadcaster for smooth mirroring (best-effort).
+        self.configure_mjpeg()
 
     async def _run_wda_lockdown_async(self) -> None:
         """Run the WDA XCUITest runner via lockdown/usbmux (iOS ≤ 16).
@@ -389,9 +434,10 @@ class iOSDevice:
             self._session_id = None
 
     def _is_invalid_session_error(self, resp: dict) -> bool:
+        """Detect the W3C 'invalid session id' code in a 200-OK error body."""
         val = resp.get("value") or {}
         error = val.get("error", "") if isinstance(val, dict) else ""
-        return "invalid session id" in error.lower()
+        return error.lower() == _W3C_INVALID_SESSION
 
     # ------------------------------------------------------------------
     # WDA HTTP helpers (synchronous, use self.local_port)
@@ -401,8 +447,11 @@ class iOSDevice:
         url = f"http://127.0.0.1:{self.local_port}{path}"
         try:
             resp = requests.get(url, timeout=timeout)
-            resp.raise_for_status()
+            if not resp.ok:
+                _raise_for_wda(resp)
             return resp.json()
+        except RuntimeError:
+            raise
         except requests.RequestException as exc:
             raise RuntimeError(str(exc)) from exc
 
@@ -411,30 +460,76 @@ class iOSDevice:
         try:
             resp = requests.post(url, json=body, timeout=timeout)
             if not resp.ok:
-                try:
-                    detail = resp.json().get("value", {})
-                    msg = detail.get("message") or detail.get("error") or resp.text
-                except Exception:
-                    msg = resp.text
-                raise RuntimeError(f"HTTP {resp.status_code}: {msg}")
+                _raise_for_wda(resp)
             return resp.json()
         except RuntimeError:
             raise
         except requests.RequestException as exc:
             raise RuntimeError(str(exc)) from exc
 
+    @staticmethod
+    def _is_stale_session_exc(exc: Exception) -> bool:
+        """True if a WDA HTTP error is the W3C 'invalid session id' error.
+
+        Matches on the spec-defined error *code* (value.error), not the
+        human-readable message, so it is stable across WDA versions.
+        """
+        return isinstance(exc, _WdaHTTPError) and exc.w3c_error == _W3C_INVALID_SESSION
+
     def _post_with_session_retry(self, path_template: str, body: dict) -> dict:
         """
         POST to a session-scoped endpoint with automatic session rebuild on
         'invalid session id' errors.  path_template must contain '{sid}'.
+
+        WDA reports a stale session either as a 200 body with an error value or
+        as a 404 (which _post raises); both are handled here.
         """
         sid = self._ensure_session()
-        resp = self._post(path_template.format(sid=sid), body)
+        try:
+            resp = self._post(path_template.format(sid=sid), body)
+        except RuntimeError as exc:
+            if not self._is_stale_session_exc(exc):
+                raise
+            self._invalidate_session()
+            sid = self._ensure_session()
+            return self._post(path_template.format(sid=sid), body)
         if self._is_invalid_session_error(resp):
             self._invalidate_session()
             sid = self._ensure_session()
             resp = self._post(path_template.format(sid=sid), body)
         return resp
+
+    def _get_with_session_retry(self, path_template: str, timeout: float = 15.0) -> dict:
+        """
+        GET a session-scoped endpoint, rebuilding the session once if WDA
+        reports it as stale.  path_template must contain '{sid}'.
+        """
+        sid = self._ensure_session()
+        try:
+            return self._get(path_template.format(sid=sid), timeout=timeout)
+        except RuntimeError as exc:
+            if not self._is_stale_session_exc(exc):
+                raise
+            self._invalidate_session()
+            sid = self._ensure_session()
+            return self._get(path_template.format(sid=sid), timeout=timeout)
+
+    def _pointer_gesture(self, actions: list[dict]) -> dict:
+        """Send a single-finger W3C pointer gesture.
+
+        Wraps the bare action list (pointerMove / pointerDown / pause /
+        pointerUp …) in the touch-pointer envelope shared by tap, swipe and the
+        App Switcher fallback.
+        """
+        return self._post_with_session_retry(
+            "/session/{sid}/actions",
+            {"actions": [{
+                "type": "pointer",
+                "id": "finger1",
+                "parameters": {"pointerType": "touch"},
+                "actions": actions,
+            }]},
+        )
 
     # ------------------------------------------------------------------
     # Platform operations
@@ -469,20 +564,12 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         try:
-            self._post_with_session_retry(
-                "/session/{sid}/actions",
-                {"actions": [{
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x, "y": y},
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": 100},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }]},
-            )
+            self._pointer_gesture([
+                {"type": "pointerMove", "duration": 0, "x": x, "y": y},
+                {"type": "pointerDown", "button": 0},
+                {"type": "pause", "duration": 100},
+                {"type": "pointerUp", "button": 0},
+            ])
             return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"tapX": x, "tapY": y}})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
@@ -491,21 +578,13 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         try:
-            self._post_with_session_retry(
-                "/session/{sid}/actions",
-                {"actions": [{
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x1, "y": y1},
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": duration_ms},
-                        {"type": "pointerMove", "duration": duration_ms, "x": x2, "y": y2},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }]},
-            )
+            self._pointer_gesture([
+                {"type": "pointerMove", "duration": 0, "x": x1, "y": y1},
+                {"type": "pointerDown", "button": 0},
+                {"type": "pause", "duration": duration_ms},
+                {"type": "pointerMove", "duration": duration_ms, "x": x2, "y": y2},
+                {"type": "pointerUp", "button": 0},
+            ])
             return _ok({
                 "exitCode": 0, "stdout": "", "stderr": "",
                 "extra": {"fromX": x1, "fromY": y1, "toX": x2, "toY": y2, "durationMs": duration_ms},
@@ -554,22 +633,134 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
+    def send_keys(self, text: str) -> dict:
+        """Type text into whatever field currently has focus on the device.
+
+        Uses WDA's global ``/wda/keys`` (FBTypeText), which targets the focused
+        element — ideal for mirroring a Mac keyboard. Accepts arbitrary
+        characters (including IME-composed text); no shell is involved.
+        """
+        from .toolkit_api import _ok, _err
+
+        try:
+            self._post_with_session_retry(
+                "/session/{sid}/wda/keys",
+                {"value": list(text)},
+            )
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"length": len(text)}})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def key_chord(self, key: str, modifiers: list) -> dict:
+        """Send a modifier-key chord (e.g. Command+C) to the focused field.
+
+        Uses WDA's ``/wda/element/0/keyboardInput`` endpoint (WDA 5.12+, built
+        with Xcode 15+), which calls XCUIElement ``typeKey:modifierFlags:`` —
+        the only iOS API that honours real hardware-keyboard shortcuts such as
+        ⌘A (select all) or ⇧→ (extend selection). Element id ``0`` targets the
+        active application (Appium convention).
+        """
+        from .toolkit_api import (
+            _ok, _err, _XCUI_MODIFIER_FLAGS, _XCUI_KEY_VALUE, _XCUI_KEY_NAME,
+            _EDIT_KEYS, _W3C_KEY_MAP, _W3C_MODIFIER_MAP,
+        )
+
+        try:
+            flags = 0
+            for mod in modifiers:
+                bit = _XCUI_MODIFIER_FLAGS.get(str(mod).upper())
+                if bit is None:
+                    return _err("BAD_TARGET", f"unknown modifier: {mod}")
+                flags |= bit
+
+            key_upper = key.upper()
+
+            # Editing keys + modifiers need special handling: on iOS neither
+            # channel applies modifiers to Backspace/Delete (typeKey is a no-op
+            # for them; W3C ignores the modifier). So emulate the Mac behaviour
+            # of ⌥⌫ (delete word) / ⌘⌫ (delete to line start) as a composite:
+            # select in that direction with the same modifier(s) + Shift (this
+            # works via the arrow keyboardInput path), then delete the selection
+            # with a plain Backspace.
+            if flags != 0 and key_upper in _EDIT_KEYS:
+                if key_upper in ("BACKSPACE", "DEL", "DELETE"):
+                    forward = key_upper in ("DEL", "DELETE")
+                    sel_mods = [str(m) for m in modifiers]
+                    if not any(str(m).upper() == "SHIFT" for m in sel_mods):
+                        sel_mods.append("shift")
+                    selected = self.key_chord("RIGHT" if forward else "LEFT", sel_mods)
+                    if not selected.get("ok"):
+                        return selected
+                    result = self.key_event("DELETE" if forward else "BACKSPACE")
+                    if result.get("ok"):
+                        result.setdefault("data", {}).setdefault("extra", {})["channel"] = "select+delete"
+                    return result
+
+                # Other editing keys + modifier → W3C key chord (best effort).
+                if key_upper in _W3C_KEY_MAP:
+                    mod_vals = [_W3C_MODIFIER_MAP[str(m).upper()] for m in modifiers]
+                    base = _W3C_KEY_MAP[key_upper]
+                    actions = [{"type": "keyDown", "value": v} for v in mod_vals]
+                    actions.append({"type": "keyDown", "value": base})
+                    actions.append({"type": "keyUp", "value": base})
+                    actions.extend({"type": "keyUp", "value": v} for v in reversed(mod_vals))
+                    self._post_with_session_retry(
+                        "/session/{sid}/actions",
+                        {"actions": [{"type": "key", "id": "keyboard", "actions": actions}]},
+                    )
+                    return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"key": key, "modifiers": list(modifiers), "channel": "w3c"}})
+
+            if flags == 0:
+                # No modifiers → use the string form, which lets WDA resolve the
+                # XCUIKeyboardKey constant name (the only form that works for
+                # navigation/function keys like arrows on iOS).
+                if key_upper in _XCUI_KEY_NAME:
+                    entry: object = _XCUI_KEY_NAME[key_upper]
+                elif len(key) == 1:
+                    entry = key
+                else:
+                    return _err("BAD_TARGET", f"unsupported chord key: {key}")
+            else:
+                # Modifiers present → dict form. WDA's dict branch ignores name
+                # resolution, so the key must be a literal value.
+                if key_upper in _XCUI_KEY_VALUE:
+                    base = _XCUI_KEY_VALUE[key_upper]
+                elif len(key) == 1:
+                    base = key
+                else:
+                    return _err("BAD_TARGET", f"unsupported chord key: {key}")
+                entry = {"key": base, "modifierFlags": flags}
+
+            self._post_with_session_retry(
+                "/session/{sid}/wda/element/0/keyboardInput",
+                {"keys": [entry]},
+            )
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"key": key, "modifiers": list(modifiers), "flags": flags}})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
     def key_event(self, key: str) -> dict:
         from .toolkit_api import (
             _ok, _err, _not_implemented,
-            _W3C_KEY_MAP, _PRESS_BUTTON_MAP, _NOT_IMPLEMENTED_KEYS,
+            _W3C_KEY_MAP, _PRESS_BUTTON_MAP, _NOT_IMPLEMENTED_KEYS, _ARROW_KEYS,
         )
 
         key_upper = key.upper()
         if key_upper in _NOT_IMPLEMENTED_KEYS:
             return _not_implemented(f"key_event({key})")
 
+        # Arrow keys only move the cursor via typeKey; reuse the chord path.
+        if key_upper in _ARROW_KEYS:
+            return self.key_chord(key, [])
+
         try:
             if key_upper in _PRESS_BUTTON_MAP:
                 try:
                     self._post("/wda/pressButton", {"name": _PRESS_BUTTON_MAP[key_upper]})
-                except Exception as exc:
-                    if "404" in str(exc) and key_upper == "HOME":
+                except _WdaHTTPError as exc:
+                    # Older WDA builds lack /wda/pressButton; fall back to the
+                    # dedicated home-screen endpoint when it 404s.
+                    if exc.status_code == 404 and key_upper == "HOME":
                         self._post("/wda/homescreen", {})
                     else:
                         raise
@@ -618,6 +809,139 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
+    def window_size(self) -> dict:
+        """Return the WDA logical window size (points), used to map UI clicks."""
+        from .toolkit_api import _ok, _err
+
+        try:
+            resp = self._get_with_session_retry("/session/{sid}/window/size")
+            val = resp.get("value") or {}
+            width = val.get("width")
+            height = val.get("height")
+            if not width or not height:
+                return _err("SUBPROCESS", f"invalid window size response: {resp}")
+            return _ok({"width": int(width), "height": int(height)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def _app_switcher_w3c(self, cx: float, h: int) -> None:
+        """Fallback App Switcher gesture using synthetic W3C touch actions."""
+        y_start = h - 2
+        y_mid = int(h * 0.5)
+        self._pointer_gesture([
+            {"type": "pointerMove", "duration": 0, "x": int(cx), "y": y_start},
+            {"type": "pointerDown", "button": 0},
+            {"type": "pause", "duration": 70},
+            {"type": "pointerMove", "duration": 600, "x": int(cx), "y": y_mid},
+            {"type": "pause", "duration": 1100},
+            {"type": "pointerUp", "button": 0},
+        ])
+
+    def configure_mjpeg(
+        self,
+        framerate: int = 20,
+        scaling_factor: int = 60,
+        quality: int = 70,
+    ) -> dict:
+        """Tune WDA's MJPEG broadcaster for smooth, low-latency mirroring.
+
+        - framerate: target frames per second (0 = max, capped at 60 by WDA)
+        - scaling_factor: 1..100 (%) — downscaling shrinks JPEG size for speed
+        - quality: 1..100 (%) — JPEG compression quality
+        """
+        from .toolkit_api import _ok, _err
+
+        try:
+            self._post_with_session_retry(
+                "/session/{sid}/appium/settings",
+                {"settings": {
+                    "mjpegServerFramerate": int(framerate),
+                    "mjpegScalingFactor": int(scaling_factor),
+                    "mjpegServerScreenshotQuality": int(quality),
+                }},
+            )
+            return _ok({"framerate": framerate, "scalingFactor": scaling_factor, "quality": quality})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def _is_app_switcher_open(self) -> bool:
+        """True if the multitasking switcher is currently on screen.
+
+        Both the Home screen and the switcher run under SpringBoard, so the
+        discriminator is the app grid: the Home screen exposes
+        XCUIElementTypeIcon elements, the switcher (app cards) does not.
+        """
+        try:
+            sid = self._ensure_session()
+            info = self._get(f"/session/{sid}/wda/activeAppInfo").get("value") or {}
+            if info.get("bundleId") != "com.apple.springboard":
+                return False
+            source = self._get("/source?format=xml").get("value", "")
+            return "XCUIElementTypeIcon" not in source
+        except Exception:
+            return False
+
+    def app_switcher(self, max_attempts: int = 2) -> dict:
+        """Open the iOS App Switcher via a bottom-edge swipe-up-and-hold.
+
+        Short-circuits if the switcher is already open, then issues WDA's native
+        press-drag gesture from the current screen and verifies the result. The
+        gesture is reliable from any non-switcher state, so no Home reset is
+        needed. Falls back to a synthetic-W3C swipe when the native endpoint is
+        unavailable (older WDA builds).
+        """
+        from .toolkit_api import _ok, _err
+
+        try:
+            if self._is_app_switcher_open():
+                return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                            "extra": {"gesture": "app_switcher",
+                                      "method": "already_open", "attempts": 0}})
+
+            size = self.window_size()
+            if not size.get("ok"):
+                return size
+            w = size["data"]["width"]
+            h = size["data"]["height"]
+            cx = w / 2.0
+            from_y = float(h - 1)
+            to_y = h * 0.6
+            # Fast drag (~0.35s) + short end-hold, tuned on-device.
+            velocity = (from_y - to_y) / 0.35
+
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    self._post_with_session_retry(
+                        "/session/{sid}/wda/pressAndDragWithVelocity",
+                        {
+                            "fromX": cx, "fromY": from_y,
+                            "toX": cx, "toY": to_y,
+                            "pressDuration": 0.05,
+                            "velocity": velocity,
+                            "holdDuration": 0.6,
+                        },
+                    )
+                except Exception:
+                    self._app_switcher_w3c(cx, h)
+                    return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                                "extra": {"gesture": "app_switcher", "method": "w3c_fallback"}})
+
+                time.sleep(0.8)
+                if self._is_app_switcher_open():
+                    return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                                "extra": {"gesture": "app_switcher",
+                                          "method": "pressAndDragWithVelocity",
+                                          "attempts": attempt}})
+                time.sleep(0.3)
+
+            # Report unconfirmed so the caller can surface a retry hint.
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                        "extra": {"gesture": "app_switcher",
+                                  "method": "pressAndDragWithVelocity",
+                                  "attempts": max_attempts, "confirmed": False}})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
 
 # ---------------------------------------------------------------------------
 # iOSDevicesManager
@@ -657,6 +981,8 @@ class iOSDevicesManager:
             for udid in stale_udids:
                 device = self._devices.pop(udid)
                 device._forward_task.cancel()
+                if device._mjpeg_forward_task is not None:
+                    device._mjpeg_forward_task.cancel()
                 # Tear down the WDA XCUITest session so the runner exits cleanly.
                 if device._wda_task is not None:
                     device._wda_task.cancel()
@@ -677,7 +1003,12 @@ class iOSDevicesManager:
                 pass
 
             local_port = _find_free_port()
-            forward_task = _launch_forward(udid, local_port)
+            forward_task = _launch_forward(udid, local_port, _WDA_DEVICE_PORT)
+
+            mjpeg_local_port = _find_free_port(local_port + 1)
+            mjpeg_forward_task = _launch_forward(
+                udid, mjpeg_local_port, _WDA_MJPEG_DEVICE_PORT
+            )
 
             device = iOSDevice(
                 udid=udid,
@@ -687,6 +1018,8 @@ class iOSDevicesManager:
                 os_version=os_version,
                 forward_task=forward_task,
                 wda_bundle_id=wda_bundle_id,
+                mjpeg_local_port=mjpeg_local_port,
+                mjpeg_forward_task=mjpeg_forward_task,
             )
 
             with self._lock:
