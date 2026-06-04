@@ -26,6 +26,7 @@
 - `dump_ui`
 - `tap`
 - `swipe`
+- `long_press`
 - `input_text`
 - `key_event`
 - `launch_app`
@@ -164,6 +165,7 @@ def screenshot(target: str) -> dict: ...
 def dump_ui(target: str) -> dict: ...
 def tap(target: str, x: int, y: int) -> dict: ...
 def swipe(target: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 250) -> dict: ...
+def long_press(target: str, x: int, y: int, duration_ms: int = 800) -> dict: ...
 def input_text(target: str, text: str) -> dict: ...
 def key_event(target: str, key: str) -> dict: ...
 def launch_app(target: str, package: str, activity: str | None = None) -> dict: ...
@@ -545,6 +547,46 @@ python3 -B -m executor_<platform>.toolkit_cli
   }
 }
 ```
+
+## 6.5.1 `long_press`
+
+请求：
+
+```json
+{
+  "op": "long_press",
+  "args": {
+    "target": "emulator-5554",
+    "x": 576,
+    "y": 1238,
+    "durationMs": 800
+  }
+}
+```
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "ok": true,
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "",
+    "extra": {
+      "x": 576,
+      "y": 1238,
+      "durationMs": 800
+    }
+  }
+}
+```
+
+说明：
+
+- 在同一坐标按下并保持 `durationMs` 毫秒后抬起；`durationMs` 缺省为 800
+- 与 `tap`/`swipe` 同走 WDA W3C pointer actions 通道
 
 ## 6.6 `input_text`
 

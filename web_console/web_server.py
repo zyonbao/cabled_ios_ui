@@ -58,6 +58,13 @@ class SwipeBody(BaseModel):
     durationMs: int = 250
 
 
+class LongPressBody(BaseModel):
+    target: str
+    x: int
+    y: int
+    durationMs: int = 800
+
+
 class KeyBody(BaseModel):
     target: str
     key: str
@@ -163,6 +170,13 @@ def tap(body: TapBody) -> dict:
 def swipe(body: SwipeBody) -> dict:
     return _raise_if_error(
         api.swipe(body.target, body.x1, body.y1, body.x2, body.y2, body.durationMs)
+    )["data"]
+
+
+@app.post("/api/long_press")
+def long_press(body: LongPressBody) -> dict:
+    return _raise_if_error(
+        api.long_press(body.target, body.x, body.y, body.durationMs)
     )["data"]
 
 

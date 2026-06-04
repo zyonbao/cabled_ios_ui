@@ -592,6 +592,25 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
+    def long_press(self, x: int, y: int, duration_ms: int) -> dict:
+        from .toolkit_api import _ok, _err
+
+        try:
+            # Press and hold in place: same primitive as tap/swipe, just a
+            # longer pause with no pointerMove between down and up.
+            self._pointer_gesture([
+                {"type": "pointerMove", "duration": 0, "x": x, "y": y},
+                {"type": "pointerDown", "button": 0},
+                {"type": "pause", "duration": duration_ms},
+                {"type": "pointerUp", "button": 0},
+            ])
+            return _ok({
+                "exitCode": 0, "stdout": "", "stderr": "",
+                "extra": {"x": x, "y": y, "durationMs": duration_ms},
+            })
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
     def input_text(self, text: str) -> dict:
         from .toolkit_api import _ok, _err
 

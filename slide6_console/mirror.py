@@ -17,7 +17,13 @@ from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QWidget
 
-from .gestures import clamp_swipe_duration, is_tap, to_device_point
+from .gestures import (
+    clamp_long_press_duration,
+    clamp_swipe_duration,
+    is_long_press,
+    is_tap,
+    to_device_point,
+)
 
 # Opt-in tracing (shared SLIDE6_DEBUG flag): logs frame vs window_size geometry,
 # which is the ground truth needed to verify the orientation rendering on-device.
@@ -109,6 +115,7 @@ class ScreenView(QWidget):
     """Displays the latest device frame and emits tap/swipe gestures."""
 
     tap = Signal(int, int)
+    long_press = Signal(int, int, int)
     swipe = Signal(int, int, int, int, int)
     gesture_finished = Signal()
 
@@ -239,11 +246,14 @@ class ScreenView(QWidget):
         start_pt = to_device_point(start, rect, self._win_w, self._win_h)
         dx = end.x() - start.x()
         dy = end.y() - start.y()
-        if is_tap(dx, dy):
-            self.tap.emit(start_pt.x, start_pt.y)
-        else:
+        hold = max(0, event.timestamp() - self._press_ms)
+        # Displacement wins first (a moved finger is always a swipe); an in-place
+        # hold long enough is a long press; everything else is a tap.
+        if not is_tap(dx, dy):
             end_pt = to_device_point(end, rect, self._win_w, self._win_h)
-            hold = max(0, event.timestamp() - self._press_ms)
-            dur = clamp_swipe_duration(hold)
-            self.swipe.emit(start_pt.x, start_pt.y, end_pt.x, end_pt.y, dur)
+            self.swipe.emit(start_pt.x, start_pt.y, end_pt.x, end_pt.y, clamp_swipe_duration(hold))
+        elif is_long_press(hold):
+            self.long_press.emit(start_pt.x, start_pt.y, clamp_long_press_duration(hold))
+        else:
+            self.tap.emit(start_pt.x, start_pt.y)
         self.gesture_finished.emit()

@@ -258,6 +258,18 @@ def swipe(
 
 
 # ---------------------------------------------------------------------------
+# long_press
+# ---------------------------------------------------------------------------
+
+def long_press(target: str, x: int, y: int, duration_ms: int = 800) -> dict:
+    """Press and hold at (x, y) for duration_ms before releasing."""
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.long_press(x, y, duration_ms)
+
+
+# ---------------------------------------------------------------------------
 # input_text
 # ---------------------------------------------------------------------------
 

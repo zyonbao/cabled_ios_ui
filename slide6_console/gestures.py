@@ -17,6 +17,11 @@ TAP_THRESHOLD_PX = 8
 # Swipe duration clamp (ms), matching web_console.
 SWIPE_MIN_MS = 120
 SWIPE_MAX_MS = 1500
+# In-place hold at/above this counts as a long press; clamp the reported time.
+# 600ms sits comfortably above iOS's ~0.5s system long-press threshold, so the
+# on-device press reliably triggers a menu while staying clear of normal taps.
+LONG_PRESS_MIN_MS = 600
+LONG_PRESS_MAX_MS = 3000
 
 
 @dataclass(frozen=True)
@@ -54,3 +59,13 @@ def is_tap(dx: float, dy: float) -> bool:
 def clamp_swipe_duration(hold_ms: float) -> int:
     """Clamp the measured hold time into the allowed swipe duration range."""
     return int(min(SWIPE_MAX_MS, max(SWIPE_MIN_MS, hold_ms)))
+
+
+def is_long_press(hold_ms: float) -> bool:
+    """True if an in-place hold lasted long enough to count as a long press."""
+    return hold_ms >= LONG_PRESS_MIN_MS
+
+
+def clamp_long_press_duration(hold_ms: float) -> int:
+    """Clamp the measured hold time into the allowed long-press duration range."""
+    return int(min(LONG_PRESS_MAX_MS, max(LONG_PRESS_MIN_MS, hold_ms)))

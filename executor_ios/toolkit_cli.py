@@ -47,6 +47,14 @@ def _handle_swipe(args: dict) -> dict:
     )
 
 
+def _handle_long_press(args: dict) -> dict:
+    return api.long_press(
+        args["target"],
+        args["x"], args["y"],
+        args.get("durationMs", 800),  # camelCase from contract → duration_ms
+    )
+
+
 def _handle_input_text(args: dict) -> dict:
     return api.input_text(args["target"], args["text"])
 
@@ -83,6 +91,7 @@ OP_TABLE: dict[str, object] = {
     "dump_ui":         _handle_dump_ui,
     "tap":             _handle_tap,
     "swipe":           _handle_swipe,
+    "long_press":      _handle_long_press,
     "input_text":      _handle_input_text,
     "key_event":       _handle_key_event,
     "launch_app":      _handle_launch_app,

@@ -43,6 +43,10 @@ const state = {
 };
 
 const TAP_THRESHOLD_PX = 8; // movement below this counts as a tap
+// 600ms sits comfortably above iOS's ~0.5s system long-press threshold, so the
+// on-device press reliably triggers a menu while staying clear of normal taps.
+const LONG_PRESS_MIN_MS = 600; // in-place hold at/above this counts as a long press
+const LONG_PRESS_MAX_MS = 3000; // clamp the reported long-press hold time
 
 // ---------------------------------------------------------------------------
 // Status / overlay helpers
@@ -341,14 +345,14 @@ els.touch.addEventListener("pointerup", async (e) => {
   const dx = e.clientX - start.clientX;
   const dy = e.clientY - start.clientY;
   const dist = Math.hypot(dx, dy);
+  const hold = Math.round(performance.now() - start.t);
   const startPt = toDevicePoint(start.clientX, start.clientY);
 
   try {
-    if (dist < TAP_THRESHOLD_PX) {
-      await postJson("/api/tap", { target: state.target, x: startPt.x, y: startPt.y });
-    } else {
+    // Displacement wins first (a moved finger is always a swipe); an in-place
+    // hold long enough is a long press; everything else is a tap.
+    if (dist >= TAP_THRESHOLD_PX) {
       const endPt = toDevicePoint(e.clientX, e.clientY);
-      const hold = Math.round(performance.now() - start.t);
       const durationMs = Math.min(1500, Math.max(120, hold));
       await postJson("/api/swipe", {
         target: state.target,
@@ -356,6 +360,13 @@ els.touch.addEventListener("pointerup", async (e) => {
         x2: endPt.x, y2: endPt.y,
         durationMs,
       });
+    } else if (hold >= LONG_PRESS_MIN_MS) {
+      const durationMs = Math.min(LONG_PRESS_MAX_MS, hold);
+      await postJson("/api/long_press", {
+        target: state.target, x: startPt.x, y: startPt.y, durationMs,
+      });
+    } else {
+      await postJson("/api/tap", { target: state.target, x: startPt.x, y: startPt.y });
     }
   } catch (err) {
     flashStatus(`操作失败: ${err.message || err}`);

@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         self.shot_btn.clicked.connect(self.on_screenshot)
 
         self.screen.tap.connect(self.on_tap)
+        self.screen.long_press.connect(self.on_long_press)
         self.screen.swipe.connect(self.on_swipe)
         self.screen.gesture_finished.connect(self._refocus_keyboard)
 
@@ -394,6 +395,11 @@ class MainWindow(QMainWindow):
         target = self.target
         self.runner.submit(lambda: api.tap(target, x, y),
                            on_error=lambda e: self._flash(f"点按失败: {e}"))
+
+    def on_long_press(self, x: int, y: int, dur: int) -> None:
+        target = self.target
+        self.runner.submit(lambda: api.long_press(target, x, y, dur),
+                           on_error=lambda e: self._flash(f"长按失败: {e}"))
 
     def on_swipe(self, x1: int, y1: int, x2: int, y2: int, dur: int) -> None:
         target = self.target
