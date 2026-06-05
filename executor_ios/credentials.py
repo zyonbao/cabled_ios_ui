@@ -1,5 +1,9 @@
 """
-secrets.py — credential retrieval from environment variables.
+credentials.py — credential retrieval from environment variables.
+
+Named "credentials" rather than "secrets" so it never shadows Python's stdlib
+``secrets`` module (which some dependencies import) in a frozen/standalone build
+where package siblings can become importable at the top level.
 
 Convention: IOS_CRED_<ROLE>_<FIELD>
   role and field are uppercased automatically.

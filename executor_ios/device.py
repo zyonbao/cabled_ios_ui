@@ -25,6 +25,29 @@ from typing import Optional
 import requests
 
 # ---------------------------------------------------------------------------
+# Static-analysis hints for Nuitka (never executed)
+# ---------------------------------------------------------------------------
+# Every pymobiledevice3 dependency below is imported lazily inside functions to
+# avoid circular imports and slow startup. Nuitka's static import follower can
+# miss those in-function imports, so this `if False:` block (eliminated at
+# runtime) lists them explicitly to guarantee they are bundled. Keep it in sync
+# with the lazy imports throughout this module.
+if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
+    from pymobiledevice3 import usbmux  # noqa: F401
+    from pymobiledevice3.lockdown import create_using_usbmux  # noqa: F401
+    from pymobiledevice3.services.installation_proxy import (  # noqa: F401
+        InstallationProxyService,
+    )
+    from pymobiledevice3.remote.remote_service_discovery import (  # noqa: F401
+        RemoteServiceDiscoveryService,
+    )
+    from pymobiledevice3.services.dvt.testmanaged.xcuitest import (  # noqa: F401
+        TestConfig,
+        XCUITestService,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Background event loop (module-level singleton)
 # ---------------------------------------------------------------------------
 

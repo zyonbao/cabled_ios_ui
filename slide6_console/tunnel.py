@@ -5,10 +5,17 @@ before WDA can start; lower versions do not need it. The desktop console can
 detect whether the tunnel port is alive and, if not, launch the daemon with
 administrator privileges via the native macOS authorization dialog.
 
+The tunneld entry point is resolved per runtime environment so the console works
+both as source and as a Nuitka-frozen app bundle:
+  - Frozen (Nuitka multidist): run the bundled ``ios_tunneld`` executable that
+    sits next to the app binary in ``Contents/MacOS/`` (the multidist binary
+    dispatches to the tunneld entry by its ``ios_tunneld`` basename).
+  - Development: run the project interpreter with ``-m executor_ios.tunneld_main``.
+
 Security: the command executed under elevation is built entirely from fixed,
 internally-resolved paths (no UI/external input is interpolated), the target
-script path is validated to exist, the daemon binds only to 127.0.0.1, and no
-credentials are ever passed to it.
+binary/script path is validated to exist, the daemon binds only to 127.0.0.1,
+and no credentials are ever passed to it.
 """
 
 from __future__ import annotations
@@ -73,6 +80,47 @@ def _interpreter() -> Path:
     return Path(sys.executable)
 
 
+def _is_frozen() -> bool:
+    """True when running as a Nuitka-compiled / frozen bundle.
+
+    Nuitka injects a module-level ``__compiled__`` global into every compiled
+    module; ``sys.frozen`` covers other freezers as a fallback signal.
+    """
+    return "__compiled__" in globals() or bool(getattr(sys, "frozen", False))
+
+
+def _bundled_tunneld_binary() -> Path:
+    """Path to the bundled ios_tunneld executable next to the app binary.
+
+    In a Nuitka macOS app bundle the main binary lives in ``Contents/MacOS/``;
+    the multidist ``ios_tunneld`` entry is placed alongside it.
+    """
+    return Path(sys.executable).resolve().parent / "ios_tunneld"
+
+
+def _tunneld_command() -> list[str]:
+    """Resolve the argv used to launch tunneld for the current environment.
+
+    Frozen: the bundled ``ios_tunneld`` binary. Development: the project
+    interpreter running ``-m executor_ios.tunneld_main``. All tokens are fixed,
+    internally-resolved values — no external/UI input is ever included.
+    """
+    if _is_frozen():
+        return [str(_bundled_tunneld_binary())]
+    return [str(_interpreter()), "-m", "executor_ios.tunneld_main"]
+
+
+def _tunneld_entry_exists() -> bool:
+    """Validate the tunneld entry point exists before prompting for auth.
+
+    Frozen builds check the bundled binary; source checkouts check the
+    ``tunneld_main.py`` module file.
+    """
+    if _is_frozen():
+        return _bundled_tunneld_binary().exists()
+    return (_repo_root() / "executor_ios" / "tunneld_main.py").exists()
+
+
 def _applescript_quote(text: str) -> str:
     """Escape a string for embedding inside an AppleScript double-quoted literal."""
     return text.replace("\\", "\\\\").replace('"', '\\"')
@@ -90,15 +138,19 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     stopped on request via stop_tunneld. The shell command is composed only of
     fixed, validated paths.
     """
-    root = _repo_root()
-    interpreter = _interpreter()
-    # Validate the script entry is present before prompting for a password.
-    if not (root / "executor_ios" / "tunneld_main.py").exists():
+    # Validate the tunneld entry is present before prompting for a password.
+    if not _tunneld_entry_exists():
         return False
 
+    cmd = _tunneld_command()
+    # Quote the executable path (it may contain spaces, e.g. inside an app
+    # bundle); the remaining tokens are fixed literals (e.g. "-m", module name).
+    # The dev path additionally needs `cd <repo>` so `-m` resolves the package.
+    exe_part = '"%s"' % cmd[0]
+    rest_part = (" " + " ".join(cmd[1:])) if len(cmd) > 1 else ""
+    prefix = "" if _is_frozen() else f'cd "{_repo_root()}" && '
     shell_cmd = (
-        f'cd "{root}" && '
-        f'"{interpreter}" -m executor_ios.tunneld_main '
+        f"{prefix}{exe_part}{rest_part} "
         f'</dev/null >"{_TUNNELD_LOG}" 2>&1'
     )
     applescript = (

@@ -462,11 +462,14 @@ def type_credential(
     field: str,
     skip_clear: bool = False,
 ) -> dict:
-    from . import secrets  # local import to avoid circular dependency at module level
+    # Imported lazily to avoid a circular dependency at module load time.
+    # Named "credentials" (not "secrets") to avoid shadowing the stdlib
+    # ``secrets`` module, which dependencies import in frozen builds.
+    from . import credentials
 
-    value = secrets.get_credential(role, field)
+    value = credentials.get_credential(role, field)
     if value is None:
-        key = secrets.credential_env_key(role, field)
+        key = credentials.credential_env_key(role, field)
         return _err("BAD_TARGET", f"credential not found: {key}")
 
     result = input_text(target, value)

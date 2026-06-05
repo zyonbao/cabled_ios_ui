@@ -15,6 +15,7 @@ env/
 dist/
 build/
 *.egg
+nuitka-crash-report.xml
 
 # Test artifacts
 .pytest_cache/

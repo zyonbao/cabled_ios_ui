@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-定义凭据输入能力：从环境变量按约定格式安全读取凭据，并将其写入目标设备当前聚焦的 element，确保明文凭据不出现在日志、响应体或 stderr 中。
-## Requirements
 ### Requirement: 凭据从环境变量读取
 
 `credentials.py`（原 `secrets.py`，重命名以避免在冻结/独立产物中遮蔽 stdlib 的 `secrets` 模块）SHALL 按约定格式 `IOS_CRED_<ROLE>_<FIELD>` 从环境变量中读取凭据，`<ROLE>` 和 `<FIELD>` 均大写。明文凭据 SHALL NOT 出现在任何日志、响应体或 stderr 输出中。公开函数名（`get_credential`、`credential_env_key`）保持不变。
@@ -31,4 +29,3 @@ CLI 层 SHALL 将 JSON args 中的 `skipClear`（camelCase，Contract 约定）�
 #### Scenario: stderr 不输出明文凭据
 - **WHEN** type_credential 执行期间发生任何错误
 - **THEN** stderr 日志 SHALL NOT 包含凭据的实际值
-
