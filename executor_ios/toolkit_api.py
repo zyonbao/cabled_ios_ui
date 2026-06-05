@@ -488,7 +488,7 @@ def type_credential(
     skip_clear: bool = False,
 ) -> dict:
     # Imported lazily to avoid a circular dependency at module load time.
-    from . import secrets as credentials
+    from . import credentials
 
     value = credentials.get_credential(role, field)
     if value is None:
