@@ -172,6 +172,31 @@ def key_chord(target: str, key: str, modifiers: list) -> dict:
     return device.key_chord(key, modifiers or [])
 
 
+_PASTEBOARD_MAX_BYTES = 65536
+
+
+def set_pasteboard(target: str, text: str) -> dict:
+    """Write plaintext to the device's pasteboard."""
+    if len(text.encode("utf-8")) > _PASTEBOARD_MAX_BYTES:
+        return _err("BAD_TARGET", f"Text exceeds {_PASTEBOARD_MAX_BYTES} bytes")
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.set_pasteboard(text)
+
+
+def get_pasteboard(target: str) -> dict:
+    """Read the device's pasteboard as plaintext.
+
+    data = {"text": <str>, "isText": <bool>}; isText is False for empty or
+    non-text (e.g. image) pasteboard content.
+    """
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.get_pasteboard()
+
+
 # ---------------------------------------------------------------------------
 # dump_ui
 # ---------------------------------------------------------------------------
@@ -463,9 +488,7 @@ def type_credential(
     skip_clear: bool = False,
 ) -> dict:
     # Imported lazily to avoid a circular dependency at module load time.
-    # Named "credentials" (not "secrets") to avoid shadowing the stdlib
-    # ``secrets`` module, which dependencies import in frozen builds.
-    from . import credentials
+    from . import secrets as credentials
 
     value = credentials.get_credential(role, field)
     if value is None:

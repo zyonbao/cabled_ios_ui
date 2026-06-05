@@ -28,6 +28,19 @@ const els = {
   kbdBtn: document.getElementById("kbd-btn"),
   shotBtn: document.getElementById("shot-btn"),
   kbd: document.getElementById("kbd-capture"),
+  sendInput: document.getElementById("send-input"),
+  sendBtn: document.getElementById("send-btn"),
+  setPbBtn: document.getElementById("set-pb-btn"),
+  getPbBtn: document.getElementById("get-pb-btn"),
+  modal: document.getElementById("modal"),
+  modalTitle: document.getElementById("modal-title"),
+  modalHint: document.getElementById("modal-hint"),
+  modalText: document.getElementById("modal-text"),
+  modalCancel: document.getElementById("modal-cancel"),
+  modalConfirm: document.getElementById("modal-confirm"),
+  modalCopy: document.getElementById("modal-copy"),
+  tipsBtn: document.getElementById("tips-btn"),
+  tipsPop: document.getElementById("tips-pop"),
 };
 
 const state = {
@@ -119,6 +132,7 @@ function stopStream() {
   els.kbdBtn.disabled = true;
   els.shotBtn.disabled = true;
   els.reloadBtn.disabled = true;
+  setInputControlsEnabled(false);
   els.fpsReadout.textContent = "";
   // Clearing src closes the MJPEG connection held open by the browser.
   els.screen.removeAttribute("src");
@@ -217,6 +231,7 @@ async function onSelectDevice() {
     state.streaming = true;
     els.kbdBtn.disabled = false;
     els.shotBtn.disabled = false;
+    setInputControlsEnabled(true);
     els.fpsReadout.textContent = `MJPEG ${state.streamFps}fps`;
     startStream(gen);
   } catch (err) {
@@ -567,13 +582,196 @@ async function postJson(url, body) {
 }
 
 let flashTimer = null;
-function flashStatus(msg) {
-  setStatus(msg, "error");
+function flashStatus(msg, kind = "error") {
+  setStatus(msg, kind);
   if (flashTimer) clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
     if (state.streaming) setStatus("已连接", "online");
   }, 2500);
 }
+
+function flashOk(msg) {
+  flashStatus(msg, "online");
+}
+
+// ---------------------------------------------------------------------------
+// Text send + pasteboard
+// ---------------------------------------------------------------------------
+
+function setInputControlsEnabled(on) {
+  els.sendInput.disabled = !on;
+  els.sendBtn.disabled = !on;
+  els.setPbBtn.disabled = !on;
+  els.getPbBtn.disabled = !on;
+}
+
+async function sendText() {
+  const text = els.sendInput.value;
+  if (!text || !state.target) return; // empty content: do not send
+  els.sendBtn.disabled = true;
+  try {
+    await postJson("/api/type", { target: state.target, text });
+    els.sendInput.value = ""; // clear only on success
+  } catch (err) {
+    // Keep the input content on failure so the user can retry.
+    flashStatus(`发送失败: ${err.message || err}`);
+  } finally {
+    els.sendBtn.disabled = !state.streaming;
+    els.sendInput.focus();
+  }
+}
+
+// Modal helpers. `mode` is "set" (editable + confirm writes) or
+// "get" (read-only display, confirm just closes).
+let modalMode = null;
+
+function openModal(mode, { title, value, readonly, hint }) {
+  modalMode = mode;
+  els.modalTitle.textContent = title;
+  els.modalText.readOnly = !!readonly;
+  const showText = !hint;
+  if (hint) {
+    els.modalHint.textContent = hint;
+    els.modalHint.classList.remove("hidden");
+    els.modalText.classList.add("hidden");
+  } else {
+    els.modalHint.classList.add("hidden");
+    els.modalText.classList.remove("hidden");
+  }
+  els.modalText.value = value || "";
+  els.modalCancel.classList.toggle("hidden", mode === "get");
+  // Copy-to-host is only useful when reading actual text.
+  els.modalCopy.classList.toggle("hidden", !(mode === "get" && showText));
+  els.modalConfirm.textContent = mode === "get" ? "关闭" : "确认";
+  els.modal.classList.remove("hidden");
+  if (!readonly) {
+    els.modalText.focus();
+  }
+}
+
+function closeModal() {
+  els.modal.classList.add("hidden");
+  modalMode = null;
+}
+
+async function onModalConfirm() {
+  if (modalMode === "set") {
+    const text = els.modalText.value;
+    els.modalConfirm.disabled = true;
+    try {
+      await postJson("/api/set_pasteboard", { target: state.target, text });
+      closeModal();
+      flashOk("已设置设备剪贴板");
+    } catch (err) {
+      flashStatus(`设置剪贴板失败: ${err.message || err}`);
+    } finally {
+      els.modalConfirm.disabled = false;
+    }
+  } else {
+    closeModal();
+  }
+}
+
+async function onModalCopy() {
+  const text = els.modalText.value;
+  try {
+    await navigator.clipboard.writeText(text);
+    flashOk("已复制到本机剪贴板");
+  } catch (_err) {
+    // Clipboard API may be blocked (insecure context); fall back to selecting.
+    els.modalText.focus();
+    els.modalText.select();
+    flashStatus("复制失败，请手动选中后按 ⌘C");
+  }
+}
+
+async function onGetPasteboard() {
+  if (!state.target) return;
+  els.getPbBtn.disabled = true;
+  try {
+    const res = await postJson("/api/get_pasteboard", { target: state.target });
+    if (res && res.isText) {
+      openModal("get", { title: "设备剪贴板", value: res.text, readonly: true });
+      flashOk("已读取设备剪贴板");
+    } else {
+      openModal("get", {
+        title: "设备剪贴板",
+        readonly: true,
+        hint: "剪贴板为空或为非文本内容（请确认设备上已复制文本）",
+      });
+    }
+  } catch (err) {
+    flashStatus(`读取剪贴板失败: ${err.message || err}`);
+  } finally {
+    els.getPbBtn.disabled = !state.streaming;
+  }
+}
+
+els.sendBtn.addEventListener("click", sendText);
+els.sendInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    sendText();
+  }
+});
+els.setPbBtn.addEventListener("click", () => {
+  if (!state.target) return;
+  openModal("set", { title: "设置设备剪贴板", value: "", readonly: false });
+});
+els.getPbBtn.addEventListener("click", onGetPasteboard);
+els.modalCancel.addEventListener("click", closeModal);
+els.modalConfirm.addEventListener("click", onModalConfirm);
+els.modalCopy.addEventListener("click", onModalCopy);
+els.modal.addEventListener("click", (e) => {
+  if (e.target === els.modal) closeModal(); // click backdrop to dismiss
+});
+
+// ---------------------------------------------------------------------------
+// Usage tips popover (toggled by the "?" button next to 设备信息)
+// ---------------------------------------------------------------------------
+
+function positionTipsPop() {
+  const r = els.tipsBtn.getBoundingClientRect();
+  els.tipsPop.classList.remove("hidden");
+  const w = els.tipsPop.offsetWidth;
+  const h = els.tipsPop.offsetHeight;
+  // Prefer below-right of the button; clamp into the viewport with an 8px gap.
+  let left = Math.min(r.left, window.innerWidth - w - 8);
+  left = Math.max(8, left);
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  els.tipsPop.style.left = `${left}px`;
+  els.tipsPop.style.top = `${top}px`;
+}
+
+function toggleTipsPop() {
+  if (els.tipsPop.classList.contains("hidden")) {
+    positionTipsPop();
+    els.tipsBtn.classList.add("active");
+  } else {
+    closeTipsPop();
+  }
+}
+
+function closeTipsPop() {
+  els.tipsPop.classList.add("hidden");
+  els.tipsBtn.classList.remove("active");
+}
+
+els.tipsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleTipsPop();
+});
+document.addEventListener("click", (e) => {
+  if (els.tipsPop.classList.contains("hidden")) return;
+  if (!els.tipsPop.contains(e.target) && e.target !== els.tipsBtn) closeTipsPop();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeTipsPop();
+});
+window.addEventListener("resize", () => {
+  if (!els.tipsPop.classList.contains("hidden")) positionTipsPop();
+});
 
 // ---------------------------------------------------------------------------
 // Wiring

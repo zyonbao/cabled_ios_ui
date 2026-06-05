@@ -81,6 +81,11 @@ class ChordBody(BaseModel):
     modifiers: list[str] = []
 
 
+class PasteboardSetBody(BaseModel):
+    target: str
+    text: str
+
+
 class StreamConfigBody(BaseModel):
     target: str
     framerate: int = 20
@@ -195,6 +200,18 @@ def type_text(body: TypeBody) -> dict:
 def chord(body: ChordBody) -> dict:
     """Send a modifier-key chord (e.g. ⌘C) to the device's focused field."""
     return _raise_if_error(api.key_chord(body.target, body.key, body.modifiers))["data"]
+
+
+@app.post("/api/set_pasteboard")
+def set_pasteboard(body: PasteboardSetBody) -> dict:
+    """Write plaintext to the device's pasteboard."""
+    return _raise_if_error(api.set_pasteboard(body.target, body.text))["data"]
+
+
+@app.post("/api/get_pasteboard")
+def get_pasteboard(body: TargetBody) -> dict:
+    """Read the device's pasteboard as plaintext (data: {text, isText})."""
+    return _raise_if_error(api.get_pasteboard(body.target))["data"]
 
 
 class LaunchBody(BaseModel):

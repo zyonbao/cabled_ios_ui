@@ -55,7 +55,11 @@
     </div>
 
     <div class="sidebar">
-      <h2>设备信息</h2>
+      <div class="section-head">
+        <h2>设备信息</h2>
+        <button id="tips-btn" class="tips-btn" type="button"
+                title="操作提示" aria-label="操作提示">?</button>
+      </div>
       <dl id="device-info" class="info">
         <dt>名称</dt><dd id="info-name">—</dd>
         <dt>型号</dt><dd id="info-model">—</dd>
@@ -74,15 +78,47 @@
         <button id="shot-btn" class="btn btn-block" disabled>截图并下载</button>
       </div>
 
-      <h2>操作提示</h2>
-      <ul class="tips">
-        <li>在画面上<strong>单击</strong> = 点按</li>
-        <li>按住并<strong>拖动</strong> = 滑动</li>
-        <li>开启<strong>键盘输入</strong>后，先点设备上的输入框，再用 Mac 键盘打字（支持中文/退格/回车）</li>
-        <li>未安装 WDA 的设备无法控制</li>
-      </ul>
+      <h2>文本输入</h2>
+      <div class="send-row">
+        <input id="send-input" class="text-input" type="text"
+               placeholder="输入文本后发送到设备" autocomplete="off" disabled />
+        <button id="send-btn" class="btn" disabled>发送</button>
+      </div>
+
+      <h2>剪贴板</h2>
+      <div class="actions">
+        <button id="set-pb-btn" class="btn btn-block" disabled>设置剪贴板</button>
+        <button id="get-pb-btn" class="btn btn-block" disabled>读取剪贴板</button>
+      </div>
     </div>
   </main>
+
+  <!-- Floating popover with usage tips, toggled by the "?" button. -->
+  <div id="tips-pop" class="tips-pop hidden" role="dialog" aria-label="操作提示">
+    <div class="tips-pop-title">操作提示</div>
+    <ul class="tips">
+      <li>在画面上<strong>单击</strong> = 点按</li>
+      <li>按住并<strong>拖动</strong> = 滑动</li>
+      <li>开启<strong>键盘输入</strong>后，先点设备上的输入框，再用 Mac 键盘打字（支持中文/退格/回车）</li>
+      <li><strong>文本输入</strong>需先点设备上的输入框，再点发送（或按回车）</li>
+      <li><strong>剪贴板</strong>读写需 WDA 处于前台，否则可能为空</li>
+      <li>未安装 WDA 的设备无法控制</li>
+    </ul>
+  </div>
+
+  <!-- Modal: shared by set-pasteboard (editable) and get-pasteboard (read-only). -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <h3 id="modal-title" class="modal-title">剪贴板</h3>
+      <p id="modal-hint" class="modal-hint hidden"></p>
+      <textarea id="modal-text" class="modal-text" placeholder="在此输入要写入设备剪贴板的内容"></textarea>
+      <div class="modal-actions">
+        <button id="modal-copy" class="btn hidden">复制到本机</button>
+        <button id="modal-cancel" class="btn">取消</button>
+        <button id="modal-confirm" class="btn modal-primary">确认</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

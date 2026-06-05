@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import queue
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QEvent, Qt, QThread, Signal
 from PySide6.QtWidgets import QLineEdit, QWidget
 
 from executor_ios import toolkit_api as api
@@ -43,6 +43,7 @@ _EDIT_KEYS = {
     Qt.Key_Enter: "ENTER",
     Qt.Key_Backspace: "BACKSPACE",
     Qt.Key_Tab: "TAB",
+    Qt.Key_Backtab: "TAB",  # Shift+Tab arrives as Backtab
     Qt.Key_Escape: "ESCAPE",
 }
 
@@ -100,6 +101,25 @@ class KeyboardCapture(QLineEdit):
             self.clear()
         finally:
             self._busy = False
+
+    def event(self, event) -> bool:  # noqa: N802 - Qt override
+        et = event.type()
+        # Qt's QWidget.event() consumes Tab/Backtab for focus traversal before
+        # keyPressEvent ever sees them, so the host Tab would jump to the next
+        # widget instead of reaching the device. Intercept those here and route
+        # them through our key handling so Tab is forwarded to the device.
+        if et == QEvent.KeyPress and event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.keyPressEvent(event)
+            return True
+        # Accepting ShortcutOverride forces any chord that would otherwise be
+        # eaten by an app/window shortcut to be delivered to keyPressEvent
+        # instead, so all keys this field can receive are mirrored to the
+        # device. (OS-level shortcuts like ⌘Q are consumed by macOS earlier and
+        # cannot be captured here.)
+        if et == QEvent.ShortcutOverride:
+            event.accept()
+            return True
+        return super().event(event)
 
     def inputMethodEvent(self, event) -> None:  # noqa: N802 - Qt override
         # Track IME composition: a non-empty preedit means we are composing, so

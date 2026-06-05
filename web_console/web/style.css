@@ -212,6 +212,53 @@ select { min-width: 220px; }
 .info dd { margin: 0; word-break: break-all; }
 .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px; }
 
+/* Device-info header row with the tips ("?") button. */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.section-head h2 { margin: 0; }
+
+.tips-btn {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.tips-btn:hover { border-color: var(--accent); color: var(--text); }
+.tips-btn.active { border-color: var(--accent); color: var(--accent); }
+
+/* Floating tips popover; fixed so the sidebar's overflow won't clip it. */
+.tips-pop {
+  position: fixed;
+  z-index: 120;
+  width: min(300px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+.tips-pop.hidden { display: none; }
+.tips-pop-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
 .tips { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); line-height: 1.7; }
 .tips strong { color: var(--text); }
 
@@ -221,6 +268,77 @@ select { min-width: 220px; }
   border-color: var(--green);
   background: rgba(52, 199, 89, 0.18);
   color: #d6ffe0;
+}
+
+/* ---------- Text send row ---------- */
+.send-row { display: flex; gap: 8px; }
+.send-row .btn { flex-shrink: 0; }
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+.text-input:focus { outline: none; border-color: var(--accent); }
+.text-input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- Modal (set/get pasteboard) ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+.modal.hidden { display: none; }
+
+.modal-card {
+  width: min(520px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.modal-title { margin: 0 0 12px; font-size: 15px; }
+.modal-hint { margin: 0 0 12px; font-size: 13px; color: var(--amber); }
+.modal-hint.hidden { display: none; }
+
+.modal-text {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  line-height: 1.5;
+}
+.modal-text:focus { outline: none; border-color: var(--accent); }
+.modal-text.hidden { display: none; }
+.modal-text[readonly] { color: var(--text); cursor: text; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+.modal-primary {
+  border-color: var(--accent);
+  background: rgba(76, 141, 255, 0.18);
+  color: #dbe7ff;
 }
 
 /* Off-screen keyboard capture field: focusable but invisible. */

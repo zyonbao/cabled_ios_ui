@@ -693,6 +693,118 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
+    def _active_bundle_id(self) -> Optional[str]:
+        """Return the bundle id of the currently foreground app, or None."""
+        try:
+            sid = self._ensure_session()
+            info = self._get(f"/session/{sid}/wda/activeAppInfo").get("value") or {}
+            bundle = info.get("bundleId")
+            return bundle if isinstance(bundle, str) and bundle else None
+        except Exception:
+            return None
+
+    def _foreground_wda(self, timeout: float = 3.0) -> bool:
+        """Bring the WDA runner to the foreground and wait until it is active.
+
+        Pasteboard access on real devices only works while WDA is foreground
+        (an Apple security restriction), so get/set must wrap their call with
+        this. Returns True once WDA reports as the active app.
+        """
+        self._post_with_session_retry(
+            "/session/{sid}/wda/apps/launch",
+            {"bundleId": self._wda_bundle_id},
+        )
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._active_bundle_id() == self._wda_bundle_id:
+                return True
+            time.sleep(0.15)
+        return False
+
+    def _restore_app(self, bundle_id: Optional[str]) -> None:
+        """Re-foreground the app that was active before WDA was brought up."""
+        if not bundle_id or bundle_id == self._wda_bundle_id:
+            return
+        try:
+            self._post_with_session_retry(
+                "/session/{sid}/wda/apps/launch",
+                {"bundleId": bundle_id},
+            )
+        except Exception:
+            pass  # best-effort restore; never fail the pasteboard op over this
+
+    def set_pasteboard(self, text: str) -> dict:
+        """Write plaintext to the device pasteboard via WDA.
+
+        WDA's ``/wda/setPasteboard`` expects the content Base64-encoded and a
+        ``contentType`` of ``plaintext``. Apple only allows pasteboard access
+        while WDA is foreground, so this momentarily activates WDA, writes, then
+        restores the previously foreground app.
+        """
+        import base64
+
+        from .toolkit_api import _ok, _err
+
+        try:
+            content = base64.b64encode(text.encode("utf-8")).decode("ascii")
+            prev = self._active_bundle_id()
+            self._foreground_wda()
+            try:
+                self._post_with_session_retry(
+                    "/session/{sid}/wda/setPasteboard",
+                    {"content": content, "contentType": "plaintext"},
+                )
+            finally:
+                self._restore_app(prev)
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"length": len(text)}})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def get_pasteboard(self) -> dict:
+        """Read the device pasteboard as plaintext via WDA.
+
+        Returns ``data = {"text": <str>, "isText": <bool>}``. ``isText`` is
+        False when the pasteboard is empty or holds non-text (e.g. image)
+        content that cannot be decoded as a non-empty UTF-8 string. Apple only
+        allows pasteboard access while WDA is foreground, so this momentarily
+        activates WDA, reads once, then restores the previously foreground app
+        (the system pasteboard persists across the app switch).
+
+        Note: iOS 16+ shows a "Allow Paste" prompt the first time WDA reads
+        another app's pasteboard, and the read returns empty until the user
+        taps it. This does a single read and reports empty in that case — the
+        user dismisses the prompt and reads again.
+        """
+        import base64
+        import binascii
+
+        from .toolkit_api import _ok, _err
+
+        try:
+            prev = self._active_bundle_id()
+            self._foreground_wda()
+            try:
+                resp = self._post_with_session_retry(
+                    "/session/{sid}/wda/getPasteboard",
+                    {"contentType": "plaintext"},
+                )
+            finally:
+                self._restore_app(prev)
+            b64 = resp.get("value") or ""
+            text = ""
+            is_text = False
+            if isinstance(b64, str) and b64:
+                try:
+                    decoded = base64.b64decode(b64).decode("utf-8")
+                except (binascii.Error, ValueError, UnicodeDecodeError):
+                    decoded = ""
+                if decoded:
+                    text = decoded
+                    is_text = True
+            return _ok({"text": text, "isText": is_text})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
     def key_chord(self, key: str, modifiers: list) -> dict:
         """Send a modifier-key chord (e.g. Command+C) to the focused field.
 

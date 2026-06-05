@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 #
-# build_macos_app.sh — Build CablediOS.app with Nuitka (multidist, standalone).
+# build_macos_app.sh — Build CablediOS.app with Nuitka (two-pass standalone).
 #
-# Produces a non-onefile macOS .app bundle that contains BOTH entry points
-# (the PySide6 GUI and the iOS XPC tunnel daemon) sharing a single dependency
-# tree via Nuitka multidist. The shared deps (pymobiledevice3, cryptography,
-# libpython, ...) are therefore packaged only once.
+# Strategy: build the GUI app bundle and the tunneld binary separately, then
+# copy the tunneld binary into the app bundle.
 #
-# Entry-point dispatch is by sys.argv[0] basename:
-#   - GUI:     slide6_console/app.py        -> basename "app"
-#   - tunneld: executor_ios/ios_tunneld.py  -> basename "ios_tunneld"
-# After the build we add an "ios_tunneld" executable next to the GUI binary in
-# Contents/MacOS/ so slide6_console/tunnel.py can launch it under elevation.
+#   Pass 1 — GUI app bundle (CablediOS.app):
+#     Entry:  CablediOS.py  (absolute-import launcher for slide6_console.app)
+#     Includes: executor_ios, slide6_console, pymobiledevice3, PySide6
+#
+#   Pass 2 — tunneld standalone binary (ios_tunneld.dist/ios_tunneld):
+#     Entry:  executor_ios/ios_tunneld.py
+#     Includes: pymobiledevice3 only (NOT --include-package=executor_ios)
+#
+# Why two passes?
+#   The tunneld binary must NOT bundle executor_ios/secrets.py.  That file is
+#   a package-private credential helper that shares its base name with the
+#   stdlib "secrets" module.  Nuitka's frozen importer can resolve a bare
+#   `import secrets` to the user module instead of stdlib, breaking
+#   pymobiledevice3 (which calls secrets.token_hex).  By letting Nuitka follow
+#   only the actual import graph from ios_tunneld.py (-> tunneld_main ->
+#   pymobiledevice3), secrets.py is never bundled and the collision cannot
+#   occur.  The GUI pass still uses --include-package=executor_ios because the
+#   GUI needs executor_ios.secrets for the type_credential capability.
 #
 # Usage:
 #   packaging/build_macos_app.sh
@@ -21,9 +32,6 @@
 # Known limitations (out of scope here):
 #   - The app is NOT code-signed or notarized. First launch needs a manual
 #     Gatekeeper allow (System Settings > Privacy & Security > Open Anyway).
-#   - Nuitka multidist + --macos-create-app-bundle is flagged experimental; if
-#     the bundle is not produced, the script falls back to two standalone
-#     builds merged into one dist (see build_fallback()).
 
 set -euo pipefail
 
@@ -38,9 +46,11 @@ export NUITKA_CACHE_DIR="$CACHE_DIR"
 APP_NAME="CablediOS"
 ICON_SRC="$REPO_ROOT/slide6_console/AppIcon.png"
 ICON_ICNS="$BUILD_DIR/AppIcon.icns"
-# GUI entry is a top-level launcher (absolute imports) so multidist does not
-# break on relative imports; its basename becomes CFBundleExecutable.
+# GUI entry: top-level launcher with absolute imports (avoids relative-import
+# issues when compiled as a top-level __main__ by Nuitka).
 GUI_MAIN="$REPO_ROOT/CablediOS.py"
+# Tunneld entry: basename "ios_tunneld" must match the binary name looked up
+# by slide6_console/tunnel.py inside the frozen app bundle.
 TUNNELD_MAIN="$REPO_ROOT/executor_ios/ios_tunneld.py"
 
 # Prefer the project venv interpreter (it has the runtime deps installed).
@@ -106,9 +116,9 @@ generate_icon() {
     fi
 }
 
-# --- Primary build: multidist standalone app bundle -------------------------
-run_nuitka_multidist() {
-    log "Running Nuitka multidist build (this can take several minutes)…"
+# --- Pass 1: GUI app bundle -------------------------------------------------
+build_gui() {
+    log "Pass 1/2: building GUI app bundle (this can take several minutes)…"
     # shellcheck disable=SC2086 -- ICON_FLAG is intentionally word-split (may be empty)
     "$PY" -m nuitka \
         --standalone \
@@ -121,89 +131,59 @@ run_nuitka_multidist() {
         --include-package=slide6_console \
         --assume-yes-for-downloads \
         --output-dir="$BUILD_DIR" \
-        --main="$GUI_MAIN" \
-        --main="$TUNNELD_MAIN"
+        "$GUI_MAIN"
+}
+
+# --- Pass 2: tunneld binary (no executor_ios package) -----------------------
+build_tunneld() {
+    log "Pass 2/2: building tunneld binary…"
+    # IMPORTANT: do NOT add --include-package=executor_ios here.
+    # Nuitka will include executor_ios.tunneld_main by following the import
+    # graph from ios_tunneld.py.  The rest of the executor_ios package
+    # (including secrets.py) must stay out of this binary so it cannot shadow
+    # the stdlib secrets module that pymobiledevice3 depends on.
+    "$PY" -m nuitka \
+        --standalone \
+        --include-package=pymobiledevice3 \
+        --assume-yes-for-downloads \
+        --output-dir="$BUILD_DIR" \
+        "$TUNNELD_MAIN"
 }
 
 # --- Locate the produced .app bundle ----------------------------------------
 find_app_bundle() {
-    # Nuitka may name the bundle after the first main ("app.app") or the app
-    # name; pick the most recently produced .app under the output dir.
+    # Nuitka may name the bundle after the first main or the app name; pick
+    # the most recently produced .app under the output dir.
     find "$BUILD_DIR" -maxdepth 2 -name '*.app' -type d 2>/dev/null \
         | head -n1
 }
 
-# --- Read CFBundleExecutable (the GUI dispatch binary) ----------------------
-bundle_executable() {
-    local app="$1"
-    /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist" 2>/dev/null
-}
-
-# --- Add the ios_tunneld dispatch entry next to the GUI binary --------------
-add_tunneld_entry() {
+# --- Merge tunneld binary into the GUI app bundle ---------------------------
+merge_tunneld() {
     local app="$1"
     local macos_dir="$app/Contents/MacOS"
-    local gui_bin
-    gui_bin="$(bundle_executable "$app")"
-    [[ -n "$gui_bin" && -x "$macos_dir/$gui_bin" ]] \
-        || die "Could not resolve the GUI binary (CFBundleExecutable) in $app."
+    local tunneld_dist="$BUILD_DIR/ios_tunneld.dist"
 
-    # A relative symlink keeps the bundle relocatable; the multidist binary
-    # dispatches to the tunneld entry because argv[0] basename is "ios_tunneld".
-    ln -sf "$gui_bin" "$macos_dir/ios_tunneld"
-    log "Linked tunneld entry: Contents/MacOS/ios_tunneld -> $gui_bin"
-}
+    [[ -d "$tunneld_dist" ]] || die "tunneld dist not found at $tunneld_dist."
 
-# --- Fallback: two standalone builds merged into one dist -------------------
-# Build the GUI app bundle and the tunneld binary separately, then overlay the
-# tunneld dist onto the app's Contents/MacOS so they share one dependency tree.
-# Echoes the resulting .app path on success.
-build_fallback() {
-    warn "Falling back to two standalone builds merged into one bundle."
-
-    log "Fallback 1/3: building GUI app bundle…"
-    # shellcheck disable=SC2086
-    "$PY" -m nuitka \
-        --standalone \
-        --macos-create-app-bundle \
-        --macos-app-name="$APP_NAME" \
-        $ICON_FLAG \
-        --enable-plugin=pyside6 \
-        --include-package=pymobiledevice3 \
-        --include-package=executor_ios \
-        --include-package=slide6_console \
-        --assume-yes-for-downloads \
-        --output-dir="$BUILD_DIR" \
-        "$GUI_MAIN" >&2
-
-    log "Fallback 2/3: building tunneld binary…"
-    "$PY" -m nuitka \
-        --standalone \
-        --include-package=pymobiledevice3 \
-        --include-package=executor_ios \
-        --assume-yes-for-downloads \
-        --output-dir="$BUILD_DIR" \
-        "$TUNNELD_MAIN" >&2
-
-    local app tunneld_dist tunneld_bin macos_dir
-    app="$(find_app_bundle)"
-    [[ -n "$app" ]] || die "Fallback: GUI app bundle was not produced."
-    tunneld_dist="$BUILD_DIR/ios_tunneld.dist"
-    [[ -d "$tunneld_dist" ]] || die "Fallback: tunneld dist was not produced at $tunneld_dist."
-
-    macos_dir="$app/Contents/MacOS"
-    log "Fallback 3/3: overlaying tunneld dist into ${macos_dir} ..."
-    # Overlay everything except the tunneld entry binary; shared libs are
-    # identical (same build env), new files (none expected) are added.
+    local tunneld_bin
     tunneld_bin="$(find "$tunneld_dist" -maxdepth 1 -type f -perm -111 -name 'ios_tunneld*' | head -n1)"
-    [[ -n "$tunneld_bin" ]] || die "Fallback: tunneld executable not found in $tunneld_dist."
-    rsync -a --ignore-existing \
-        --exclude "$(basename "$tunneld_bin")" \
-        "$tunneld_dist"/ "$macos_dir"/ >&2
+    [[ -n "$tunneld_bin" ]] || die "tunneld executable not found in $tunneld_dist."
+
+    log "Merging tunneld into app bundle…"
+
+    # Copy tunneld binary as ios_tunneld (the name tunnel.py looks up).
     cp -f "$tunneld_bin" "$macos_dir/ios_tunneld"
     chmod +x "$macos_dir/ios_tunneld"
 
-    echo "$app"
+    # Overlay any additional shared libs the tunneld build needed that are not
+    # already present in the GUI bundle (rsync --ignore-existing is safe here
+    # because both builds use the same environment).
+    rsync -a --ignore-existing \
+        --exclude "$(basename "$tunneld_bin")" \
+        "$tunneld_dist"/ "$macos_dir"/ 2>/dev/null || true
+
+    log "Tunneld installed: Contents/MacOS/ios_tunneld"
 }
 
 # --- Verify the produced bundle ---------------------------------------------
@@ -213,7 +193,6 @@ verify_bundle() {
     [[ -e "$app/Contents/MacOS/ios_tunneld" ]] || die "ios_tunneld entry missing in $app."
     log "Verified: $app/Contents/MacOS/ios_tunneld present."
     if [[ -n "$ICON_FLAG" ]]; then
-        # Use a glob expansion (globs do not expand inside [[ ... ]]).
         if compgen -G "$app/Contents/Resources/*.icns" >/dev/null; then
             log "Verified: app icon embedded."
         else
@@ -239,19 +218,17 @@ main() {
     mkdir -p "$BUILD_DIR" "$CACHE_DIR"
 
     generate_icon
+    build_gui
 
     local app
-    if run_nuitka_multidist && [[ -n "$(find_app_bundle)" ]]; then
-        app="$(find_app_bundle)"
-        add_tunneld_entry "$app"
-    else
-        # Multidist did not yield an app bundle; the fallback builds + merges
-        # both standalone dists and adds the ios_tunneld entry itself.
-        app="$(build_fallback)"
-    fi
+    app="$(find_app_bundle)"
+    [[ -n "$app" ]] || die "GUI app bundle was not produced."
 
-    # Rename the bundle to the desired product name (renaming the .app dir does
-    # not affect CFBundleExecutable, so dispatch still works).
+    build_tunneld
+    merge_tunneld "$app"
+
+    # Rename the bundle to the desired product name (renaming the .app dir
+    # does not affect CFBundleExecutable, so the GUI binary still works).
     local final_app="$BUILD_DIR/$APP_NAME.app"
     if [[ "$app" != "$final_app" ]]; then
         rm -rf "$final_app"

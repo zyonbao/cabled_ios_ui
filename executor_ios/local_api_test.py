@@ -113,6 +113,39 @@ def test_input_text_invalid(udid: str) -> None:
         print(f"  {symbol} input_text validation [{label}]: kind={result.get('error', {}).get('kind')}")
 
 
+def test_pasteboard_roundtrip(udid: str) -> None:
+    """set_pasteboard then get_pasteboard must round-trip the same text.
+
+    Requires the WDA runner to be in the foreground (iOS UIPasteboard
+    restriction); a backgrounded WDA typically yields isText=False / empty.
+    """
+    for label, text in [("ascii", "hello world"), ("中文/emoji", "你好🌟 世界")]:
+        set_res = api.set_pasteboard(udid, text)
+        _print(f"set_pasteboard({udid!r}, {text!r})", set_res)
+        get_res = api.get_pasteboard(udid)
+        _print(f"get_pasteboard({udid!r})", get_res)
+        ok_flag = (
+            get_res.get("ok")
+            and get_res["data"].get("isText") is True
+            and get_res["data"].get("text") == text
+        )
+        symbol = "✅" if ok_flag else "❌"
+        print(f"  {symbol} pasteboard round-trip [{label}]")
+
+
+def test_get_pasteboard_nontext(udid: str) -> None:
+    """Manual: copy an image on the device first, then run this.
+
+    A non-text (e.g. image) pasteboard should return ok=True with
+    isText=False and empty text.
+    """
+    res = api.get_pasteboard(udid)
+    _print(f"get_pasteboard({udid!r}) [expect non-text]", res)
+    ok_flag = res.get("ok") and res["data"].get("isText") is False
+    symbol = "✅" if ok_flag else "❌"
+    print(f"  {symbol} non-text pasteboard reported isText=False")
+
+
 def test_key_home(udid: str) -> None:
     """7.4 — press HOME; device should return to the home screen."""
     _print(f"key_event({udid!r}, 'HOME')", api.key_event(udid, "HOME"))
@@ -151,6 +184,8 @@ def test_bad_target(bundle_id: str) -> None:
         ("tap",         lambda: api.tap(fake_udid, 0, 0)),
         ("swipe",       lambda: api.swipe(fake_udid, 0, 0, 0, 100)),
         ("input_text",  lambda: api.input_text(fake_udid, "hi")),
+        ("set_pasteboard", lambda: api.set_pasteboard(fake_udid, "hi")),
+        ("get_pasteboard", lambda: api.get_pasteboard(fake_udid)),
         ("key_event",   lambda: api.key_event(fake_udid, "HOME")),
         ("launch_app",  lambda: api.launch_app(fake_udid, bundle_id)),
         ("kill_app",    lambda: api.kill_app(fake_udid, bundle_id)),

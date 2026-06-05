@@ -17,12 +17,17 @@ from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -129,13 +134,53 @@ class MainWindow(QMainWindow):
         self.reload_btn = QPushButton("刷新画面 / 方向")
         self.kbd_btn = QPushButton("键盘输入: 关")
         self.shot_btn = QPushButton("截图并保存")
-        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
+        for btn in (self.home_btn, self.switcher_btn, self.reload_btn):
             btn.setEnabled(False)
             sidebar.addWidget(btn)
 
+        # Keyboard area: the toggle button and the active-capture row share the
+        # same slot. When keyboard mirroring is on, the button is hidden and the
+        # capture field + exit (✕) button take its place; toggling off restores
+        # the button.
+        self.kbd_btn.setEnabled(False)
+        sidebar.addWidget(self.kbd_btn)
+
         self.kbd_capture = KeyboardCapture()
-        self.kbd_capture.setEnabled(False)
-        sidebar.addWidget(self.kbd_capture)
+        self.kbd_close_btn = QPushButton("✕")
+        self.kbd_close_btn.setToolTip("退出键盘输入")
+        self.kbd_close_btn.setFixedWidth(36)
+        self.kbd_active_row = QWidget()
+        kbd_row = QHBoxLayout(self.kbd_active_row)
+        kbd_row.setContentsMargins(0, 0, 0, 0)
+        kbd_row.addWidget(self.kbd_capture, 1)
+        kbd_row.addWidget(self.kbd_close_btn)
+        self.kbd_active_row.setVisible(False)
+        sidebar.addWidget(self.kbd_active_row)
+
+        self.shot_btn.setEnabled(False)
+        sidebar.addWidget(self.shot_btn)
+
+        # Text send row: a standalone field + send button, independent of the
+        # keyboard-mirroring capture above.
+        self.send_input = QLineEdit()
+        self.send_input.setPlaceholderText("输入文本后发送到设备")
+        self.send_input.setEnabled(False)
+        self.send_btn = QPushButton("发送")
+        self.send_btn.setEnabled(False)
+        send_row = QWidget()
+        send_layout = QHBoxLayout(send_row)
+        send_layout.setContentsMargins(0, 0, 0, 0)
+        send_layout.addWidget(self.send_input, 1)
+        send_layout.addWidget(self.send_btn)
+        sidebar.addWidget(send_row)
+
+        # Pasteboard buttons.
+        self.set_pb_btn = QPushButton("设置剪贴板")
+        self.get_pb_btn = QPushButton("读取剪贴板")
+        for btn in (self.set_pb_btn, self.get_pb_btn):
+            btn.setEnabled(False)
+            sidebar.addWidget(btn)
+
         sidebar.addStretch(1)
         center.addLayout(sidebar)
         root.addLayout(center, stretch=1)
@@ -154,7 +199,12 @@ class MainWindow(QMainWindow):
         # Per-device refresh: re-run the full select flow for the current device.
         self.reload_btn.clicked.connect(self.on_select_device)
         self.kbd_btn.clicked.connect(self.on_toggle_keyboard)
+        self.kbd_close_btn.clicked.connect(lambda: self._set_keyboard(False))
         self.shot_btn.clicked.connect(self.on_screenshot)
+        self.send_btn.clicked.connect(self.on_send_text)
+        self.send_input.returnPressed.connect(self.on_send_text)
+        self.set_pb_btn.clicked.connect(self.on_set_pasteboard)
+        self.get_pb_btn.clicked.connect(self.on_get_pasteboard)
 
         self.screen.tap.connect(self.on_tap)
         self.screen.long_press.connect(self.on_long_press)
@@ -366,8 +416,9 @@ class MainWindow(QMainWindow):
 
         self._set_status("已连接")
         self.screen.set_overlay(None)
-        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
+        for btn in self._connected_buttons():
             btn.setEnabled(True)
+        self.send_input.setEnabled(True)
         self.kbd_capture.setEnabled(True)
 
         self.mirror_thread = MjpegThread("127.0.0.1", port, self)
@@ -386,8 +437,9 @@ class MainWindow(QMainWindow):
             self.mirror_thread = None
         self.screen.clear_frame()
         self._set_keyboard(False)
-        for btn in (self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn, self.shot_btn):
+        for btn in self._connected_buttons():
             btn.setEnabled(False)
+        self.send_input.setEnabled(False)
         self.kbd_capture.setEnabled(False)
 
     # ------------------------------------------------------------ actions
@@ -482,8 +534,10 @@ class MainWindow(QMainWindow):
 
     def _set_keyboard(self, on: bool) -> None:
         self.kbd_on = on and self.mirror_thread is not None
-        self.kbd_btn.setText(f"键盘输入: {'开' if self.kbd_on else '关'}")
         if self.kbd_on:
+            # In-place swap: hide the toggle button, reveal capture field + exit.
+            self.kbd_btn.setVisible(False)
+            self.kbd_active_row.setVisible(True)
             self.kbd_sender.set_target(self.target)
             if not self.kbd_sender.isRunning():
                 self.kbd_sender.start()
@@ -491,12 +545,110 @@ class MainWindow(QMainWindow):
             self.kbd_capture.setFocus()
         else:
             self.kbd_capture.clearFocus()
+            self.kbd_active_row.setVisible(False)
+            self.kbd_btn.setVisible(True)
+            self.kbd_btn.setText("键盘输入: 关")
 
     def _refocus_keyboard(self) -> None:
         if self.kbd_on:
             self.kbd_capture.setFocus()
 
+    # ----------------------------------------------------- text & pasteboard
+
+    def on_send_text(self) -> None:
+        text = self.send_input.text()
+        if not text or not self.target:
+            return
+        target = self.target
+        self.runner.submit(
+            lambda: api.send_keys(target, text),
+            on_done=self._on_send_done,
+            on_error=lambda e: self._flash(f"发送失败: {e}"),
+        )
+
+    def _on_send_done(self, result: dict) -> None:
+        if result.get("ok"):
+            self.send_input.clear()  # clear only on success; keep on failure
+        else:
+            msg = result.get("error", {}).get("message", "发送失败")
+            self._flash(f"发送失败: {msg}")
+        self._refocus_keyboard()
+
+    def on_set_pasteboard(self) -> None:
+        if not self.target:
+            return
+        text, ok = QInputDialog.getMultiLineText(
+            self, "设置设备剪贴板", "内容:", ""
+        )
+        if not ok:
+            return
+        target = self.target
+        self._set_status("正在设置剪贴板…")
+        self.runner.submit(
+            lambda: api.set_pasteboard(target, text),
+            on_done=lambda r: self._flash("已设置设备剪贴板") if r.get("ok")
+            else self._flash("设置剪贴板失败: " + r.get("error", {}).get("message", "")),
+            on_error=lambda e: self._flash(f"设置剪贴板失败: {e}"),
+        )
+        self._refocus_keyboard()
+
+    def on_get_pasteboard(self) -> None:
+        if not self.target:
+            return
+        target = self.target
+        self._set_status("正在读取剪贴板…")
+        self.runner.submit(
+            lambda: api.get_pasteboard(target),
+            on_done=self._show_pasteboard,
+            on_error=lambda e: self._flash(f"读取剪贴板失败: {e}"),
+        )
+
+    def _show_pasteboard(self, result: dict) -> None:
+        if not result.get("ok"):
+            msg = result.get("error", {}).get("message", "")
+            self._flash(f"读取剪贴板失败: {msg}" if msg else "读取剪贴板失败")
+            return
+        data = result.get("data", {})
+        is_text = bool(data.get("isText"))
+        self._flash("已读取设备剪贴板" if is_text else "剪贴板为空或为非文本内容")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设备剪贴板")
+        layout = QVBoxLayout(dlg)
+        text = data.get("text", "")
+        if is_text:
+            view = QPlainTextEdit()
+            view.setPlainText(text)
+            view.setReadOnly(True)  # read-only but still selectable / copyable
+            layout.addWidget(view)
+        else:
+            layout.addWidget(QLabel("剪贴板为空或为非文本内容，无法显示/复制\n（请确认设备上已复制文本）"))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        if is_text:
+            copy_btn = buttons.addButton("复制到本机", QDialogButtonBox.ActionRole)
+            copy_btn.clicked.connect(lambda: self._copy_to_host(text))
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.resize(420, 320)
+        dlg.exec()
+        self._refocus_keyboard()
+
+    def _copy_to_host(self, text: str) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(text)
+        self._flash("已复制到本机剪贴板")
+
     # ------------------------------------------------------------- helpers
+
+    def _connected_buttons(self) -> tuple:
+        # Buttons enabled only while a device is connected / streaming.
+        return (
+            self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn,
+            self.shot_btn, self.send_btn, self.set_pb_btn, self.get_pb_btn,
+        )
 
     def _fill_info(self, dev: dict | None) -> None:
         meta = (dev or {}).get("metadata") or {}
