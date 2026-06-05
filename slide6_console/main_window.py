@@ -13,7 +13,7 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, Qt
+from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, Qt
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
     QComboBox,
@@ -489,7 +489,15 @@ class MainWindow(QMainWindow):
         png = base64.b64decode(result["data"]["base64"])
         png = self._orient_screenshot(png)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        default = f"ios-{self.target[:8]}-{ts}.png"
+        filename = f"ios-{self.target[:8]}-{ts}.png"
+        # Default the dialog to the user's Downloads folder (falls back to the
+        # home dir, then the bare filename, if Downloads cannot be resolved).
+        download_dir = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation
+        ) or QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.HomeLocation
+        )
+        default = os.path.join(download_dir, filename) if download_dir else filename
         path, _ = QFileDialog.getSaveFileName(self, "保存截图", default, "PNG 图片 (*.png)")
         if not path:
             return
