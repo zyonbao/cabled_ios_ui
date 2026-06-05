@@ -7,9 +7,9 @@ administrator privileges via the native macOS authorization dialog.
 
 The tunneld entry point is resolved per runtime environment so the console works
 both as source and as a Nuitka-frozen app bundle:
-  - Frozen (Nuitka multidist): run the bundled ``ios_tunneld`` executable that
+  - Frozen (Nuitka multidist): run the bundled ``cabled_ios_tunnel`` executable that
     sits next to the app binary in ``Contents/MacOS/`` (the multidist binary
-    dispatches to the tunneld entry by its ``ios_tunneld`` basename).
+    dispatches to the tunneld entry by its ``cabled_ios_tunnel`` basename).
   - Development: run the project interpreter with ``-m executor_ios.tunneld_main``.
 
 Security: the command executed under elevation is built entirely from fixed,
@@ -90,18 +90,18 @@ def _is_frozen() -> bool:
 
 
 def _bundled_tunneld_binary() -> Path:
-    """Path to the bundled ios_tunneld executable next to the app binary.
+    """Path to the bundled cabled_ios_tunnel executable next to the app binary.
 
     In a Nuitka macOS app bundle the main binary lives in ``Contents/MacOS/``;
-    the multidist ``ios_tunneld`` entry is placed alongside it.
+    the multidist ``cabled_ios_tunnel`` entry is placed alongside it.
     """
-    return Path(sys.executable).resolve().parent / "ios_tunneld"
+    return Path(sys.executable).resolve().parent / "cabled_ios_tunnel"
 
 
 def _tunneld_command() -> list[str]:
     """Resolve the argv used to launch tunneld for the current environment.
 
-    Frozen: the bundled ``ios_tunneld`` binary. Development: the project
+    Frozen: the bundled ``cabled_ios_tunnel`` binary. Development: the project
     interpreter running ``-m executor_ios.tunneld_main``. All tokens are fixed,
     internally-resolved values — no external/UI input is ever included.
     """

@@ -1,25 +1,4 @@
-## Purpose
-
-定义 Slide6 桌面应用的 XPC tunnel 引导能力：检测 iOS 17+ 设备所需的 tunnel 端口、按需以系统授权（管理员权限）拉起 tunneld，并在应用退出时按需询问是否停止 tunneld。
-## Requirements
-### Requirement: 选中 iOS 17+ 设备后检测 XPC tunnel 端口
-
-应用 SHALL 在用户选中设备后、执行 `prepare` 之前，依据设备元数据判定 iOS 主版本；仅当设备为 iOS 17+ 时检测 `executor_ios` 使用的 XPC tunnel 端口（`127.0.0.1:49151`）是否有进程在监听。iOS 17 以下设备 SHALL 跳过该检测。
-
-#### Scenario: 选中 iOS 17 以下设备
-
-- **WHEN** 用户选中一台 iOS 主版本低于 17 的设备
-- **THEN** 不进行 tunnel 检测、不弹出提示，直接继续 `prepare` 流程
-
-#### Scenario: 选中 iOS 17+ 设备且 tunnel 已就绪
-
-- **WHEN** 用户选中一台 iOS 17+ 设备且 tunnel 端口可连接
-- **THEN** 不弹出任何提示，直接继续 `prepare` 流程
-
-#### Scenario: 选中 iOS 17+ 设备且 tunnel 未就绪
-
-- **WHEN** 用户选中一台 iOS 17+ 设备且 tunnel 端口无人监听
-- **THEN** 弹出提示，说明该设备需要 XPC tunnel 并询问是否现在以管理员权限启动
+## MODIFIED Requirements
 
 ### Requirement: 经系统授权以管理员权限拉起 tunneld
 
@@ -58,26 +37,6 @@
 - **WHEN** 用户在系统授权框取消，或 tunneld 启动后端口在超时内仍未就绪
 - **THEN** 提示启动失败且不崩溃，应用继续运行，允许用户后续重试
 
-### Requirement: 退出时按需询问是否停止 tunneld
-
-应用退出时 SHALL 探测 tunnel 端口是否仍在运行；若在运行，则弹窗让用户选择是否停止 tunneld：用户选择停止才执行 kill，否则保留进程。若端口未在运行，则退出时不弹窗、不动作。
-
-#### Scenario: 退出时 tunnel 在运行且用户选择停止
-
-- **WHEN** 用户退出应用且 tunnel 端口仍在运行，并在弹窗中选择停止
-- **THEN** 应用在一次提权操作内解析占用该端口的监听进程并停止它（root 进程的端口需特权 `lsof` 才可见）
-- **AND** 停止 root 进程需再次特权，可能触发系统授权
-
-#### Scenario: 退出时 tunnel 在运行但用户选择保留
-
-- **WHEN** 用户退出应用且 tunnel 端口仍在运行，并在弹窗中选择保留
-- **THEN** 不停止 tunneld，进程继续运行
-
-#### Scenario: 退出时 tunnel 未运行
-
-- **WHEN** 用户退出应用且 tunnel 端口未在运行
-- **THEN** 退出时不弹窗、不尝试停止任何进程
-
 ### Requirement: 授权拉起的安全约束
 
 拉起 tunneld 的过程 SHALL 使用系统原生授权框，校验被执行入口的存在性（冻结环境校验 bundled `cabled_ios_tunnel` 二进制，开发环境校验 `tunneld_main.py` 源文件），命令字符串不得包含任何用户输入，且不向该进程传递任何凭据。
@@ -92,4 +51,3 @@
 
 - **WHEN** 应用在拉起前校验 tunneld 入口而该入口（冻结环境的 bundled 二进制或开发环境的源文件）不存在
 - **THEN** 直接返回失败，不弹出系统授权框
-

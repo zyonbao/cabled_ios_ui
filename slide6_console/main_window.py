@@ -66,7 +66,7 @@ _ORIENT_LABEL = {
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("iOS 设备控制台 (PySide6)")
+        self.setWindowTitle("CablediOS")
         self.resize(1100, 820)
 
         self.runner = AsyncRunner()

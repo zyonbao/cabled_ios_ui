@@ -8,17 +8,19 @@
 # libpython, ...) are therefore packaged only once.
 #
 # Entry-point dispatch is by sys.argv[0] basename:
-#   - GUI:     CablediOS.py             -> basename "CablediOS"
-#   - tunneld: executor_ios/ios_tunneld.py  -> basename "ios_tunneld"
-# After the build we add an "ios_tunneld" executable next to the GUI binary in
+#   - GUI:     CablediOS.py        -> basename "CablediOS"
+#   - tunneld: cabled_ios_tunnel.py -> basename "cabled_ios_tunnel"
+# After the build we add a "cabled_ios_tunnel" executable next to the GUI binary in
 # Contents/MacOS/ so slide6_console/tunnel.py can launch it under elevation.
 #
-# Why multidist is safe again:
-#   The previous two-pass design existed only to keep executor_ios/secrets.py
-#   out of the tunneld binary (its base name shadowed the stdlib "secrets"
-#   module that pymobiledevice3 imports).  That file has since been renamed to
-#   executor_ios/credentials.py, so the name collision can no longer occur and
-#   both entry points can safely share one multidist dependency tree.
+# Why both --main files live at the repo root:
+#   A Nuitka multidist --main is compiled as a top-level __main__ and its
+#   directory becomes a top-level import root. Keeping every --main at the repo
+#   root means executor_ios/ never becomes such a root, so executor_ios/secrets.py
+#   can never shadow the stdlib "secrets" module that pymobiledevice3 imports.
+#   (This is why the tunneld --main is cabled_ios_tunnel.py here, not the in-package
+#   executor_ios/ios_tunneld.py — and why credentials.py could be renamed back to
+#   secrets.py.)
 #
 # Usage:
 #   packaging/build_macos_app.sh
@@ -48,7 +50,9 @@ ICON_ICNS="$BUILD_DIR/AppIcon.icns"
 # GUI entry is a top-level launcher (absolute imports) so multidist does not
 # break on relative imports; its basename becomes CFBundleExecutable.
 GUI_MAIN="$REPO_ROOT/CablediOS.py"
-TUNNELD_MAIN="$REPO_ROOT/executor_ios/ios_tunneld.py"
+# tunneld entry is a top-level launcher (repo root) so executor_ios/ never becomes
+# a top-level import root; its basename becomes the multidist dispatch name.
+TUNNELD_MAIN="$REPO_ROOT/cabled_ios_tunnel.py"
 
 # Prefer the project venv interpreter (it has the runtime deps installed).
 if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
@@ -205,7 +209,7 @@ bundle_executable() {
     /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist" 2>/dev/null
 }
 
-# --- Add the ios_tunneld dispatch entry next to the GUI binary --------------
+# --- Add the cabled_ios_tunnel dispatch entry next to the GUI binary ----------
 add_tunneld_entry() {
     local app="$1"
     local macos_dir="$app/Contents/MacOS"
@@ -215,9 +219,9 @@ add_tunneld_entry() {
         || die "Could not resolve the GUI binary (CFBundleExecutable) in $app."
 
     # A relative symlink keeps the bundle relocatable; the multidist binary
-    # dispatches to the tunneld entry because argv[0] basename is "ios_tunneld".
-    ln -sf "$gui_bin" "$macos_dir/ios_tunneld"
-    log "Linked tunneld entry: Contents/MacOS/ios_tunneld -> $gui_bin"
+    # dispatches to the tunneld entry because argv[0] basename is "cabled_ios_tunnel".
+    ln -sf "$gui_bin" "$macos_dir/cabled_ios_tunnel"
+    log "Linked tunneld entry: Contents/MacOS/cabled_ios_tunnel -> $gui_bin"
 }
 
 # --- Fallback: two standalone builds merged into one dist -------------------
@@ -252,20 +256,20 @@ build_fallback() {
     local app tunneld_dist tunneld_bin macos_dir
     app="$(find_app_bundle)"
     [[ -n "$app" ]] || die "Fallback: GUI app bundle was not produced."
-    tunneld_dist="$BUILD_DIR/ios_tunneld.dist"
+    tunneld_dist="$BUILD_DIR/cabled_ios_tunnel.dist"
     [[ -d "$tunneld_dist" ]] || die "Fallback: tunneld dist was not produced at $tunneld_dist."
 
     macos_dir="$app/Contents/MacOS"
     log "Fallback 3/3: overlaying tunneld dist into ${macos_dir} ..."
     # Overlay everything except the tunneld entry binary; shared libs are
     # identical (same build env), new files (none expected) are added.
-    tunneld_bin="$(find "$tunneld_dist" -maxdepth 1 -type f -perm -111 -name 'ios_tunneld*' | head -n1)"
+    tunneld_bin="$(find "$tunneld_dist" -maxdepth 1 -type f -perm -111 -name 'cabled_ios_tunnel*' | head -n1)"
     [[ -n "$tunneld_bin" ]] || die "Fallback: tunneld executable not found in $tunneld_dist."
     rsync -a --ignore-existing \
         --exclude "$(basename "$tunneld_bin")" \
         "$tunneld_dist"/ "$macos_dir"/ >&2
-    cp -f "$tunneld_bin" "$macos_dir/ios_tunneld"
-    chmod +x "$macos_dir/ios_tunneld"
+    cp -f "$tunneld_bin" "$macos_dir/cabled_ios_tunnel"
+    chmod +x "$macos_dir/cabled_ios_tunnel"
 
     echo "$app"
 }
@@ -274,8 +278,8 @@ build_fallback() {
 verify_bundle() {
     local app="$1"
     [[ -d "$app" ]] || die "App bundle missing: $app"
-    [[ -e "$app/Contents/MacOS/ios_tunneld" ]] || die "ios_tunneld entry missing in $app."
-    log "Verified: $app/Contents/MacOS/ios_tunneld present."
+    [[ -e "$app/Contents/MacOS/cabled_ios_tunnel" ]] || die "cabled_ios_tunnel entry missing in $app."
+    log "Verified: $app/Contents/MacOS/cabled_ios_tunnel present."
     if [[ -n "$ICON_FLAG" ]]; then
         # Use a glob expansion (globs do not expand inside [[ ... ]]).
         if compgen -G "$app/Contents/Resources/*.icns" >/dev/null; then
@@ -310,7 +314,7 @@ main() {
         add_tunneld_entry "$app"
     else
         # Multidist did not yield an app bundle; the fallback builds + merges
-        # both standalone dists and adds the ios_tunneld entry itself.
+        # both standalone dists and adds the cabled_ios_tunnel entry itself.
         app="$(build_fallback)"
     fi
 

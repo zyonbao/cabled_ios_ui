@@ -55,7 +55,7 @@ python3 -m slide6_console.app
 
 - 仅在选中 **iOS 17+** 设备且 tunnel 端口（`127.0.0.1:49151`）无人监听时触发。
 - 采用 `osascript ... with administrator privileges` 按需拉起 `executor_ios.tunneld_main`，**每次拉起都会弹一次系统授权框**（不做持久化）。
-- 开发态使用项目 `.venv` 的绝对路径解释器并 `cd` 到仓库根目录执行；打包态应替换为内置的 `ios_tunneld` 二进制路径。
+- 开发态使用项目 `.venv` 的绝对路径解释器并 `cd` 到仓库根目录执行；打包态应替换为内置的 `cabled_ios_tunnel` 二进制路径。
 - **退出时**：若检测到 tunnel 仍在运行，会弹窗询问是否停止；选择停止会再触发一次管理员授权（停止 root 进程需要特权），选择保留则进程继续运行以便下次复用。
 
 ## 键盘输入分流（与 web_console 一致）

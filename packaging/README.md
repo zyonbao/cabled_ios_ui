@@ -31,11 +31,14 @@ packaging/build_macos_app.sh
 GUI 与 tunneld 守护进程都依赖 `pymobiledevice3`。为避免公共依赖被打包两份，脚本用
 Nuitka 的 **multidist**（一次构建传入两个 `--main`）生成单一依赖树：
 
-- GUI 入口：`slide6_console/app.py` → 分发名 basename `app`
-- tunneld 入口：`executor_ios/ios_tunneld.py` → 分发名 basename `ios_tunneld`
+- GUI 入口：`CablediOS.py`（仓库根目录）→ 分发名 basename `CablediOS`
+- tunneld 入口：`cabled_ios_tunnel.py`（仓库根目录）→ 分发名 basename `cabled_ios_tunnel`
+
+两个 `--main` 都放在仓库根目录，使 `executor_ios/` 不会成为顶层导入根，从而避免
+`executor_ios/secrets.py` 遮蔽 stdlib 的 `secrets`（`pymobiledevice3` 依赖它）。
 
 运行时 Nuitka 按 `sys.argv[0]` 的 basename 选择执行哪个入口。构建后脚本在
-`CablediOS.app/Contents/MacOS/` 内创建名为 `ios_tunneld` 的入口（指向 GUI 主二进制的
+`CablediOS.app/Contents/MacOS/` 内创建名为 `cabled_ios_tunnel` 的入口（指向 GUI 主二进制的
 符号链接）；`slide6_console/tunnel.py` 以管理员权限拉起 iOS 17+ 的 XPC tunnel 时即调用它。
 
 > multidist + `--macos-create-app-bundle` 在 Nuitka 中标记为 experimental。若未能产出

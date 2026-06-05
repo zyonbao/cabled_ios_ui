@@ -12,9 +12,9 @@ executor_ios/
   device.py          # iOSDevice / iOSDevicesManager，多设备管理、端口转发、WDA 生命周期
   toolkit_api.py     # 平台能力 API，供 Explorer / broker / executor 复用
   toolkit_cli.py     # 一次性 JSON stdin/stdout CLI
-  tunneld_main.py    # iOS 17+ XPC tunnel daemon 入口，可打包为 ios_tunneld
-  ios_tunneld.py     # multidist 打包用的 tunneld 入口包装（basename = ios_tunneld）
-  credentials.py     # type_credential 使用的凭据读取模块（原 secrets.py，避免遮蔽 stdlib）
+  tunneld_main.py    # iOS 17+ XPC tunnel daemon 入口，可打包为独立 tunneld 二进制
+  ios_tunneld.py     # 仅非打包(dev)模式的 tunneld 启动器，须以 -m 模块形式运行
+  secrets.py         # type_credential 使用的凭据读取模块
 ```
 
 ## 环境依赖

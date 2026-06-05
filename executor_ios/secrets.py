@@ -1,9 +1,12 @@
 """
-credentials.py — credential retrieval from environment variables.
+secrets.py — credential retrieval from environment variables.
 
-Named "credentials" rather than "secrets" so it never shadows Python's stdlib
-``secrets`` module (which some dependencies import) in a frozen/standalone build
-where package siblings can become importable at the top level.
+This module is named "secrets" again (it was briefly "credentials"). The name is
+safe because no Nuitka multidist --main lives inside this package anymore: both
+entry points (CablediOS.py and cabled_ios_tunnel.py) sit at the repo root, so
+executor_ios/ never becomes a top-level import root. This file is therefore only
+importable as ``executor_ios.secrets`` and can never shadow the stdlib ``secrets``
+module that dependencies such as pymobiledevice3 import.
 
 Convention: IOS_CRED_<ROLE>_<FIELD>
   role and field are uppercased automatically.

@@ -488,11 +488,11 @@ def type_credential(
     skip_clear: bool = False,
 ) -> dict:
     # Imported lazily to avoid a circular dependency at module load time.
-    from . import credentials
+    from . import secrets
 
-    value = credentials.get_credential(role, field)
+    value = secrets.get_credential(role, field)
     if value is None:
-        key = credentials.credential_env_key(role, field)
+        key = secrets.credential_env_key(role, field)
         return _err("BAD_TARGET", f"credential not found: {key}")
 
     result = input_text(target, value)
