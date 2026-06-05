@@ -311,6 +311,29 @@ function applyOrientation() {
 // Re-evaluate rotation once the first frame's natural size is known.
 els.screen.addEventListener("load", applyOrientation);
 
+// WDA's /screenshot already corrects the 90° landscape rotation but not the 180°
+// flip, so an upside-down portrait device returns an inverted PNG. Rotate it back
+// on a canvas so the downloaded file matches what's shown on the device.
+async function orientScreenshot(blob) {
+  const degrees = (state.orientation && state.orientation.degrees) || 0;
+  if (degrees !== 180) return blob;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    ctx.translate(canvas.width, canvas.height);
+    ctx.rotate(Math.PI);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const rotated = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    return rotated || blob;
+  } catch (_err) {
+    return blob;
+  }
+}
+
 window.addEventListener("resize", sizePhone);
 
 // ---------------------------------------------------------------------------
@@ -608,7 +631,8 @@ els.shotBtn.addEventListener("click", async () => {
   try {
     const res = await fetch(`/api/screenshot?target=${encodeURIComponent(state.target)}`);
     if (!res.ok) throw new Error(await safeDetail(res));
-    const blob = await res.blob();
+    let blob = await res.blob();
+    blob = await orientScreenshot(blob);
     const url = URL.createObjectURL(blob);
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const a = document.createElement("a");

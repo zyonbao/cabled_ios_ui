@@ -13,7 +13,8 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QBuffer, QIODevice, Qt
+from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -434,6 +435,7 @@ class MainWindow(QMainWindow):
             self._flash("截图失败")
             return
         png = base64.b64decode(result["data"]["base64"])
+        png = self._orient_screenshot(png)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         default = f"ios-{self.target[:8]}-{ts}.png"
         path, _ = QFileDialog.getSaveFileName(self, "保存截图", default, "PNG 图片 (*.png)")
@@ -446,6 +448,22 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             self._flash(f"保存失败: {exc}")
         self._refocus_keyboard()
+
+    def _orient_screenshot(self, png: bytes) -> bytes:
+        # WDA's screenshot already corrects the 90° landscape rotation but not the
+        # 180° flip, so an upside-down portrait device yields an inverted PNG. Mirror
+        # the mirror.py render correction here so saved files match what's on screen.
+        if int(self.orientation.get("degrees", 0)) % 360 != 180:
+            return png
+        image = QImage.fromData(png, "PNG")
+        if image.isNull():
+            return png
+        rotated = image.transformed(QTransform().rotate(180), Qt.SmoothTransformation)
+        buffer = QBuffer()
+        buffer.open(QIODevice.WriteOnly)
+        if not rotated.save(buffer, "PNG"):
+            return png
+        return bytes(buffer.data())
 
     def on_fps_changed(self) -> None:
         self.fps = self.fps_combo.currentData() or _DEFAULT_FPS
