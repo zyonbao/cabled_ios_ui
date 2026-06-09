@@ -45,6 +45,14 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
         VEND_CONTAINER,
         VEND_DOCUMENTS,
     )
+    from pymobiledevice3.services.mobile_config import (  # noqa: F401
+        MobileConfigService,
+    )
+    from pymobiledevice3.services.crash_reports import (  # noqa: F401
+        CrashReportsManager,
+    )
+    from pymobiledevice3.services.syslog import SyslogService  # noqa: F401
+    from pymobiledevice3.services.os_trace import OsTraceService  # noqa: F401
     from pymobiledevice3.remote.remote_service_discovery import (  # noqa: F401
         RemoteServiceDiscoveryService,
     )
@@ -1577,6 +1585,340 @@ class iOSDevice:
                 value = str(value)
             info[str(key)] = value
         return _ok({"udid": self.udid, "info": info})
+
+    # ------------------------------------------------------------------
+    # Configuration profiles (mobile_config / MCInstall)
+    # ------------------------------------------------------------------
+    #
+    # These talk to the lockdown MCInstall service and do NOT require WDA or an
+    # XPC tunnel. Profile installation usually still needs the user to confirm
+    # in the device Settings app (system behaviour), so a successful return here
+    # means "delivered for confirmation", not "fully installed".
+
+    def list_profiles(self) -> dict:
+        """List installed configuration profiles via MobileConfigService."""
+        from .toolkit_api import _ok, _err
+
+        async def _op() -> list[dict]:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.mobile_config import MobileConfigService
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with MobileConfigService(lockdown=lockdown) as mc:
+                    raw = await mc.get_profile_list()
+            return _normalize_profiles(raw)
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            return _ok({"profiles": future.result(timeout=30)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def install_profile(self, path: str) -> dict:
+        """Deliver a local .mobileconfig to the device for confirmation."""
+        import os
+
+        from .toolkit_api import _ok, _err
+
+        if not path or not os.path.isfile(path):
+            return _err("BAD_TARGET", f"file not found: {path}")
+
+        async def _op() -> None:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.mobile_config import MobileConfigService
+
+            with open(path, "rb") as f:
+                payload = f.read()
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with MobileConfigService(lockdown=lockdown) as mc:
+                    await mc.install_profile(payload)
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            future.result(timeout=120)
+            # "delivered": the device may still require manual confirmation.
+            return _ok({"delivered": True, "path": path})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def remove_profile(self, identifier: str) -> dict:
+        """Remove an installed configuration profile by its identifier."""
+        from .toolkit_api import _ok, _err
+
+        if not identifier:
+            return _err("BAD_TARGET", "identifier is required")
+
+        async def _op() -> None:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.mobile_config import MobileConfigService
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with MobileConfigService(lockdown=lockdown) as mc:
+                    await mc.remove_profile(identifier)
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            future.result(timeout=60)
+            return _ok({"removed": True, "identifier": identifier})
+        except Exception as exc:
+            # Supervised / MDM-locked profiles refuse removal; surface as error.
+            return _err("SUBPROCESS", str(exc))
+
+    # ------------------------------------------------------------------
+    # Crash reports (crash_reports / CrashReportsManager over AFC2)
+    # ------------------------------------------------------------------
+    #
+    # Listing / exporting / deleting crash logs is a standard lockdown+AFC2
+    # capability and needs neither WDA nor an XPC tunnel.
+
+    async def _with_crash(self, op: "Callable[[object], Awaitable]"):
+        """Open a CrashReportsManager session for one request and run ``op``."""
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.crash_reports import CrashReportsManager
+
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
+            async with CrashReportsManager(lockdown) as crash:
+                return await op(crash)
+
+    def list_crashes(self, sub_path: str = "/") -> dict:
+        """List crash-report entries under ``sub_path`` (depth=1), like afc_list.
+
+        ls("/") yields top-level items prefixed with "/", while ls of a
+        sub-directory yields paths already relative to the crash root (e.g.
+        "DiagnosticLogs/Audio"). Each entry exposes ``name`` (basename, for
+        display) and ``path`` (the full crash-root-relative path, for navigation
+        and pull/clear). stat uses the absolute form ("/" + path) to work at any
+        depth.
+        """
+        from .toolkit_api import _ok, _err
+
+        listing_path = (sub_path or "/").strip() or "/"
+
+        async def _op(crash) -> list[dict]:
+            names = await crash.ls(listing_path, depth=1)
+            entries: list[dict] = []
+            for name in names:
+                full = name.lstrip("/")  # crash-root-relative, no leading slash
+                is_dir, size, mtime = False, 0, ""
+                try:
+                    st = await crash.afc.stat("/" + full)
+                    is_dir = st.get("st_ifmt") == "S_IFDIR"
+                    size = int(st.get("st_size", 0))
+                    mt = st.get("st_mtime")
+                    mtime = mt.isoformat() if hasattr(mt, "isoformat") else str(mt or "")
+                except Exception:
+                    pass  # unreadable entry: surface name with default metadata
+                entries.append({
+                    "name": posixpath.basename(full),
+                    "path": full,
+                    "isDir": is_dir,
+                    "size": size,
+                    "mtime": mtime,
+                })
+            entries.sort(key=lambda e: (not e["isDir"], e["name"].lower()))
+            return entries
+
+        future = asyncio.run_coroutine_threadsafe(self._with_crash(_op), _bg_loop)
+        try:
+            return _ok({"entries": future.result(timeout=60)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def pull_crash(self, remote_path: str, local_dir: str, erase: bool = False) -> dict:
+        """Export one crash entry into ``local_dir``; optionally erase original.
+
+        ``CrashReportsManager.pull`` writes ``entry`` into the ``out`` directory
+        (named by its basename) and, when ``erase`` is set, removes the original
+        from the device only after a successful copy.
+        """
+        import os
+
+        from .toolkit_api import _ok, _err
+
+        if not remote_path:
+            return _err("BAD_TARGET", "remote_path is required")
+        if not local_dir:
+            return _err("BAD_TARGET", "local_dir is required")
+        entry = remote_path.lstrip("/")
+
+        async def _op(crash) -> None:
+            await crash.pull(local_dir, entry=entry, erase=erase, progress_bar=False)
+
+        future = asyncio.run_coroutine_threadsafe(self._with_crash(_op), _bg_loop)
+        try:
+            future.result(timeout=600)
+            local_path = os.path.join(local_dir, os.path.basename(entry))
+            return _ok({"pulled": True, "remote": entry,
+                        "local": local_path, "erased": bool(erase)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def clear_crash(self, remote_path: str) -> dict:
+        """Delete a single crash entry from the device."""
+        from .toolkit_api import _ok, _err
+
+        if not remote_path:
+            return _err("BAD_TARGET", "remote_path is required")
+        entry = remote_path.lstrip("/")
+
+        async def _op(crash) -> None:
+            # Delete the specific entry directly (clear() would treat the path
+            # as a directory and wipe everything under it).
+            await crash.afc.rm(entry, force=True)
+
+        future = asyncio.run_coroutine_threadsafe(self._with_crash(_op), _bg_loop)
+        try:
+            future.result(timeout=120)
+            return _ok({"removed": True, "remote": entry})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    # ------------------------------------------------------------------
+    # System log streaming (syslog / os_trace)
+    # ------------------------------------------------------------------
+    #
+    # Streaming is long-lived, so it does not fit the one-shot request/response
+    # model. open_log_stream schedules an async consumer on the shared _bg_loop
+    # and pushes formatted lines into a thread-safe queue; the desktop UI drains
+    # that queue from a worker thread and renders with rate limiting. Both
+    # sources are lockdown services (no WDA / tunnel required).
+
+    def open_log_stream(self, source: str) -> "LogStreamHandle":
+        """Start a syslog/oslog stream; returns a handle exposing a line queue."""
+        return LogStreamHandle(self.udid, source)
+
+
+# ---------------------------------------------------------------------------
+# Configuration-profile normalization
+# ---------------------------------------------------------------------------
+
+def _normalize_profiles(raw: dict) -> list[dict]:
+    """Flatten MobileConfigService.get_profile_list() into UI-friendly rows.
+
+    get_profile_list() returns a dict whose 'ProfileMetadata' maps each profile
+    identifier to its metadata (name / type / organization / payload count).
+    Field names vary by iOS version, so each is looked up defensively.
+    """
+    metadata = (raw or {}).get("ProfileMetadata") or {}
+    profiles: list[dict] = []
+    for identifier, meta in metadata.items():
+        meta = meta or {}
+        payloads = meta.get("PayloadContent") or meta.get("Payloads") or []
+        profiles.append({
+            "identifier": str(identifier),
+            "name": str(meta.get("PayloadDisplayName")
+                        or meta.get("Name") or identifier),
+            "type": str(meta.get("PayloadType") or ""),
+            "organization": str(meta.get("PayloadOrganization") or ""),
+            "payloadCount": len(payloads) if isinstance(payloads, (list, tuple)) else 0,
+        })
+    profiles.sort(key=lambda p: p["name"].lower())
+    return profiles
+
+
+# ---------------------------------------------------------------------------
+# Log stream handle (syslog / os_trace)
+# ---------------------------------------------------------------------------
+
+class LogStreamHandle:
+    """A live system-log stream backed by a coroutine on the shared _bg_loop.
+
+    The coroutine iterates the selected source's async generator and pushes
+    formatted text lines into ``queue`` (a thread-safe queue.Queue). On error or
+    natural end it pushes a sentinel ``(ERROR, message)`` / ``(EOF, None)`` tuple
+    so the consumer can react. Call ``close()`` to cancel the stream and release
+    the underlying lockdown connection.
+    """
+
+    LINE = "line"
+    ERROR = "error"
+    EOF = "eof"
+
+    def __init__(self, udid: str, source: str) -> None:
+        import queue as _queue
+
+        self.udid = udid
+        self.source = source
+        self.queue: "_queue.Queue[tuple[str, object]]" = _queue.Queue(maxsize=20000)
+        self._closed = False
+        self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
+
+    async def _run(self) -> None:
+        try:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                if self.source == "oslog":
+                    async for line in self._iter_oslog(lockdown):
+                        self._put(self.LINE, line)
+                else:
+                    async for line in self._iter_syslog(lockdown):
+                        self._put(self.LINE, line)
+            self._put(self.EOF, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._put(self.ERROR, str(exc))
+
+    async def _iter_syslog(self, lockdown):
+        from pymobiledevice3.services.syslog import SyslogService
+
+        async for line in SyslogService(service_provider=lockdown).watch():
+            yield line
+
+    async def _iter_oslog(self, lockdown):
+        from pymobiledevice3.services.os_trace import OsTraceService
+
+        async for entry in OsTraceService(lockdown=lockdown).syslog():
+            yield _format_oslog_entry(entry)
+
+    def _put(self, kind: str, payload: object) -> None:
+        if self._closed:
+            return
+        try:
+            self.queue.put_nowait((kind, payload))
+        except Exception:
+            # Queue is full: drop the line rather than block the bg loop.
+            pass
+
+    def close(self) -> None:
+        """Cancel the stream coroutine (idempotent)."""
+        self._closed = True
+        if self._future and not self._future.done():
+            _bg_loop.call_soon_threadsafe(self._future.cancel)
+
+
+def _format_oslog_entry(entry) -> str:
+    """Render an os_trace SyslogEntry as a single readable line."""
+    parts = []
+    ts = getattr(entry, "timestamp", None)
+    if ts is not None:
+        parts.append(ts.isoformat() if hasattr(ts, "isoformat") else str(ts))
+    pid = getattr(entry, "pid", None)
+    label = getattr(entry, "label", None)
+    subsystem = getattr(label, "subsystem", None) if label is not None else None
+    category = getattr(label, "category", None) if label is not None else None
+    level = getattr(entry, "level", None)
+    image = getattr(entry, "image_name", None) or getattr(entry, "filename", None)
+    tag = image or subsystem or ""
+    head = []
+    if pid is not None:
+        head.append(f"[{pid}]")
+    if level is not None:
+        head.append(f"<{getattr(level, 'name', level)}>")
+    if subsystem or category:
+        head.append(f"{subsystem or ''}:{category or ''}")
+    elif tag:
+        head.append(str(tag))
+    message = getattr(entry, "message", "") or ""
+    parts.append(" ".join(head))
+    parts.append(str(message))
+    return " ".join(p for p in parts if p)
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -315,12 +316,15 @@ class DcimAlbumTab(QWidget):
         layout = QVBoxLayout(self)
 
         bar = QHBoxLayout()
-        self.path_label = QLabel(self.cur_path)
+        # Unified toolbar order across all file browsers: 上一级 - 路径编辑框 - 刷新.
+        # Editable path (Enter to jump to any path under the DCIM root).
         self.up_btn = QPushButton("上一级")
+        self.path_edit = QLineEdit(self.cur_path)
+        self.path_edit.setPlaceholderText("输入路径后回车跳转")
         self.refresh_btn = QPushButton("刷新")
         self.export_btn = QPushButton("导出选中")
-        bar.addWidget(self.path_label, 1)
         bar.addWidget(self.up_btn)
+        bar.addWidget(self.path_edit, 1)
         bar.addWidget(self.refresh_btn)
         bar.addWidget(self.export_btn)
         layout.addLayout(bar)
@@ -344,6 +348,7 @@ class DcimAlbumTab(QWidget):
         self.status = QLabel("请选择一个设备")
         layout.addWidget(self.status)
 
+        self.path_edit.returnPressed.connect(self._on_path_entered)
         self.up_btn.clicked.connect(self._go_up)
         self.refresh_btn.clicked.connect(self._refresh)
         self.export_btn.clicked.connect(self._export_selected)
@@ -357,7 +362,8 @@ class DcimAlbumTab(QWidget):
             self._gen += 1
             self._pending.clear()
             self.list.clear()
-            self.path_label.setText(self.cur_path)
+            self.path_edit.setText(self.cur_path)
+            self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
             self.status.setText("请选择一个设备")
 
     # -------------------------------------------------------------- listing
@@ -369,11 +375,24 @@ class DcimAlbumTab(QWidget):
             self.cur_path = parent if parent.startswith(_DCIM_ROOT) else _DCIM_ROOT
             self._refresh()
 
+    def _on_path_entered(self) -> None:
+        # Jump to the typed path, normalized and clamped within the DCIM root so
+        # the album tab never browses outside /DCIM.
+        text = self.path_edit.text().strip()
+        if not text.startswith("/"):
+            text = "/" + text
+        norm = posixpath.normpath(text)
+        if norm != _DCIM_ROOT and not norm.startswith(_DCIM_ROOT + "/"):
+            norm = _DCIM_ROOT
+        self.cur_path = norm
+        self._refresh()
+
     def _refresh(self) -> None:
         # New generation: any pending/in-flight thumbnail callbacks become stale.
         self._gen += 1
         self._pending.clear()
-        self.path_label.setText(self.cur_path)
+        self.path_edit.setText(self.cur_path)
+        self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
         self.list.clear()
         if not self.target:
             self.status.setText("请选择一个设备")

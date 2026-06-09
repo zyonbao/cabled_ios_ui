@@ -30,8 +30,20 @@ def _install_sigint_handler(app: QApplication, window: MainWindow) -> QTimer:
     path (stops the mirror / keyboard threads, tunnel prompt) before quitting.
     """
 
+    # Guard against re-entry: a second Ctrl+C while shutdown is in progress
+    # must not call close() again on a window whose C++ object is already gone
+    # (that raises a libshiboken "Internal C++ object already deleted" error).
+    state = {"closing": False}
+
     def _handler(_signum, _frame) -> None:
-        window.close()
+        if state["closing"]:
+            return
+        state["closing"] = True
+        try:
+            window.close()
+        except RuntimeError:
+            # Window already torn down (e.g. rapid double Ctrl+C): nothing to do.
+            pass
         app.quit()
 
     signal.signal(signal.SIGINT, _handler)

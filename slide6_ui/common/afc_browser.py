@@ -175,18 +175,23 @@ class AfcBrowserPanel(QWidget):
         else:
             self.table.setRowCount(0)
             self.path_edit.setText(self._display_path())
+            self.up_btn.setEnabled(False)
             self.status.setText("请选择一个设备")
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # Header: editable relative path (Enter to navigate) + refresh / make-folder.
+        # Header: a "go up" button + editable relative path (Enter to navigate)
+        # + refresh / make-folder. The go-up button is the unified parent-dir
+        # navigation across all browsers (album / crash / AFC).
         nav = QHBoxLayout()
+        self.up_btn = QPushButton("上一级")
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("输入路径后回车跳转")
         self.path_edit.returnPressed.connect(self._on_path_entered)
         self.refresh_btn = QPushButton("刷新")
         self.mkdir_btn = QPushButton("添加文件夹")
+        nav.addWidget(self.up_btn)
         nav.addWidget(self.path_edit, 1)
         nav.addWidget(self.refresh_btn)
         nav.addWidget(self.mkdir_btn)
@@ -214,6 +219,7 @@ class AfcBrowserPanel(QWidget):
         self.status = QLabel("")
         layout.addWidget(self.status)
 
+        self.up_btn.clicked.connect(self._go_up)
         self.refresh_btn.clicked.connect(self._refresh)
         self.mkdir_btn.clicked.connect(self._mkdir)
 
@@ -270,6 +276,7 @@ class AfcBrowserPanel(QWidget):
 
     def _refresh(self) -> None:
         self.path_edit.setText(self._display_path())
+        self.up_btn.setEnabled(self.cur_path != "/")
         if not self.target:
             self.table.setRowCount(0)
             self.status.setText("请选择一个设备")
@@ -287,17 +294,13 @@ class AfcBrowserPanel(QWidget):
             self.status.setText("加载失败: " + result.get("error", {}).get("message", ""))
             return
         entries = result["data"].get("entries", [])
-        # Prepend a ".." navigation row whenever we are below the root.
-        rows: list[dict] = []
-        if self.cur_path != "/":
-            rows.append({"name": "..", "isDir": True, "_parent": True})
-        rows.extend(entries)
-        self.table.setRowCount(len(rows))
-        for row, entry in enumerate(rows):
-            is_parent = bool(entry.get("_parent"))
+        # Parent-dir navigation is provided by the top "上一级" button, so the
+        # listing no longer carries a ".." row.
+        self.table.setRowCount(len(entries))
+        for row, entry in enumerate(entries):
             is_dir = bool(entry.get("isDir"))
             name = entry.get("name", "")
-            icon = "↩ " if is_parent else ("📁 " if is_dir else "📄 ")
+            icon = "📁 " if is_dir else "📄 "
             name_item = QTableWidgetItem(icon + name)
             name_item.setData(Qt.UserRole, entry)
             self.table.setItem(row, 0, name_item)
@@ -311,9 +314,6 @@ class AfcBrowserPanel(QWidget):
         lay = QHBoxLayout(cell)
         lay.setContentsMargins(4, 0, 4, 0)
         lay.setSpacing(2)
-        # The ".." navigation row carries no per-item actions.
-        if entry.get("_parent"):
-            return cell
         # Import (upload) only makes sense as "upload into this folder".
         if entry.get("isDir"):
             up = _glyph_button(cell, "导入 ↑", "导入到此文件夹")
@@ -338,7 +338,7 @@ class AfcBrowserPanel(QWidget):
         if item is None:
             return
         entry = self.table.item(item.row(), 0).data(Qt.UserRole)
-        if not entry or entry.get("_parent"):
+        if not entry:
             return
 
         # In multi-select mode, when more than one selectable item is selected,
@@ -369,7 +369,7 @@ class AfcBrowserPanel(QWidget):
         return item.data(Qt.UserRole) if item else None
 
     def _selected_entries(self) -> list[dict]:
-        """Selectable entries in the current selection (excludes the '..' row)."""
+        """Selectable entries in the current selection."""
         entries: list[dict] = []
         seen_rows: set[int] = set()
         for item in self.table.selectedItems():
@@ -378,7 +378,7 @@ class AfcBrowserPanel(QWidget):
                 continue
             seen_rows.add(row)
             entry = self.table.item(row, 0).data(Qt.UserRole)
-            if entry and not entry.get("_parent"):
+            if entry:
                 entries.append(entry)
         return entries
 
@@ -393,9 +393,7 @@ class AfcBrowserPanel(QWidget):
         entry = self.table.item(item.row(), 0).data(Qt.UserRole)
         if not entry:
             return
-        if entry.get("_parent"):
-            self._go_up()
-        elif entry.get("isDir"):
+        if entry.get("isDir"):
             self.cur_path = posixpath.join(self.cur_path, entry.get("name", ""))
             self._refresh()
 
@@ -450,7 +448,7 @@ class AfcBrowserPanel(QWidget):
         """Materialise the selected entry into a temp dir so it can be dragged
         out to Finder. Runs synchronously behind a wait cursor."""
         entry = self._current_entry()
-        if not entry or entry.get("_parent"):
+        if not entry:
             return None
         name = entry.get("name", "")
         remote = posixpath.join(self.cur_path, name)

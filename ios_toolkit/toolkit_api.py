@@ -643,6 +643,102 @@ def device_info(target: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Configuration profiles (mobile_config)
+# ---------------------------------------------------------------------------
+
+def list_profiles(target: str) -> dict:
+    """List installed configuration profiles.
+
+    data = {"profiles": [{"identifier","name","type","organization",
+            "payloadCount"}, ...]}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.list_profiles()
+
+
+def install_profile(target: str, path: str) -> dict:
+    """Deliver a local .mobileconfig to the device (usually needs on-device confirm)."""
+    if not path or not path.lower().endswith(".mobileconfig"):
+        return _err("BAD_TARGET", "path must point to a .mobileconfig file")
+    import os
+    if not os.path.isfile(path):
+        return _err("BAD_TARGET", f"file not found: {path}")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.install_profile(path)
+
+
+def remove_profile(target: str, identifier: str) -> dict:
+    """Remove an installed configuration profile by identifier."""
+    if not identifier:
+        return _err("BAD_TARGET", "identifier is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.remove_profile(identifier)
+
+
+# ---------------------------------------------------------------------------
+# Crash reports (crash_reports)
+# ---------------------------------------------------------------------------
+
+def list_crashes(target: str, sub_path: str = "/") -> dict:
+    """List crash-report entries under ``sub_path`` (depth=1; defaults to root).
+
+    data = {"entries": [{"name","path","isDir","size","mtime"}, ...]}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.list_crashes(sub_path)
+
+
+def pull_crash(target: str, remote_path: str, local_dir: str, erase: bool = False) -> dict:
+    """Export one crash entry into ``local_dir``; optionally erase the original."""
+    if not remote_path:
+        return _err("BAD_TARGET", "remote_path is required")
+    if not local_dir:
+        return _err("BAD_TARGET", "local_dir is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.pull_crash(remote_path, local_dir, erase)
+
+
+def clear_crash(target: str, remote_path: str) -> dict:
+    """Delete a single crash entry from the device."""
+    if not remote_path:
+        return _err("BAD_TARGET", "remote_path is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.clear_crash(remote_path)
+
+
+# ---------------------------------------------------------------------------
+# System log streaming (syslog / os_trace)
+# ---------------------------------------------------------------------------
+
+def open_log_stream(target: str, source: str = "syslog"):
+    """Open a live system-log stream and return a LogStreamHandle.
+
+    Unlike other operations this returns a handle object (not a {ok, data}
+    envelope) because the stream is long-lived and consumed off the GUI thread.
+    ``source`` is "syslog" (raw syslog_relay) or "oslog" (structured os_trace).
+    Intended for in-process desktop callers; not exposed over the JSON CLI.
+    """
+    if source not in ("syslog", "oslog"):
+        return _err("BAD_TARGET", "source must be 'syslog' or 'oslog'")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.open_log_stream(source)
+
+
+# ---------------------------------------------------------------------------
 # 6.1  switch_app_env  (stub)
 # ---------------------------------------------------------------------------
 

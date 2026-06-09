@@ -1,8 +1,5 @@
-# slide6-app-manager Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
-## Requirements
 ### Requirement: App 列表展示
 
 `slide6_ui` SHALL 在「App 列表」Tab 通过 `toolkit_api.list_apps(target)` 展示当前设备已安装 App，每行至少显示名称与 bundleId，并提供一个「操作」列。「操作」列 SHALL 依据该 App 的能力按需展示 `Documents`、`Sandbox`、`卸载` 按钮：开启 fileSharing 时展示 `Documents`，沙盒可访问时展示 `Sandbox`。`卸载` 按钮 SHALL 仅对**非系统应用**展示（`appType` 为 `System` 的内置应用不可卸载，故不展示卸载入口）。列表加载在后台线程执行，避免界面卡顿。
@@ -22,25 +19,6 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 - **WHEN** 某 App 的 `appType` 为 `System`
 - **THEN** 该行「操作」列不展示 `卸载` 按钮
-
-### Requirement: App 搜索与筛选
-
-`slide6_ui` SHALL 提供按关键字搜索 App（匹配名称或 bundleId，不区分大小写），以及按"文件已共享"（fileSharing）与"沙盒可访问"进行筛选。
-
-#### Scenario: 关键字搜索
-
-- **WHEN** 用户在搜索框输入关键字
-- **THEN** 列表实时过滤为名称或 bundleId 命中关键字的 App
-
-#### Scenario: 按 fileSharing 筛选
-
-- **WHEN** 用户启用"文件已共享"筛选
-- **THEN** 列表仅显示 `fileSharing=true` 的 App
-
-#### Scenario: 按沙盒可访问筛选
-
-- **WHEN** 用户启用"沙盒可访问"筛选
-- **THEN** 列表仅显示 `sandboxAccessible=true` 的 App
 
 ### Requirement: 安装与卸载 App
 
@@ -75,34 +53,48 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 `slide6_ui` SHALL 为开启 fileSharing 的 App 提供浏览 `Documents` 及其子目录的入口，为沙盒可访问的 App 提供浏览整个容器的入口。文件浏览器 SHALL：
 
-- 顶部导航栏 SHALL 按统一顺序 **「上一级」按钮 - 可编辑路径输入框 - 「刷新」按钮** 排列，其后接「添加文件夹」按钮。「上一级」按钮 SHALL 在非根目录启用、在根目录禁用。可编辑路径输入框展示当前路径（documents 根显示为 `Documents/...`、container 根显示为绝对沙盒路径），用户编辑后回车 SHALL 跳转到目标路径。
-- 条目列表 SHALL **不**包含 `..` 返回行；返回上一级统一经由顶部「上一级」按钮。
+- 顶部以**可编辑的相对路径输入框**展示当前路径（documents 根显示为 `Documents/...`、container 根显示为绝对沙盒路径），用户编辑后回车 SHALL 跳转到目标路径；路径右侧提供「刷新」与「添加文件夹」按钮。
+- 当当前路径非根目录时，条目列表顶部 SHALL 显示一个 `..` 行，双击 `..` 返回上一级；`..` 行不提供任何条目操作。
 - 每个条目右侧以图标按钮形式提供操作：文件夹提供 导入（上传，导入到该文件夹）、导出（下载）、重命名（✎）、删除（叉）；文件提供 导出（下载）、重命名（✎）、删除（叉）。删除 SHALL 弹出二次确认；重命名 SHALL 以当前名称预填输入框。
-- 条目 SHALL 支持鼠标右键上下文菜单，菜单项与该条目能力对应（导入到此文件夹 / 导出 / 重命名 / 删除）。
+- 条目 SHALL 支持鼠标右键上下文菜单，菜单项与该条目能力对应（导入到此文件夹 / 导出 / 重命名 / 删除）；`..` 行不响应右键菜单。
 - 支持文件与文件夹的导出（pull）与导入（push），既包含通过按钮触发，也包含通过拖拽：拖入外部文件/文件夹导入到当前目录，将条目拖出到 Finder 导出到本地。
 
 #### Scenario: 浏览 fileSharing App 的 Documents
 
 - **WHEN** 用户对 `fileSharing=true` 的 App 点击 `Documents`
-- **THEN** 通过 `afc_list(target, bundle_id, "documents", path)` 列出目录内容，双击文件夹进入子目录，点击「上一级」按钮或编辑路径框回车返回/跳转
-
-#### Scenario: 点击上一级返回
-
-- **WHEN** 用户在非根目录点击「上一级」按钮
-- **THEN** 列表返回父目录并刷新
-
-#### Scenario: 根目录禁用上一级
-
-- **WHEN** 当前处于根目录
-- **THEN**「上一级」按钮为禁用态，进入子目录后恢复启用
+- **THEN** 通过 `afc_list(target, bundle_id, "documents", path)` 列出目录内容，双击文件夹进入子目录，双击 `..` 或编辑路径框回车返回/跳转
 
 #### Scenario: 浏览沙盒可访问 App 的容器
 
 - **WHEN** 用户对 `sandboxAccessible=true` 的 App 点击 `Sandbox`
 - **THEN** 通过 `afc_list(target, bundle_id, "container", path)` 列出容器内容
 
+#### Scenario: 不满足条件时无对应入口
+
+- **WHEN** App 既未开启 fileSharing 也不可访问沙盒
+- **THEN**「操作」列不出现 `Documents`/`Sandbox`；非系统应用展示 `卸载`，系统应用则该列为空
+
+#### Scenario: 导出文件或文件夹到本地
+
+- **WHEN** 用户在某条目上点击导出（或将其拖拽到 Finder）
+- **THEN** 文件弹出"另存为"、文件夹弹出"选择目录"，确认后通过 `afc_pull(...)` 将文件/整个文件夹写入本地
+
+#### Scenario: 导入文件或文件夹
+
+- **WHEN** 用户点击某文件夹的导入按钮选择本地文件，或将外部文件/文件夹拖入浏览器
+- **THEN** 通过 `afc_push(...)` 将其写入目标设备目录（拖入时为当前目录，点击文件夹导入时为该文件夹）并刷新列表
+
+#### Scenario: 删除条目二次确认
+
+- **WHEN** 用户点击某条目的删除图标
+- **THEN** 弹出确认对话框，确认后通过 `afc_rm(...)` 删除并刷新列表
+
+#### Scenario: 重命名条目
+
+- **WHEN** 用户点击某条目的重命名图标或右键菜单"重命名"，输入新名称（不含 `/`）
+- **THEN** 通过 `afc_rename(...)` 将其重命名为同目录下的新名称并刷新列表
+
 #### Scenario: 右键上下文菜单
 
-- **WHEN** 用户在某条目上点击鼠标右键
+- **WHEN** 用户在某条目（非 `..`）上点击鼠标右键
 - **THEN** 弹出菜单，依据能力提供 导入到此文件夹 / 导出 / 重命名 / 删除
-

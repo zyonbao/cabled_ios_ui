@@ -32,9 +32,11 @@ from .app_manager import AppManagerTab
 from .common import tunnel
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
+from .crash import CrashReportsTab
 from .device_info import DeviceInfoTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
+from .syslog import SyslogTab
 
 _SETTINGS_ORG = "ios_ui_ta_proxy"
 # Kept as the legacy package name on purpose: this is the QSettings storage key.
@@ -82,7 +84,7 @@ class MainWindow(QMainWindow):
 
         # Tabbed body. Tabs run down the left side (vertical column, horizontal
         # labels) via SidebarTabs. Order: 设备信息 / 相册 / 文件系统 / App 列表 /
-        # 键鼠操作 — info-first, with the WDA/tunnel-heavy key/mouse tab last.
+        # 键鼠操作 / Crash 报告 / 系统日志 — info-first, with diagnostics last.
         self.tabs = SidebarTabs()
         self.device_info_tab = DeviceInfoTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.device_info_tab, "设备信息")
@@ -94,6 +96,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.app_tab, "App 列表")
         self.keymouse_tab = KeymouseTab(self.runner, self._set_status, self.on_select_device)
         self.tabs.addTab(self.keymouse_tab, "键鼠操作")
+        self.crash_tab = CrashReportsTab(self.runner, lambda: self.target)
+        self.tabs.addTab(self.crash_tab, "Crash 报告")
+        self.syslog_tab = SyslogTab(self.runner, lambda: self.target)
+        self.tabs.addTab(self.syslog_tab, "系统日志")
         root.addWidget(self.tabs, stretch=1)
 
         self.setCentralWidget(central)
@@ -189,6 +195,8 @@ class MainWindow(QMainWindow):
         self.device_info_tab.set_target(self.target)
         self.fs_tab.set_target(self.target)
         self.album_tab.set_target(self.target)
+        self.crash_tab.set_target(self.target)
+        self.syslog_tab.set_target(self.target)
         # The key/mouse tab owns the costly WDA/mirror flow; only start it when
         # that tab is the current one (otherwise it is deferred until entered).
         self.keymouse_tab.select_device(self.target, dev, active=self._on_keymouse_tab())
@@ -206,6 +214,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         self.keymouse_tab.shutdown()
+        # Stop the live log-stream thread (and its toolkit stream) on exit.
+        self.syslog_tab.shutdown()
 
         if self._ask_clean_tunnel_on_exit() and tunnel.is_tunnel_running():
             reply = QMessageBox.question(

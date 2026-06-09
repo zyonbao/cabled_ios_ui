@@ -11,20 +11,23 @@
 
 ## 一、独立 Tab（计划新增）
 
-### 1. Profile and application management（描述文件与 App 管理）
+### 1. Profile and application management（描述文件与 App 管理）✅ 已完成
+- **状态**：已实现并归档（`archive/2026-06-09-add-profiles-crash-syslog-tabs`）。描述文件管理以对话框形式集成在「App 列表」Tab（拖拽安装 / 列表 / 多选移除）；App 列表对系统应用隐藏卸载入口。
 - **定位**：独立 Tab。管理配置描述文件（.mobileconfig 安装/列出/移除）+ App 管理增强（已部分在「App 列表」实现）。
 - **依赖**：`pymobiledevice3.services.mobile_config.MobileConfigService`（描述文件）、`installation_proxy`（App）。不需要 WDA / tunnel（iOS 16-）。
 - **可行性**：**高**。描述文件列出/安装/移除是成熟 lockdown 服务；与现有 App 管理可整合到同一 Tab。
 - **注意**：安装描述文件通常需设备端「设置」里手动确认（系统行为，UI 需提示）；移除受监管/MDM 限制。
 - **优先级**：高（实现成本低、价值明确）。
 
-### 2. Crash report collection（Crash 文件导出）
+### 2. Crash report collection（Crash 文件导出）✅ 已完成
+- **状态**：已实现并归档（`archive/2026-06-09-add-profiles-crash-syslog-tabs`）。独立「Crash 报告」Tab：列表 / 文件名过滤 / 多选 + 右键导出与删除 / 导出可选保留原文件。
 - **定位**：独立 Tab。列出并导出设备崩溃日志（.ips/.crash）。
 - **依赖**：`pymobiledevice3.services.crash_reports.CrashReportsManager`（基于 AFC2 的 crash mover/copier）。不需要 WDA / tunnel。
 - **可行性**：**高**。列出/拉取/清理崩溃日志为标准能力；可复用相册/文件系统的导出与多选删除模式。
 - **优先级**：高（排障刚需，复用度高）。
 
-### 3. Syslog and oslog streaming（系统日志查看 / 实时流）
+### 3. Syslog and oslog streaming（系统日志查看 / 实时流）✅ 已完成
+- **状态**：已实现并归档（`archive/2026-06-09-add-profiles-crash-syslog-tabs`）。独立「系统日志」Tab：syslog/oslog 下拉、实时流、关键字过滤、暂停/清空/另存；后台 `_bg_loop` 采集 + 限速渲染。oslog 经 `os_trace` 实现（免 tunnel）。
 - **定位**：独立 Tab。实时 syslog 流式展示 + 关键字过滤 + 暂停/清空/另存。
 - **依赖**：`pymobiledevice3.services.syslog.SyslogService`（旧 syslog_relay，iOS 16- 即可）；iOS 17+ 的 os_log 走 `os_trace`/DVT，更复杂。
 - **可行性**：**中-高**。传统 syslog 简单可行；结构化 oslog（含子系统/类别/级别）在 17+ 需 tunnel + DVT，先做 syslog，再评估 oslog。
@@ -104,8 +107,8 @@
 
 | 优先级 | 项目 |
 |---|---|
-| 高 | 1 描述文件管理、2 Crash 导出、3 Syslog 流（传统 syslog 部分） |
-| 中 | 5 PCAP 抓包、7 备份恢复、4 DDI/DVT（先出设计）、9 通知监听、3 oslog 增强 |
+| ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09） |
+| 中 | 5 PCAP 抓包、7 备份恢复、4 DDI/DVT（先出设计）、9 通知监听 |
 | 中-低 | 6 WebInspector、10 SpringBoard 设置 |
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 
