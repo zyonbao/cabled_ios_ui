@@ -35,7 +35,15 @@
 - **优先级**：高（syslog 部分）/ 中（oslog 增强）。
 
 ### 4. DDI / DVT developer tooling（开发者工具，需挂载 DeveloperDiskImage）
-- **定位**：独立 Tab，聚合多种 DVT/instruments 工具。**先敲定细节、暂缓实现**，有资源再做。
+- **定位**：独立「开发者工具」Tab，聚合多种 DVT/instruments 工具，采用「DDI 状态栏 + 功能位 grid」布局，DDI 挂载后逐步解锁能力。
+- **分期实施**：
+  - **Phase 1（进行中，走 openspec）**：DDI 挂载/卸载/状态 + 进程管理 + 虚拟定位。三项组成最小闭环：先把 DDI 挂载状态机与 DVT 连接底座打通，再落地两个高价值 DVT 工具。
+    - **DDI**：Tab 顶部展示挂载状态；未挂载提供「挂载」（弹窗可选多种 `pymobiledevice3` 挂载方式：自动按版本 / 个性化镜像(17+) / 开发者镜像(<17) / 手动选本地镜像文件），已挂载提供「卸载」。挂载/卸载/状态走 usbmux lockdown（17+ 也不需 tunnel）。
+    - **进程管理**：`device_info.DeviceInfo.proclist` 进程列表 + 按名筛选；`process_control.ProcessControl.launch` 按 bundle id 启动；`process_control.kill` 杀进程；选中查看进程明细（只读，不支持改）。
+    - **虚拟定位**：<17 走 `simulate_location.DtSimulateLocation`（设完即生效）；17+ 走 DVT `location_simulation.LocationSimulation`，但模拟仅在 DTX 连接存活期间有效，需后台常驻定位会话，清除时取消会话。
+    - **能力门控**：进程 / 定位以「功能位 grid」展示，DDI 未挂载时全部 Disabled，挂载成功后自动 enable（便于后续叠加 Phase 2 功能位）。
+    - **tunnel 依赖**：iOS 17+ 的 DVT 能力（进程/定位）仍依赖 XPC tunnel（RSD），复用 `tunnel.py` + `_get_rsd_from_tunneld`；tunnel 未起时给出可读提示。
+  - **Phase 2（后续）**：实时性能监控（`sysmontap`/`graphics`/`energy_monitor`）、网络监控（`network_monitor`）、条件诱导（`condition_inducer`）、设备/系统信息增强（`device_info`）、DVT 截图（`screenshot`）、高级 trace（`activity_trace_tap`/`core_profile_session_tap`/`notifications`）。这些功能位逐个叠加到同一 Tab 的 grid 上。
 - **现状（项目已具备的 DDI/DVT 链路）**：
   - **已在用 1 个 DVT 服务**：WDA 的拉起依赖 `dvt.testmanaged.xcuitest.XCUITestService`（testmanagerd 测试会话）。见 `ios_toolkit/device.py` 的 `_run_wda_lockdown_async`（iOS ≤16，走 usbmux/lockdown）与 `_run_wda_rsd_async`（iOS 17+，走 `RemoteServiceDiscoveryService`）。**屏幕镜像 / 键鼠 / 手势等所有依赖 WDA 的能力，底层都经由这条 DVT 链路**。
   - **tunnel / RSD 已托管**：iOS 17+ 经 `slide6_ui/common/tunnel.py` + `ios_toolkit/tunneld_main.py` 授权拉起 root XPC tunnel，`device._get_rsd_from_tunneld` 查询 RSD 地址/端口。这正是 DVT/instruments 服务在 17+ 所需的**同一条底座**。
@@ -45,15 +53,15 @@
   - iOS 17+ tunnel 未起：`_get_rsd_from_tunneld` 返回 None → `do_prepare` 抛 `RuntimeError("…cannot get RSD info from tunneld. Make sure ios_tunneld is running")`，UI 可读、根因清晰。
   - DDI 未挂载 / DVT 不可用：`XCUITestService.run` 失败致 runner 任务提前退出，`_wait_for_wda` 抛 `RuntimeError("WDA XCUITest runner exited… Underlying error: <pmd3 原始异常>")`——**能感知失败，但未单独区分"DDI 未挂载"这一根因**（待补：挂载状态预检 + 友好提示）。
 - **依赖**：先 **挂载 DDI**（`pymobiledevice3.services.mobile_image_mounter`(auto_mount / lookup) / `amfi`；iOS 17+ 走个性化镜像 + `RemoteServiceDiscoveryService` + tunnel，DDI 为 `.dmg + trustcache + build_manifest`），再用 DVT instruments 服务（均复用已有 tunnel/RSD 底座，pmd3 9.16 模块均在 `services/dvt/instruments/`）。
-- **可基于 DVT 实现的功能（候选清单，按价值排序）**：
-  1. **进程管理**：进程列表（`device_info.DeviceInfo.proclist`）、已装 App 清单含路径（`application_listing`）、按 bundleid 启动（`process_control.ProcessControl.launch`，支持参数/环境变量/暂停在 main）、杀进程（`process_control.kill`）。**最小闭环首选**。
-  2. **实时性能监控**：CPU/内存/线程/磁盘/网络的系统级与进程级采样（`sysmontap.Sysmontap`）、FPS/GPU 图形指标（`graphics`）、能耗（`energy_monitor`）。可做实时折线图 + 进程级 TopN。
-  3. **网络监控**：按进程的连接与收发字节（`network_monitor`）。
-  4. **位置模拟**：设定/清除虚拟 GPS 坐标（`location_simulation.LocationSimulation`）。
-  5. **条件诱导**：模拟弱网/高温等设备条件（`condition_inducer`），用于稳定性/性能测试。
-  6. **设备/系统信息增强**：内核、运行时、硬件信息（`device_info`），补充现有「设备信息」Tab。
-  7. **DVT 截图**：经 instruments 通道截图（`screenshot.Screenshot`），与现有 WDA/AFC 截图互为备选。
-  8. **高级 trace（工程量大）**：系统调用/活动追踪（`activity_trace_tap`）、core profile 采样（`core_profile_session_tap`）、通知监听（`notifications`，可测冷/热启动耗时）。
+- **可基于 DVT 实现的功能（候选清单，按价值排序；标注分期）**：
+  1. **进程管理**（**Phase 1**）：进程列表（`device_info.DeviceInfo.proclist`）、按 bundleid 启动（`process_control.ProcessControl.launch`，支持参数/环境变量/暂停在 main）、杀进程（`process_control.kill`）。
+  2. **位置模拟**（**Phase 1**）：设定/清除虚拟 GPS 坐标（<17 `simulate_location.DtSimulateLocation`；17+ `location_simulation.LocationSimulation`）。
+  3. **实时性能监控**（Phase 2）：CPU/内存/线程/磁盘/网络的系统级与进程级采样（`sysmontap.Sysmontap`）、FPS/GPU 图形指标（`graphics`）、能耗（`energy_monitor`）。可做实时折线图 + 进程级 TopN。
+  4. **网络监控**（Phase 2）：按进程的连接与收发字节（`network_monitor`）。
+  5. **条件诱导**（Phase 2）：模拟弱网/高温等设备条件（`condition_inducer`），用于稳定性/性能测试。
+  6. **设备/系统信息增强**（Phase 2）：内核、运行时、硬件信息（`device_info`），补充现有「设备信息」Tab。
+  7. **DVT 截图**（Phase 2）：经 instruments 通道截图（`screenshot.Screenshot`），与现有 WDA/AFC 截图互为备选。
+  8. **高级 trace（工程量大）**（Phase 2）：系统调用/活动追踪（`activity_trace_tap`）、core profile 采样（`core_profile_session_tap`）、通知监听（`notifications`，可测冷/热启动耗时）。
 - **可行性**：**中（成本高、价值高）**。关键判断：XCUITest/DVT 链路与 tunnel 底座**已跑通**，新增 instruments 工具相当于"在既有 RSD/lockdown 之上多开几个 DVT channel"，**增量可控**；主要工程量集中在 **DDI 自动挂载**（资源获取/校验/缓存 + 17+ 个性化镜像）与各子工具的 UI / 采样限速。
 - **待敲定细节（可先定）**：
   1. DDI 来源与缓存：本地选择 `.dmg` / 从 Xcode 路径探测（`/Applications/Xcode.app/…/DeviceSupport`）/ 按版本下载；17+ 走个性化镜像（`mobile_image_mounter` personalized 流程）；缓存目录与校验。
@@ -62,7 +70,7 @@
   4. Tab 内子工具布局（子 Tab 或左侧列表）。
   5. 与 tunnel 生命周期联动（DVT 必须在 tunnel 之上；复用 `tunnel.py` 的拉起/停止与 `_get_rsd_from_tunneld`）。
   6. 采样性能：`sysmontap` 高频采样需后台线程 + 限速渲染（复用 mirror / syslog 的线程模型）。
-- **优先级**：中（先出设计，按资源排期实现）。建议先做 **"DDI 自动挂载 + 进程列表/启停"** 最小闭环，再叠加性能监控等。
+- **优先级**：Phase 1 进行中（DDI 挂载 + 进程管理 + 虚拟定位最小闭环，走 openspec）；Phase 2 按资源排期，逐个功能位叠加到同一 Tab。
 
 ### 5. Network sniffing（PCAP 抓包，数据链路层）
 - **定位**：独立 Tab。开启远程虚拟接口抓包，落地 .pcap，可用 Wireshark 打开。
@@ -124,7 +132,7 @@
 | 优先级 | 项目 |
 |---|---|
 | ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09） |
-| 中 | 5 PCAP 抓包、7 备份恢复、4 DDI/DVT（先出设计）、9 通知监听 |
+| 中 | 4 DDI/DVT 开发者工具（Phase 1 进行中：DDI+进程+定位；Phase 2 排期）、5 PCAP 抓包、7 备份恢复、9 通知监听 |
 | 中-低 | 6 WebInspector、10 SpringBoard 设置 |
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 

@@ -33,6 +33,7 @@ from .common import tunnel
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
 from .crash import CrashReportsTab
+from .developer_tools import DeveloperToolsTab
 from .device_info import DeviceInfoTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
@@ -85,9 +86,9 @@ class MainWindow(QMainWindow):
 
         # Tabbed body. Tabs run down the left side (vertical column, horizontal
         # labels) via SidebarTabs. Order: 设备信息 / 相册 / 文件系统 / App 列表 /
-        # 描述文件 / 键鼠操作 / Crash 报告 / 系统日志 — info-first, with
-        # diagnostics last; profile management sits with the other non-WDA
-        # device-management tabs.
+        # 描述文件 / 键鼠操作 / Crash 报告 / 系统日志 / 开发者工具 — info-first,
+        # with diagnostics and the advanced DDI/DVT developer tooling last;
+        # profile management sits with the other non-WDA device-management tabs.
         self.tabs = SidebarTabs()
         self.device_info_tab = DeviceInfoTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.device_info_tab, "设备信息")
@@ -105,6 +106,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.crash_tab, "Crash 报告")
         self.syslog_tab = SyslogTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.syslog_tab, "系统日志")
+        self.developer_tools_tab = DeveloperToolsTab(
+            self.runner, lambda: self.target, self._current_os_version
+        )
+        self.tabs.addTab(self.developer_tools_tab, "开发者工具")
         root.addWidget(self.tabs, stretch=1)
 
         self.setCentralWidget(central)
@@ -203,9 +208,15 @@ class MainWindow(QMainWindow):
         self.profiles_tab.set_target(self.target)
         self.crash_tab.set_target(self.target)
         self.syslog_tab.set_target(self.target)
+        self.developer_tools_tab.set_target(self.target)
         # The key/mouse tab owns the costly WDA/mirror flow; only start it when
         # that tab is the current one (otherwise it is deferred until entered).
         self.keymouse_tab.select_device(self.target, dev, active=self._on_keymouse_tab())
+
+    def _current_os_version(self) -> str:
+        """Return the os_version of the selected device (or '' if none)."""
+        dev = self.devices.get(self.target) if self.target else None
+        return (dev or {}).get("metadata", {}).get("os_version", "")
 
     def _on_keymouse_tab(self) -> bool:
         return self.tabs.currentWidget() is self.keymouse_tab
@@ -222,6 +233,8 @@ class MainWindow(QMainWindow):
         self.keymouse_tab.shutdown()
         # Stop the live log-stream thread (and its toolkit stream) on exit.
         self.syslog_tab.shutdown()
+        # Release any background virtual-location session (iOS 17+) on exit.
+        self.developer_tools_tab.shutdown()
 
         if self._ask_clean_tunnel_on_exit() and tunnel.is_tunnel_running():
             reply = QMessageBox.question(

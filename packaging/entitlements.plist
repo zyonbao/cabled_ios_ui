@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  entitlements.plist — code-signing entitlements for CablediOS.app.
+
+  The bundle is a Nuitka/PySide6 build that embeds CPython, Qt, and many
+  ad-hoc/unsigned dylibs, and it talks to iOS devices over raw USB/lockdown and
+  spawns a privileged tunneld helper. The entitlements below target a SIGNED,
+  HARDENED-RUNTIME (NON-sandboxed) build — which is what makes the macOS native
+  open/save panel reliable, after which
+  slide6_ui/common/file_dialogs.USE_NATIVE_FILE_DIALOG can be flipped to True.
+
+  Usage (sign + verify; identity from `security find-identity -v -p codesigning`):
+      CODESIGN_IDENTITY="Developer ID Application: NAME (TEAMID)" \
+          packaging/build_macos_app.sh
+  or sign an already-built bundle manually:
+      codesign --force --deep --options runtime \
+          --entitlements packaging/entitlements.plist \
+          --sign "$CODESIGN_IDENTITY" build/nuitka/CablediOS.app
+
+  NOTE on App Sandbox: this app is intentionally NOT sandboxed — the sandbox
+  would block USB/device access and spawning the privileged tunneld. The
+  user-selected-files keys (commented out at the bottom) are ONLY meaningful if
+  you later enable `com.apple.security.app-sandbox`; for a non-sandbox signed
+  build they are not required for the native file panel.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Hardened Runtime allowances required by an embedded CPython/Qt runtime
+         and ad-hoc/unsigned bundled dylibs. Without these, a notarized
+         hardened-runtime launch is killed at startup. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- ===== App Sandbox (OPTIONAL, OFF by default) =================== -->
+    <!-- Enabling these would let a SANDBOXED build gain access to files the
+         user picks via the NATIVE panel (Powerbox). Do NOT enable unless you
+         also solve USB/device access and the privileged tunneld under sandbox. -->
+    <!--
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.device.usb</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    -->
+</dict>
+</plist>

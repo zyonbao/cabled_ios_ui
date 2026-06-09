@@ -731,6 +731,130 @@ def clear_crash(target: str, remote_path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Developer tooling: DDI mount + DVT instruments (process / location)
+# ---------------------------------------------------------------------------
+
+def ddi_status(target: str) -> dict:
+    """Report DeveloperDiskImage mount + developer-mode status.
+
+    data = {"mounted": bool, "developerMode": bool, "imageType": str,
+            "iosMajor": int}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.ddi_status()
+
+
+def ddi_mount(target: str, method: str = "auto", **paths: str) -> dict:
+    """Mount the DDI via ``method`` (auto / personalized / developer / manual)."""
+    if method not in ("auto", "personalized", "developer", "manual"):
+        return _err("BAD_TARGET", f"unknown mount method: {method}")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.ddi_mount(method, **paths)
+
+
+def ddi_unmount(target: str) -> dict:
+    """Unmount the DeveloperDiskImage."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.ddi_unmount()
+
+
+def list_processes(target: str) -> dict:
+    """List running processes via DVT.
+
+    data = {"processes": [{"pid","name","realAppName","isApplication",
+            "startDate"}, ...]}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.list_processes()
+
+
+def launch_app_dvt(target: str, bundle_id: str) -> dict:
+    """Launch an app by bundle id via DVT ProcessControl; returns its pid."""
+    if not bundle_id:
+        return _err("BAD_TARGET", "bundle_id is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.launch_app_dvt(bundle_id)
+
+
+def kill_process(target: str, pid: int) -> dict:
+    """Terminate a process by pid via DVT ProcessControl."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.kill_process(pid)
+
+
+def set_location(target: str, latitude: float, longitude: float) -> dict:
+    """Set a simulated GPS location (iOS 17+ keeps a background session alive)."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.set_location(latitude, longitude)
+
+
+def clear_location(target: str) -> dict:
+    """Clear the simulated GPS location and restore real GPS (stops any route)."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.clear_location()
+
+
+def play_route_gpx(
+    target: str,
+    path: str,
+    disable_sleep: bool = False,
+    timing_randomness_range: int = 0,
+) -> dict:
+    """Play back a GPX trajectory as a moving simulated location.
+
+    data = {"playing": True, "source": "gpx", "points": <int>}
+    """
+    import os
+
+    if not path:
+        return _err("BAD_TARGET", "gpx path is required")
+    if not os.path.isfile(path):
+        return _err("BAD_TARGET", f"GPX 文件不存在: {path}")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.play_route_gpx(path, disable_sleep, timing_randomness_range)
+
+
+def play_route_manual(
+    target: str, waypoints: list, speed_mps: float, tick_s: float = 1.0
+) -> dict:
+    """Play a self-interpolated trajectory through waypoints at a given speed.
+
+    waypoints = [[lat, lon], ...] (>=2). data = {"playing": True,
+    "source": "manual", "points": <int>}.
+    """
+    if not waypoints or len(waypoints) < 2:
+        return _err("BAD_TARGET", "trajectory needs at least 2 waypoints")
+    try:
+        speed = float(speed_mps)
+    except (TypeError, ValueError):
+        return _err("BAD_TARGET", "speed must be a number")
+    if speed <= 0:
+        return _err("BAD_TARGET", "speed must be positive")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.play_route_manual(waypoints, speed, tick_s)
+
+
+# ---------------------------------------------------------------------------
 # System log streaming (syslog / os_trace)
 # ---------------------------------------------------------------------------
 

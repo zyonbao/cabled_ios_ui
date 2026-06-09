@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import posixpath
+import random
 import socket
 import threading
 import time
@@ -60,6 +62,33 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
         TestConfig,
         XCUITestService,
     )
+    from pymobiledevice3.services.mobile_image_mounter import (  # noqa: F401
+        DeveloperDiskImageMounter,
+        MobileImageMounterService,
+        PersonalizedImageMounter,
+        auto_mount,
+        auto_mount_developer,
+        auto_mount_personalized,
+    )
+    from pymobiledevice3.dtx_service_provider import (  # noqa: F401
+        DtxServiceProvider,
+    )
+    from pymobiledevice3.services.dvt.instruments.dvt_provider import (  # noqa: F401
+        DvtProvider,
+    )
+    from pymobiledevice3.services.dvt.instruments.device_info import (  # noqa: F401
+        DeviceInfo,
+    )
+    from pymobiledevice3.services.dvt.instruments.process_control import (  # noqa: F401
+        ProcessControl,
+    )
+    from pymobiledevice3.services.dvt.instruments.location_simulation import (  # noqa: F401
+        LocationSimulation,
+    )
+    from pymobiledevice3.services.simulate_location import (  # noqa: F401
+        DtSimulateLocation,
+    )
+    import gpxpy  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +98,150 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
 _bg_loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
 _bg_thread = threading.Thread(target=_bg_loop.run_forever, daemon=True, name="ios-bg-loop")
 _bg_thread.start()
+
+
+def _run_isolated(coro: "Awaitable", timeout: "Optional[float]" = None):
+    """Run a self-contained coroutine on a private event loop in the caller's thread.
+
+    The shared _bg_loop multiplexes long-lived work (WDA mirror, syslog, the
+    location session). Operations that may block for a long time and own their
+    own device connection — notably DDI mount/unmount/status, whose image
+    download (synchronous requests.get) and upload can take many seconds — would
+    freeze every other device op if scheduled onto _bg_loop. Running them on a
+    private loop (callers are AsyncRunner worker threads with no running loop)
+    isolates that blocking from the shared loop.
+
+    A ``timeout`` (seconds) bounds the operation so a stuck device service can
+    never hang the caller indefinitely; it raises ``asyncio.TimeoutError``.
+    """
+    if timeout is not None:
+        coro = asyncio.wait_for(coro, timeout)
+    return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# Virtual-location route helpers (module-level, pure functions)
+# ---------------------------------------------------------------------------
+#
+# A "route" is a list of (latitude, longitude, delay_before_set_seconds) steps
+# driven uniformly by iOSDevice._drive_route. The first step always carries a
+# zero delay so playback begins immediately; subsequent delays pace the motion.
+
+# Earth mean radius in metres (used for haversine distance).
+_EARTH_RADIUS_M = 6371000.0
+
+# Hard cap on generated steps to bound memory / runtime for pathological input.
+_MAX_ROUTE_STEPS = 200000
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two lat/lon points, in metres."""
+    rlat1 = math.radians(lat1)
+    rlat2 = math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+    )
+    return 2 * _EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _interpolate_route(
+    waypoints: "list", speed_mps: float, tick_s: float
+) -> "list":
+    """Build evenly-timed steps that walk through ``waypoints`` at ``speed_mps``.
+
+    Between each consecutive pair of waypoints the segment is split into ticks of
+    ``tick_s`` seconds; intermediate coordinates are linearly interpolated (good
+    enough for short simulation hops). Each generated step (except the very
+    first) carries ``tick_s`` as its delay so the caller paces motion at the
+    requested speed. Raises ``ValueError`` on invalid input.
+    """
+    pts = [(float(la), float(lo)) for la, lo in waypoints]
+    if len(pts) < 2:
+        raise ValueError("trajectory needs at least 2 waypoints")
+    if speed_mps <= 0:
+        raise ValueError("speed must be positive")
+    if tick_s <= 0:
+        raise ValueError("tick interval must be positive")
+    for la, lo in pts:
+        if not (-90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0):
+            raise ValueError("waypoint latitude/longitude out of range")
+
+    step_dist = speed_mps * tick_s  # metres advanced per tick
+    steps: list = [(pts[0][0], pts[0][1], 0.0)]
+    for (lat1, lon1), (lat2, lon2) in zip(pts, pts[1:]):
+        seg = _haversine_m(lat1, lon1, lat2, lon2)
+        n = max(1, int(math.ceil(seg / step_dist))) if seg > 0 else 1
+        for i in range(1, n + 1):
+            frac = i / n
+            lat = lat1 + (lat2 - lat1) * frac
+            lon = lon1 + (lon2 - lon1) * frac
+            steps.append((lat, lon, tick_s))
+            if len(steps) >= _MAX_ROUTE_STEPS:
+                return steps
+    return steps
+
+
+def _parse_gpx_steps(
+    path: str,
+    disable_sleep: bool = False,
+    timing_randomness_range: int = 0,
+    default_interval_s: float = 1.0,
+) -> "list":
+    """Parse a GPX file into route steps.
+
+    Timestamped points reproduce the recorded speed via inter-point sleeps;
+    ``disable_sleep`` collapses all delays to zero (run as fast as possible);
+    ``timing_randomness_range`` (milliseconds) jitters each delay. Points without
+    timestamps fall back to a fixed ``default_interval_s`` cadence. Raises
+    ``ValueError`` if the file yields no usable points.
+    """
+    import gpxpy
+
+    with open(path) as f:
+        gpx = gpxpy.parse(f)
+
+    # Collect (lat, lon, time) across tracks, then routes, then waypoints.
+    raw: list = []
+    for track in gpx.tracks:
+        for segment in track.segments:
+            for p in segment.points:
+                raw.append((p.latitude, p.longitude, p.time))
+    if not raw:
+        for route in gpx.routes:
+            for p in route.points:
+                raw.append((p.latitude, p.longitude, p.time))
+    if not raw:
+        for p in gpx.waypoints:
+            raw.append((p.latitude, p.longitude, p.time))
+    if not raw:
+        raise ValueError("GPX 文件中没有可用的轨迹点")
+
+    steps: list = []
+    last_time = None
+    for idx, (lat, lon, t) in enumerate(raw):
+        if idx == 0:
+            delay = 0.0
+        elif disable_sleep:
+            delay = 0.0
+        elif t is not None and last_time is not None:
+            delay = (t - last_time).total_seconds()
+            if delay < 0:
+                delay = 0.0
+            if timing_randomness_range:
+                delay += random.randint(
+                    -timing_randomness_range, timing_randomness_range
+                ) / 1000.0
+                delay = max(0.0, delay)
+        else:
+            delay = default_interval_s
+        last_time = t
+        steps.append((float(lat), float(lon), float(delay)))
+        if len(steps) >= _MAX_ROUTE_STEPS:
+            break
+    return steps
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +496,10 @@ class iOSDevice:
         self._wda_bundle_id = wda_bundle_id
         # Long-lived XCUITest runner task that keeps the WDA test session alive.
         self._wda_task: Optional["Future[None]"] = None
+        # iOS 17+ virtual-location simulation only stays active while its DTX
+        # connection is open, so it is kept alive by a long-lived background task.
+        self._location_task: Optional["Future[None]"] = None
+        self._location_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # WDA lifecycle
@@ -1818,6 +1995,532 @@ class iOSDevice:
             return _ok({"removed": True, "remote": entry})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
+
+    # ------------------------------------------------------------------
+    # Developer tooling: DDI mount + DVT instruments (process / location)
+    # ------------------------------------------------------------------
+    #
+    # DDI mount / unmount / status talk to the lockdown mobile_image_mounter over
+    # usbmux and do NOT require an XPC tunnel (even on iOS 17+). DVT instruments
+    # (process list/control, location simulation) DO require a mounted DDI and,
+    # on iOS 17+, the tunneld RSD. Connection selection mirrors the WDA flow.
+
+    @staticmethod
+    def _ddi_image_type(major: int) -> str:
+        """iOS 17+ uses personalized images; earlier versions use developer ones."""
+        return "Personalized" if major >= 17 else "Developer"
+
+    def ddi_status(self) -> dict:
+        """Report DDI mount state + developer-mode status (usbmux, no tunnel).
+
+        ``copy_devices`` is the source of truth for what is actually mounted (it
+        returns each image's real DiskImageType and MountPath), so the UI can
+        show which image is mounted and unmount uses the true path. ``mounted``
+        falls back to ``is_image_mounted`` when CopyDevices is unsupported.
+        """
+        from .toolkit_api import _ok, _err
+
+        major = self._ios_major_version()
+        image_type = self._ddi_image_type(major)
+
+        async def _op() -> dict:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.mobile_image_mounter import (
+                MobileImageMounterService,
+            )
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with MobileImageMounterService(lockdown) as mounter:
+                    images: list[dict] = []
+                    mounted: Optional[bool] = None
+                    try:
+                        for d in await mounter.copy_devices() or []:
+                            images.append({
+                                "diskImageType": str(
+                                    d.get("DiskImageType") or d.get("ImageType") or ""
+                                ),
+                                "mountPath": str(d.get("MountPath") or ""),
+                            })
+                        mounted = len(images) > 0
+                    except Exception:
+                        # CopyDevices unsupported on this device: fall back below.
+                        pass
+                    if mounted is None:
+                        mounted = await mounter.is_image_mounted(image_type)
+                    try:
+                        dev_mode = await mounter.query_developer_mode_status()
+                    except Exception:
+                        # Pre-iOS16 devices have no developer-mode gate.
+                        dev_mode = True
+            return {
+                "mounted": bool(mounted),
+                "developerMode": bool(dev_mode),
+                "images": images,
+            }
+
+        # Run on a private loop (see _run_isolated): a slow/blocking image
+        # download or upload during a concurrent mount must not freeze _bg_loop.
+        # Bounded so a stuck mounter service cannot hang the UI indefinitely.
+        try:
+            data = _run_isolated(_op(), timeout=20)
+        except asyncio.TimeoutError:
+            return _err("TIMEOUT", "查询 DDI 状态超时（设备 mounter 服务无响应）")
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+        data.update({"imageType": image_type, "iosMajor": major})
+        return _ok(data)
+
+    def ddi_mount(self, method: str = "auto", **paths: "Optional[str]") -> dict:
+        """Mount the DeveloperDiskImage using one of several methods.
+
+        method:
+          - "auto": version-dispatching auto-mount (Xcode / online image).
+          - "personalized": iOS 17+ personalized image (downloaded).
+          - "developer": iOS < 17 developer image (Xcode / downloaded).
+          - "manual": local files — iOS 17+ needs image/build_manifest/trustcache,
+            iOS < 17 needs image/signature.
+        An already-mounted image is treated as success (idempotent).
+        """
+        from .toolkit_api import _ok, _err
+
+        major = self._ios_major_version()
+
+        async def _op() -> None:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services import mobile_image_mounter as mim
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                if method == "auto":
+                    await mim.auto_mount(lockdown)
+                elif method == "personalized":
+                    await mim.auto_mount_personalized(lockdown)
+                elif method == "developer":
+                    await mim.auto_mount_developer(lockdown)
+                elif method == "manual":
+                    image = paths.get("image")
+                    if not image:
+                        raise ValueError("manual mount requires an image file")
+                    if major >= 17:
+                        build_manifest = paths.get("build_manifest")
+                        trustcache = paths.get("trustcache")
+                        if not build_manifest or not trustcache:
+                            raise ValueError(
+                                "iOS 17+ manual mount requires image, "
+                                "build_manifest and trustcache files"
+                            )
+                        await mim.PersonalizedImageMounter(lockdown=lockdown).mount(
+                            Path(image), Path(build_manifest), Path(trustcache)
+                        )
+                    else:
+                        signature = paths.get("signature")
+                        if not signature:
+                            raise ValueError(
+                                "iOS < 17 manual mount requires image and signature files"
+                            )
+                        await mim.DeveloperDiskImageMounter(lockdown=lockdown).mount(
+                            Path(image), Path(signature)
+                        )
+                else:
+                    raise ValueError(f"unknown mount method: {method}")
+
+        # Mounting downloads (auto/personalized) and uploads the image, both of
+        # which can block for a long time; run it on a private loop so it does
+        # not freeze the shared _bg_loop (mirror, syslog, status, ...). A
+        # generous timeout still guards against a permanently stuck operation.
+        try:
+            _run_isolated(_op(), timeout=300)
+        except asyncio.TimeoutError:
+            return _err("TIMEOUT", "挂载 DDI 超时（下载/上传镜像耗时过长或卡住）")
+        except Exception as exc:
+            from pymobiledevice3.services.mobile_image_mounter import (
+                AlreadyMountedError,
+                DeveloperModeIsNotEnabledError,
+            )
+
+            if isinstance(exc, AlreadyMountedError):
+                return _ok({"mounted": True, "method": method, "already": True})
+            if isinstance(exc, DeveloperModeIsNotEnabledError):
+                return _err(
+                    "SUBPROCESS",
+                    "开发者模式未开启：请在设备「设置 → 隐私与安全性 → 开发者模式」开启后重试。",
+                )
+            return _err("SUBPROCESS", str(exc))
+        return _ok({"mounted": True, "method": method})
+
+    def ddi_unmount(self) -> dict:
+        """Unmount the DeveloperDiskImage by its actual mount path(s).
+
+        The unmount command is path-based, and the personalized/developer mount
+        path can differ from the version-derived default, so the real paths are
+        read from ``copy_devices`` first; the version-based well-known paths are
+        only a fallback when CopyDevices is unsupported.
+        """
+        from .toolkit_api import _ok, _err
+
+        major = self._ios_major_version()
+
+        async def _op() -> int:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.mobile_image_mounter import (
+                DeveloperDiskImageMounter,
+                MobileImageMounterService,
+                PersonalizedImageMounter,
+            )
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with MobileImageMounterService(lockdown) as mounter:
+                    mount_paths: list[str] = []
+                    try:
+                        for d in await mounter.copy_devices() or []:
+                            mp = d.get("MountPath")
+                            if mp:
+                                mount_paths.append(str(mp))
+                    except Exception:
+                        pass
+                    if mount_paths:
+                        for mp in mount_paths:
+                            await mounter.unmount_image(mp)
+                        return len(mount_paths)
+                # Fallback: no CopyDevices support; use the well-known path.
+                if major >= 17:
+                    await PersonalizedImageMounter(lockdown=lockdown).umount()
+                else:
+                    await DeveloperDiskImageMounter(lockdown=lockdown).umount()
+                return 1
+
+        try:
+            count = _run_isolated(_op(), timeout=60)
+        except asyncio.TimeoutError:
+            return _err("TIMEOUT", "卸载 DDI 超时（设备 mounter 服务无响应）")
+        except Exception as exc:
+            from pymobiledevice3.services.mobile_image_mounter import NotMountedError
+
+            if isinstance(exc, NotMountedError):
+                return _ok({"unmounted": True, "already": True})
+            return _err("SUBPROCESS", str(exc))
+        return _ok({"unmounted": True, "count": count})
+
+    async def _with_dvt(self, op: "Callable[[object], Awaitable]"):
+        """Open a DVT (instruments) session for one request and run ``op(dvt)``.
+
+        iOS < 17 connects over usbmux lockdown; iOS 17+ connects over the
+        tunneld RSD (raising a readable error when the tunnel is not running).
+        Requires a mounted DDI (pymobiledevice3 raises if it is missing).
+        """
+        from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+
+        major = self._ios_major_version()
+        if major >= 17:
+            rsd = _get_rsd_from_tunneld(self.udid)
+            if rsd is None:
+                raise RuntimeError(
+                    f"iOS 17+ device {self.udid}: cannot get RSD info from tunneld. "
+                    "请先启动 XPC tunnel（ios_tunneld，需 root 授权）后重试。"
+                )
+            from pymobiledevice3.remote.remote_service_discovery import (
+                RemoteServiceDiscoveryService,
+            )
+
+            async with RemoteServiceDiscoveryService(rsd) as rsd_svc:
+                async with DvtProvider(rsd_svc) as dvt:
+                    return await op(dvt)
+        else:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with DvtProvider(lockdown) as dvt:
+                    return await op(dvt)
+
+    def list_processes(self) -> dict:
+        """List running processes via DVT DeviceInfo.proclist."""
+        from .toolkit_api import _ok, _err
+
+        async def _op(dvt) -> list[dict]:
+            from pymobiledevice3.services.dvt.instruments.device_info import DeviceInfo
+
+            async with DeviceInfo(dvt) as di:
+                raw = await di.proclist()
+            procs: list[dict] = []
+            for p in raw or []:
+                start = p.get("startDate")
+                procs.append({
+                    "pid": p.get("pid"),
+                    "name": p.get("name") or p.get("realAppName") or "",
+                    "realAppName": p.get("realAppName") or "",
+                    "isApplication": bool(p.get("isApplication", False)),
+                    "startDate": start.isoformat() if hasattr(start, "isoformat") else str(start or ""),
+                })
+            return procs
+
+        future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
+        try:
+            return _ok({"processes": future.result(timeout=60)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def launch_app_dvt(self, bundle_id: str) -> dict:
+        """Launch an app by bundle id via DVT ProcessControl; return its pid."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+
+        async def _op(dvt) -> int:
+            from pymobiledevice3.services.dvt.instruments.process_control import (
+                ProcessControl,
+            )
+
+            async with ProcessControl(dvt) as pc:
+                return await pc.launch(bundle_id)
+
+        future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
+        try:
+            pid = future.result(timeout=60)
+            return _ok({"launched": True, "bundleId": bundle_id, "pid": pid})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def kill_process(self, pid: int) -> dict:
+        """Terminate a process by pid via DVT ProcessControl."""
+        from .toolkit_api import _ok, _err
+
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            return _err("BAD_TARGET", f"invalid pid: {pid}")
+
+        async def _op(dvt) -> None:
+            from pymobiledevice3.services.dvt.instruments.process_control import (
+                ProcessControl,
+            )
+
+            async with ProcessControl(dvt) as pc:
+                await pc.kill(pid_int)
+
+        future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
+        try:
+            future.result(timeout=60)
+            return _ok({"killed": True, "pid": pid_int})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    # -- Virtual location -------------------------------------------------
+
+    def _cancel_location_task(self) -> None:
+        """Cancel any live iOS 17+ location-simulation session task."""
+        with self._location_lock:
+            task = self._location_task
+            self._location_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _drive_route(
+        self, loc, steps: "list", ready: "threading.Event"
+    ) -> None:
+        """Walk a location object through ``steps`` = [(lat, lon, delay), ...].
+
+        ``delay`` (seconds) is waited *before* applying each point; the first
+        step carries a zero delay so playback starts immediately. ``ready`` is
+        set right after the first point is applied so a sync caller can return
+        without waiting for the whole route to finish.
+        """
+        first = True
+        for lat, lon, delay in steps:
+            if delay and delay > 0:
+                await asyncio.sleep(delay)
+            await loc.set(lat, lon)
+            if first:
+                ready.set()
+                first = False
+
+    async def _run_route_async(
+        self, major: int, steps: "list", ready: "threading.Event", err_holder: dict
+    ) -> None:
+        """Drive a location route, version-aware (shared by point + trajectory).
+
+        iOS<17 applies points over a lockdown ``DtSimulateLocation`` session; the
+        simulated location persists after the connection closes. iOS 17+ drives a
+        DVT ``LocationSimulation`` over RSD/tunnel and, because the simulation is
+        only active while the DTX connection lives, keeps the connection open
+        after the route finishes so the final point persists until cancelled.
+        """
+        try:
+            if major < 17:
+                from pymobiledevice3.lockdown import create_using_usbmux
+                from pymobiledevice3.services.simulate_location import (
+                    DtSimulateLocation,
+                )
+
+                lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+                async with lockdown:
+                    await self._drive_route(DtSimulateLocation(lockdown), steps, ready)
+                # <17: simulated location persists after the connection closes.
+            else:
+                rsd = _get_rsd_from_tunneld(self.udid)
+                if rsd is None:
+                    raise RuntimeError(
+                        f"iOS 17+ device {self.udid}: cannot get RSD info from "
+                        "tunneld. 请先启动 XPC tunnel（ios_tunneld，需 root 授权）后重试。"
+                    )
+                from pymobiledevice3.remote.remote_service_discovery import (
+                    RemoteServiceDiscoveryService,
+                )
+                from pymobiledevice3.services.dvt.instruments.dvt_provider import (
+                    DvtProvider,
+                )
+                from pymobiledevice3.services.dvt.instruments.location_simulation import (
+                    LocationSimulation,
+                )
+
+                async with RemoteServiceDiscoveryService(rsd) as rsd_svc:
+                    async with DvtProvider(rsd_svc) as dvt:
+                        async with LocationSimulation(dvt) as loc:
+                            await self._drive_route(loc, steps, ready)
+                            # Keep the connection (and thus the simulation) alive.
+                            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # surface to the sync caller via err_holder
+            err_holder["error"] = exc
+        finally:
+            ready.set()  # never leave a sync caller blocked on ready
+
+    def _start_route(self, steps: "list", ok_data: dict) -> dict:
+        """Schedule a route session and return once the first point is applied."""
+        from .toolkit_api import _ok, _err
+
+        if not steps:
+            return _err("BAD_TARGET", "empty trajectory")
+
+        major = self._ios_major_version()
+        # Replace any in-flight session before starting a new one.
+        self._cancel_location_task()
+        ready = threading.Event()
+        err_holder: dict = {}
+        task = asyncio.run_coroutine_threadsafe(
+            self._run_route_async(major, steps, ready, err_holder), _bg_loop
+        )
+        # iOS 17+ RSD/DVT setup can take a few seconds; <17 lockdown is quick.
+        timeout = 45 if major >= 17 else 30
+        if not ready.wait(timeout=timeout):
+            task.cancel()
+            return _err("SUBPROCESS", "启动虚拟定位超时")
+        if err_holder.get("error") is not None:
+            task.cancel()
+            return _err("SUBPROCESS", str(err_holder["error"]))
+        with self._location_lock:
+            self._location_task = task
+        return _ok(ok_data)
+
+    def set_location(self, latitude: float, longitude: float) -> dict:
+        """Set a single simulated GPS location (version-aware)."""
+        from .toolkit_api import _err
+
+        try:
+            lat = float(latitude)
+            lon = float(longitude)
+        except (TypeError, ValueError):
+            return _err("BAD_TARGET", "latitude/longitude must be numbers")
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return _err("BAD_TARGET", "latitude/longitude out of range")
+
+        return self._start_route(
+            [(lat, lon, 0.0)],
+            {"set": True, "latitude": lat, "longitude": lon},
+        )
+
+    def play_route_gpx(
+        self,
+        path: str,
+        disable_sleep: bool = False,
+        timing_randomness_range: int = 0,
+    ) -> dict:
+        """Play back a GPX trajectory as a moving simulated location."""
+        from .toolkit_api import _err
+
+        try:
+            steps = _parse_gpx_steps(
+                path, bool(disable_sleep), int(timing_randomness_range or 0)
+            )
+        except FileNotFoundError:
+            return _err("BAD_TARGET", f"GPX 文件不存在: {path}")
+        except ValueError as exc:
+            return _err("BAD_TARGET", str(exc))
+        except Exception as exc:
+            return _err("SUBPROCESS", f"解析 GPX 失败: {exc}")
+
+        return self._start_route(
+            steps, {"playing": True, "source": "gpx", "points": len(steps)}
+        )
+
+    def play_route_manual(
+        self, waypoints: "list", speed_mps: float, tick_s: float = 1.0
+    ) -> dict:
+        """Play a self-interpolated trajectory through waypoints at a given speed."""
+        from .toolkit_api import _err
+
+        try:
+            steps = _interpolate_route(waypoints, float(speed_mps), float(tick_s))
+        except (TypeError, ValueError) as exc:
+            return _err("BAD_TARGET", str(exc))
+
+        return self._start_route(
+            steps, {"playing": True, "source": "manual", "points": len(steps)}
+        )
+
+    def clear_location(self) -> dict:
+        """Clear any simulated GPS location and restore real GPS."""
+        from .toolkit_api import _ok, _err
+
+        major = self._ios_major_version()
+
+        # Stop any in-flight route/point session first (both versions may hold
+        # one now that single-point set also runs as a route task).
+        self._cancel_location_task()
+
+        if major < 17:
+            async def _op() -> None:
+                from pymobiledevice3.lockdown import create_using_usbmux
+                from pymobiledevice3.services.simulate_location import DtSimulateLocation
+
+                lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+                async with lockdown:
+                    await DtSimulateLocation(lockdown).clear()
+
+            future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+            try:
+                future.result(timeout=30)
+                return _ok({"cleared": True})
+            except Exception as exc:
+                return _err("SUBPROCESS", str(exc))
+
+        # iOS 17+: the session is already cancelled above (which closes the
+        # connection and stops the simulation); also issue an explicit clear on a
+        # fresh connection (best effort) so real GPS resumes immediately.
+        async def _op(dvt) -> None:
+            from pymobiledevice3.services.dvt.instruments.location_simulation import (
+                LocationSimulation,
+            )
+
+            async with LocationSimulation(dvt) as loc:
+                await loc.clear()
+
+        future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
+        try:
+            future.result(timeout=30)
+        except Exception:
+            # The session was already cancelled (simulation stopped); a failed
+            # explicit clear is non-fatal.
+            pass
+        return _ok({"cleared": True})
+
+    def shutdown_location(self) -> None:
+        """Cancel any live location session (call on exit / device switch)."""
+        self._cancel_location_task()
 
     # ------------------------------------------------------------------
     # System log streaming (syslog / os_trace)

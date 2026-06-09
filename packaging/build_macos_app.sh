@@ -280,6 +280,38 @@ build_fallback() {
     echo "$app"
 }
 
+# --- Optional: code-sign with hardened runtime + entitlements ---------------
+# Unsigned by default (first launch needs a manual Gatekeeper allow). Set
+# CODESIGN_IDENTITY to a signing identity to sign the bundle with
+# packaging/entitlements.plist. Signing + hardened runtime is what makes the
+# macOS native file panel reliable, after which
+# slide6_ui/common/file_dialogs.USE_NATIVE_FILE_DIALOG can be flipped to True.
+#   List identities:  security find-identity -v -p codesigning
+#   Example:          CODESIGN_IDENTITY="Developer ID Application: NAME (TEAMID)" \
+#                         packaging/build_macos_app.sh
+ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
+codesign_app() {
+    local app="$1"
+    if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
+        log "CODESIGN_IDENTITY not set; bundle left unsigned (native file panel stays disabled)."
+        return 0
+    fi
+    [[ -f "$ENTITLEMENTS" ]] || die "Entitlements file not found: $ENTITLEMENTS"
+    command -v codesign >/dev/null 2>&1 || die "codesign not found (install Xcode command line tools)."
+    log "Code-signing with hardened runtime: $CODESIGN_IDENTITY"
+    # --deep signs nested dylibs/binaries; --options runtime enables the
+    # hardened runtime that the entitlements complement.
+    codesign --force --deep --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        --sign "$CODESIGN_IDENTITY" "$app"
+    if codesign --verify --strict --verbose=2 "$app" 2>&1; then
+        log "Code-sign verification passed."
+    else
+        warn "Code-sign verification reported issues; check the output above."
+    fi
+    log "Signed. You can now set USE_NATIVE_FILE_DIALOG=True and (optionally) notarize."
+}
+
 # --- Verify the produced bundle ---------------------------------------------
 verify_bundle() {
     local app="$1"
@@ -335,6 +367,7 @@ main() {
 
     dedup_dylibs "$app/Contents/MacOS"
     verify_bundle "$app"
+    codesign_app "$app"
 
     log "Done."
     printf '\n\033[1;32mBuilt:\033[0m %s\n' "$app"
