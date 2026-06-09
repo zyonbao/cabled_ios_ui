@@ -1,8 +1,5 @@
-# slide6-profile-management Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
-## Requirements
 ### Requirement: 描述文件管理入口
 
 桌面应用 SHALL 在左侧 sidebar Tab 栏提供独立的「描述文件」Tab（不再作为「App 列表」Tab 的对话框入口）。该 Tab MUST 实现 `set_target(target)`，由主窗口在设备切换时分发；未选中设备时 MUST 显示「未选择设备」状态，不发起设备请求。
@@ -64,6 +61,8 @@ TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose
 - **WHEN** 用户确认移除
 - **THEN** 逐项移除后刷新列表，状态显示成功与失败数量
 
+## ADDED Requirements
+
 ### Requirement: 导出描述文件
 
 「描述文件」Tab SHALL 支持导出选中的描述文件到本地 `.mobileconfig`，经 `export_profile` 取回设备上的原始字节。单选时 SHALL 弹出「另存为」（预填 `<名称>.mobileconfig`）；多选时 SHALL 弹出目录选择并逐项导出（以 `<标识符>.mobileconfig` 命名避免重名），完成后汇总成功 / 失败数量。所有阻塞调用 MUST 经由 `AsyncRunner` 执行。未选中任何条目时 MUST 给出提示而非报错。
@@ -82,4 +81,3 @@ TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose
 
 - **WHEN** 未选中任何描述文件即点击「导出选中…」
 - **THEN** 提示先选择要导出的描述文件，不发起设备请求
-

@@ -35,7 +35,6 @@ from ios_toolkit import toolkit_api as api
 
 from ..common.afc_browser import AfcBrowserDialog
 from ..common.workers import AsyncRunner
-from ..profiles import ProfilesDialog
 
 
 def _is_system_app(app: dict) -> bool:
@@ -68,13 +67,11 @@ class AppManagerTab(QWidget):
         self.sandbox_filter = QCheckBox("沙盒可访问")
         self.refresh_btn = QPushButton("刷新列表")
         self.install_btn = QPushButton("安装 IPA…")
-        self.profiles_btn = QPushButton("描述文件…")
         bar.addWidget(self.search_input, 1)
         bar.addWidget(self.share_filter)
         bar.addWidget(self.sandbox_filter)
         bar.addWidget(self.refresh_btn)
         bar.addWidget(self.install_btn)
-        bar.addWidget(self.profiles_btn)
         root.addLayout(bar)
 
         # App table: name / bundle id / capability-driven action buttons.
@@ -96,7 +93,6 @@ class AppManagerTab(QWidget):
     def _wire(self) -> None:
         self.refresh_btn.clicked.connect(self.reload_apps)
         self.install_btn.clicked.connect(self.on_install_clicked)
-        self.profiles_btn.clicked.connect(self.on_profiles_clicked)
         self.search_input.textChanged.connect(self._render)
         self.share_filter.toggled.connect(self._render)
         self.sandbox_filter.toggled.connect(self._render)
@@ -221,16 +217,6 @@ class AppManagerTab(QWidget):
     def _after_install(self, message: str) -> None:
         self.install_btn.setEnabled(True)
         self.status.setText(message)
-
-    # ----------------------------------------------------------- profiles
-
-    def on_profiles_clicked(self) -> None:
-        """Open the configuration-profile management dialog for this device."""
-        target = self._get_target()
-        if not target:
-            self.status.setText("未选择设备")
-            return
-        ProfilesDialog(self, self.runner, self._get_target).exec()
 
     def on_uninstall(self, app: dict) -> None:
         target = self._get_target()

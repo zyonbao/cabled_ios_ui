@@ -1,5 +1,5 @@
-"""Configuration-profile management dialog (opened from the App list tab)."""
+"""Configuration-profile management (independent sidebar tab)."""
 
-from .profiles_dialog import ProfilesDialog
+from .profiles_tab import ProfilesTab
 
-__all__ = ["ProfilesDialog"]
+__all__ = ["ProfilesTab"]

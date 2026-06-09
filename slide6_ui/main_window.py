@@ -36,6 +36,7 @@ from .crash import CrashReportsTab
 from .device_info import DeviceInfoTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
+from .profiles import ProfilesTab
 from .syslog import SyslogTab
 
 _SETTINGS_ORG = "ios_ui_ta_proxy"
@@ -84,7 +85,9 @@ class MainWindow(QMainWindow):
 
         # Tabbed body. Tabs run down the left side (vertical column, horizontal
         # labels) via SidebarTabs. Order: 设备信息 / 相册 / 文件系统 / App 列表 /
-        # 键鼠操作 / Crash 报告 / 系统日志 — info-first, with diagnostics last.
+        # 描述文件 / 键鼠操作 / Crash 报告 / 系统日志 — info-first, with
+        # diagnostics last; profile management sits with the other non-WDA
+        # device-management tabs.
         self.tabs = SidebarTabs()
         self.device_info_tab = DeviceInfoTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.device_info_tab, "设备信息")
@@ -94,6 +97,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.fs_tab, "文件系统")
         self.app_tab = AppManagerTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.app_tab, "App 列表")
+        self.profiles_tab = ProfilesTab(self.runner, lambda: self.target)
+        self.tabs.addTab(self.profiles_tab, "描述文件")
         self.keymouse_tab = KeymouseTab(self.runner, self._set_status, self.on_select_device)
         self.tabs.addTab(self.keymouse_tab, "键鼠操作")
         self.crash_tab = CrashReportsTab(self.runner, lambda: self.target)
@@ -195,6 +200,7 @@ class MainWindow(QMainWindow):
         self.device_info_tab.set_target(self.target)
         self.fs_tab.set_target(self.target)
         self.album_tab.set_target(self.target)
+        self.profiles_tab.set_target(self.target)
         self.crash_tab.set_target(self.target)
         self.syslog_tab.set_target(self.target)
         # The key/mouse tab owns the costly WDA/mirror flow; only start it when
