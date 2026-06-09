@@ -543,8 +543,8 @@ def uninstall_app(target: str, bundle_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _validate_root(root: str) -> str | None:
-    if root not in ("documents", "container"):
-        return "root must be 'documents' or 'container'"
+    if root not in ("documents", "container", "media"):
+        return "root must be 'documents', 'container' or 'media'"
     return None
 
 
@@ -615,6 +615,23 @@ def afc_rename(target: str, bundle_id: str, root: str, remote_path: str, new_pat
     if err:
         return err
     return device.afc_rename(bundle_id, root, remote_path, new_path)
+
+
+def afc_read(
+    target: str, bundle_id: str, root: str, remote_path: str, max_bytes: int | None = None
+) -> dict:
+    """Read raw bytes of a device file (e.g. for thumbnails).
+
+    data = {"remote", "size", "data": <bytes>}. Intended for in-process callers
+    (the desktop app); not exposed via the JSON CLI since it returns raw bytes.
+    """
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_read(bundle_id, root, remote_path, max_bytes)
 
 
 def device_info(target: str) -> dict:

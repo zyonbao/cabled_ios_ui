@@ -31,30 +31,60 @@
 
 **备选**：为媒体分区另起一套 `media_*` 函数。**否决**：与沙盒 AFC 高度重复，维护成本高。
 
-### 决策 2：新增 `afc_read(target, root, remote_path, max_bytes=None)` 供缩略图
+### 决策 2：本地持久缩略图缓存 + 不自行解码 HEIC（真机确认）
 
-相册网格需要为每个条目读取图片字节生成缩略图。逐个 `afc_pull` 落地临时文件再读盘开销大。新增 `afc_read` 直接经 AFC `get_file_contents`（或分块 `fopen/fread`）返回 bytes（受 `max_bytes` 上限保护，超大文件截断或跳过）。UI 侧用 `QImage.fromData` 缩放成缩略图。
+真机（iOS 17.6.1）确认 iOS 自身为每个 DCIM 资源维护了**小 JPG 缩略图**，且**路径按原文件名直接映射**，无需解析 `Photos.sqlite`：
 
-**备选**：复用 `afc_pull` 到临时目录。**否决**：批量缩略图会产生大量临时文件与磁盘往返。
+```
+原图：  /DCIM/<相册>/<文件名>                 例：/DCIM/100APPLE/IMG_0003.PNG
+缩略图：/PhotoData/Thumbnails/V2/DCIM/<相册>/<文件名>/<id>.JPG   例：.../IMG_0003.PNG/5005.JPG（≈4KB，JPG）
+```
+
+**本地持久缓存（按设备）**：app 维护一个磁盘缓存目录（如 `~/Library/Caches/CablediOS/thumbs/<udid>/`），以 remote 路径为 key、以原图 `(st_size, st_mtime)` 为失效依据，缓存内容为**小 JPEG**。缓存跨会话持久；进入「相册」Tab/选中设备后对可见项优先建缓存，其余可后台渐进补齐。
+
+**建缓存流水线**（每项异步、写盘持久）：
+
+1. **iOS 缩略图命中**：经 `afc_read(root="media")` 读取 `PhotoData/Thumbnails/V2/DCIM/<相册>/<文件名>/` 下 JPG（取其一/最大者，几 KB），**直接落地为本地缓存**（已是 JPEG，无需解码）。
+2. **缺失（新照片未索引/其他 iOS 布局不同）**：`afc_read` 读原图字节，生成本地 JPEG 缩略图后落地缓存。
+3. **占位**：原图超过阈值或无法生成 → 占位图标（视频等非图片项始终占位）。
+
+**HEIC 解码：用 `pillow-heif`，不依赖 Qt 的 HEIF 解析（跨平台、打包确定）**：
+- **HEIC/HEIF**（按扩展名 `.heic/.heif` 判定）用 `pillow-heif`（Pillow）解码：`register_heif_opener()` 后 `Image.open(BytesIO(bytes))`，缩放后保存为 JPEG（缩略图），或转 `QImage/QPixmap` 用于预览。
+- **非 HEIC**（PNG/JPEG 等）走 `QImage`（Qt 核心格式，无需任何图像插件）解码缩放。
+- 刻意**不使用 Qt 的 heif 插件**：即使环境带了 `qheif` 也绕开，HEIC 一律交 `pillow-heif`，使打包依赖单一确定（只看 `pillow-heif` 自带的 libheif，不关心 Qt 是否打进 heif 插件）。
+- 这样**网格只显示 JPEG，预览只显示 JPEG/PNG**，无平台特定子进程。
+
+缩略图统一用 **JPEG**（体积小、足够预览）；仅当源本身是 PNG（如截图）时直接沿用 PNG，不必要地转码。
+
+`pillow-heif` 为**必备依赖**；其 wheel 为 mac/win/linux 自带 libheif，打包随产物携带即可。`pillow-heif` 解码失败（极少）回退占位图标。
+
+新增 `afc_read(target, bundle_id, root, remote_path, max_bytes=None)` 直接经 AFC `get_file_contents`（或分块）返回 bytes（`max_bytes` 保护步骤 2 不一次性载入超大原图）。
+
+**备选**：用 Qt `QImage` 解码 HEIC（依赖 qheif 插件）。**否决**：打包后插件随产物与否不确定，可移植性差。
+**备选**：用系统 `sips` 转码。**否决**：仅 macOS。
+**备选**：解析 `.ithmb` 旧式缩略图容器。**否决**：格式私有、跨版本脆弱；`V2/DCIM` 的按名映射 JPG 更稳更简单。
 
 ### 决策 3：相册数据获取——基于 `/DCIM` 的 AFC 列举
 
 DCIM 位于媒体根 `/DCIM`，其下为 `100APPLE`、`101APPLE`… 子目录，含 `IMG_*.HEIC/JPG/MOV` 等。「相册」Tab 即对 `root="media"`、路径 `/DCIM/...` 的浏览，但渲染为**缩略图网格**而非列表。条目元数据（名称/大小/mtime/是否目录）来自 `afc_list`；缩略图按需异步加载（仅可见项），按 remote 路径在内存缓存，避免滚动重复拉取。
 
-### 决策 4：带元数据导入/导出语义
+### 决策 4：相册导出（带元数据）与查看；首版不提供"导入到相册"
 
-- 导出（pull）：`AfcService.pull` 写入文件字节并 `os.utime` 同步设备侧 `st_mtime`；EXIF/创建时间等嵌入图片文件内的元数据原样保留。文件夹递归导出同既有语义。
-- 导入（push）：`AfcService.push` 写入字节，文件夹递归。导入照片到 `DCIM` 在文件层面保留元数据；是否登记进 Photos DB 取决于系统索引（见风险）。
+- **导出（pull，带元数据）**：`AfcService.pull` 写入文件字节并 `os.utime` 同步设备侧 `st_mtime`；EXIF/创建时间等嵌入文件内的元数据原样保留。HEIC 原样导出 HEIC（不转码），用户本机能否预览由用户自备软件决定。
+- **查看（双击）**：HEIC/HEIF 用 `pillow-heif` 解码为像素再转 `QPixmap` 显示；非 HEIC 用 `QImage` 直接显示。不落地转码原文件。导出仍是原始字节（HEIC 原样）。
+- **首版不在「相册」Tab 提供"导入到相册"**：经 AFC 写入 `/DCIM` 是否登记进 Photos 相册取决于系统索引，无法保证；故相册 Tab 仅做浏览/查看/导出/多选删除。若用户确需向设备写文件，可走「文件系统」Tab 的 AFC 导入（用户自担可见性后果）。后续若验证某路径能可靠入库，再补"导入到相册"。
+
+**备选**：相册 Tab 直接提供导入。**否决**：行为不可保证，易误导用户以为已加入相册。
 
 ### 决策 5：缩略图查看与多选删除交互
 
-- 缩略图网格用 `QListView`（IconMode）或带图标的 `QListWidget`；双击图片项弹出大图查看对话框（`QImage` 适配窗口缩放）。
-- 多选删除：网格开启 `ExtendedSelection`，"删除"对选中项弹**一次**汇总二次确认（列出数量/示例名称），确认后逐个 `afc_rm` 并刷新。
+- 缩略图网格用 `QListView`（IconMode）或带图标的 `QListWidget`；双击图片项弹出大图查看对话框（`QImage` 适配窗口缩放）。视频仅占位（见决策 8）。
+- 多选删除：网格开启 `ExtendedSelection`，"删除"对选中项弹**一次**汇总二次确认（列出数量/示例名称），确认后逐个 `afc_rm` 并刷新。删除的是 `/DCIM` 下文件；其在 Photos 相册的同步表现取决于系统索引（UI 说明）。
 
 ### 决策 6：UI 复用与新增
 
-- 「文件系统」Tab 复用 `AfcBrowserDialog`：将其作为嵌入式面板或以 `root="media"`、起始路径 `/` 打开；为复用，浏览器的 `bundle_id` 在 media 模式可传空串。
-- 「相册」Tab 为新组件（`slide6_console/dcim_album.py`），网格 + 大图查看 + 导入/导出/删除，传输仍走 `afc_*(root="media")` 与 `afc_read`。
+- 「文件系统」Tab：把 `AfcBrowserDialog` 的浏览能力抽成**可嵌入面板**内联到 Tab（见决策 7），以 `root="media"`、起始路径 `/` 打开；media 模式 `bundle_id` 传空串。
+- 「相册」Tab 为新组件（`slide6_console/dcim_album.py`），网格 + 大图查看 + 导出 + 多选删除，传输走 `afc_*(root="media")` 与 `afc_read`（缩略图优先读 `PhotoData/Thumbnails`）。
 
 ## Risks / Trade-offs
 
@@ -65,8 +95,8 @@ DCIM 位于媒体根 `/DCIM`，其下为 `100APPLE`、`101APPLE`… 子目录，
 >
 > 实现要点：`AfcService` 的 `listdir/stat/push/rm/get_file_contents` 实际为**协程**（被装饰，`inspect.iscoroutinefunction` 会误报为同步），调用处必须 `await`。`usbmux.list_devices()` 亦为异步。
 - [批量缩略图内存/往返开销] → 仅对可见项按需加载、按路径缓存、`afc_read` 设字节上限；非图片/超大文件用占位图标。
-- [HEIC 等格式解码] → 开发环境 PySide6 的 `QImageReader.supportedImageFormats()` **已含 `heic`/`heif`**（iPhone 照片可原生解码），无需 `pillow_heif`。但 Nuitka 打包后必须连带 **heif 图像格式插件（qheif）与 libheif**；打包验证时需确认。解码失败统一回退占位图标，仍可正常导出/删除。
-- [缩略图无设备端预览，需拉全图字节] → DCIM 无服务端缩略图，`afc_read` 需取整张图（HEIC/JPG 常为数 MB）再本地缩放；相册条目多时 I/O 与内存压力大。缓解：仅可见项按需加载、按路径缓存、限制并发、对超过阈值（如 >N MB）的文件跳过解码直接占位；后续可改为解析 EXIF 内嵌缩略图以大幅降本。
+- [HEIC 等格式解码] → 用必备依赖 `pillow-heif`（不依赖 Qt heif 插件），非 HEIC 用 QImage；解码失败回退占位。打包只需确认 `pillow-heif` 及其 libheif 随产物存在（其 wheel 自带）。
+- [缩略图 I/O 与内存] → 首选复用 iOS 端小 JPEG（几 KB），仅缺失时才拉原图生成；本地磁盘缓存按 `(size,mtime)` 失效、跨会话持久；仅可见项优先、其余后台渐进、限制并发；超阈值原图跳过转码直接占位。后续可改为解析 EXIF 内嵌缩略图进一步降本。
 - [媒体分区路径越界/注入] → 复用既有 `_safe_remote_path` 规范化与越界校验。
 - [删除为破坏性且媒体分区影响真实相册] → 多选删除强制二次确认并展示影响范围。
 

@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -38,7 +37,9 @@ from executor_ios import toolkit_api as api
 
 from . import tunnel
 from .app_manager import AppManagerTab
+from .dcim_album import DcimAlbumTab
 from .device_info import DeviceInfoTab
+from .file_system_tab import FileSystemTab
 from .keyboard import KeyboardCapture, KeyboardSender
 from .mirror import MjpegThread, ScreenView
 from .sidebar_tabs import SidebarTabs
@@ -112,15 +113,20 @@ class MainWindow(QMainWindow):
         top.addWidget(self.status_label)
         root.addLayout(top)
 
-        # Tabbed body: key/mouse control + app manager + device info. Tabs run
-        # down the left side (vertical column, horizontal labels) via SidebarTabs.
+        # Tabbed body. Tabs run down the left side (vertical column, horizontal
+        # labels) via SidebarTabs. Order: 设备信息 / 相册 / 文件系统 / App 列表 /
+        # 键鼠操作 — info-first, with the WDA/tunnel-heavy key/mouse tab last.
         self.tabs = SidebarTabs()
         self.device_info_tab = DeviceInfoTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.device_info_tab, "设备信息")
-        self.keymouse_tab = self._build_keymouse_tab()
-        self.tabs.addTab(self.keymouse_tab, "键鼠操作")
+        self.album_tab = DcimAlbumTab(self.runner)
+        self.tabs.addTab(self.album_tab, "相册")
+        self.fs_tab = FileSystemTab(self.runner)
+        self.tabs.addTab(self.fs_tab, "文件系统")
         self.app_tab = AppManagerTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.app_tab, "App 列表")
+        self.keymouse_tab = self._build_keymouse_tab()
+        self.tabs.addTab(self.keymouse_tab, "键鼠操作")
         root.addWidget(self.tabs, stretch=1)
 
         self.setCentralWidget(central)
@@ -142,15 +148,22 @@ class MainWindow(QMainWindow):
         sidebar.setContentsMargins(8, 0, 0, 0)
 
         # Non-interactive device info first (read-only): resolution / orientation.
-        info_box = QWidget()
-        info = QFormLayout(info_box)
-        self.info_size = QLabel("—")
-        self.info_orient = QLabel("—")
-        info.addRow("分辨率(点)", self.info_size)
-        info.addRow("方向", self.info_orient)
-        sidebar.addWidget(info_box)
+        # Use left-aligned stacked rows (not a two-column form) so these labels
+        # line up with the buttons / fields below them.
+        self.info_size = QLabel("分辨率(点)：—")
+        self.info_orient = QLabel("方向：—")
+        for lbl in (self.info_size, self.info_orient):
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            sidebar.addWidget(lbl)
 
-        # Interactive controls below the read-only info: fps (moved off the top bar).
+        # Refresh (screen / orientation) sits directly under the info labels and
+        # above the fps selector. It is enabled as soon as a device is selected
+        # (it just re-runs the device select flow), independent of WDA/streaming.
+        self.reload_btn = QPushButton("刷新画面 / 方向")
+        self.reload_btn.setEnabled(False)
+        sidebar.addWidget(self.reload_btn)
+
+        # Interactive controls: fps (moved off the top bar).
         fps_row = QWidget()
         fps_layout = QHBoxLayout(fps_row)
         fps_layout.setContentsMargins(0, 0, 0, 0)
@@ -164,10 +177,9 @@ class MainWindow(QMainWindow):
 
         self.home_btn = QPushButton("主屏幕 (HOME)")
         self.switcher_btn = QPushButton("应用切换 (后台)")
-        self.reload_btn = QPushButton("刷新画面 / 方向")
         self.kbd_btn = QPushButton("键盘输入: 关")
         self.shot_btn = QPushButton("截图并保存")
-        for btn in (self.home_btn, self.switcher_btn, self.reload_btn):
+        for btn in (self.home_btn, self.switcher_btn):
             btn.setEnabled(False)
             sidebar.addWidget(btn)
 
@@ -333,15 +345,18 @@ class MainWindow(QMainWindow):
         self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         self.screen.set_window_size(0, 0)
         self.screen.set_orientation(0)
-        self.info_orient.setText("—")
+        self.info_orient.setText("方向：—")
+        # Refresh button only needs a selected device (it re-runs this flow), so
+        # enable/disable it purely on target presence.
+        self.reload_btn.setEnabled(bool(self.target))
         # App management / device info work without WDA/tunnel, so refresh those
         # tabs for any selected device (they clear when no device is selected).
         self.app_tab.set_target(self.target)
         self.device_info_tab.set_target(self.target)
-        # Device info is the default landing tab on selection; the user opts into
-        # the key/mouse tab to pay the WDA/mirror startup cost.
-        if self.target:
-            self.tabs.setCurrentWidget(self.device_info_tab)
+        self.fs_tab.set_target(self.target)
+        self.album_tab.set_target(self.target)
+        # Keep whatever tab the user is on when switching devices (device info is
+        # only the default at app launch, via the first-added tab).
 
         if not self.target:
             self._fill_info(None)
@@ -483,7 +498,9 @@ class MainWindow(QMainWindow):
             return
         self.win_size = result["data"]
         self.screen.set_window_size(self.win_size["width"], self.win_size["height"])
-        self.info_size.setText(f"{self.win_size['width']} × {self.win_size['height']}")
+        self.info_size.setText(
+            f"分辨率(点)：{self.win_size['width']} × {self.win_size['height']}"
+        )
 
         # Fetch orientation next so frames are rotated upright; non-fatal on failure.
         self.runner.submit(
@@ -500,7 +517,9 @@ class MainWindow(QMainWindow):
             self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         _dbg(f"on_orientation {self.orientation} gen={gen}")
         self.screen.set_orientation(self.orientation.get("degrees", 0))
-        self.info_orient.setText(_ORIENT_LABEL.get(self.orientation.get("orientation"), "—"))
+        self.info_orient.setText(
+            "方向：" + _ORIENT_LABEL.get(self.orientation.get("orientation"), "—")
+        )
 
         # Apply requested framerate, then start the stream (non-fatal on failure).
         self.runner.submit(
@@ -768,15 +787,18 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- helpers
 
     def _connected_buttons(self) -> tuple:
-        # Buttons enabled only while a device is connected / streaming.
+        # Buttons enabled only while a device is connected / streaming. The
+        # refresh (screen / orientation) button is intentionally excluded: it is
+        # gated on device selection alone (see on_select_device), not on WDA.
         return (
-            self.home_btn, self.switcher_btn, self.reload_btn, self.kbd_btn,
+            self.home_btn, self.switcher_btn, self.kbd_btn,
             self.shot_btn, self.send_btn, self.set_pb_btn, self.get_pb_btn,
         )
 
     def _fill_info(self, dev: dict | None) -> None:
         self.info_size.setText(
-            f"{self.win_size['width']} × {self.win_size['height']}" if self.win_size else "—"
+            f"分辨率(点)：{self.win_size['width']} × {self.win_size['height']}"
+            if self.win_size else "分辨率(点)：—"
         )
 
     # ------------------------------------------------------------- closing

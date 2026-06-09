@@ -76,6 +76,8 @@ preflight() {
         || die "PySide6 is not installed for $PY. Install with: $PY -m pip install -r slide6_console/requirements.txt"
     "$PY" -c "import pymobiledevice3" 2>/dev/null \
         || die "pymobiledevice3 is not installed for $PY. Install with: $PY -m pip install -r executor_ios/requirements.txt"
+    "$PY" -c "import pillow_heif" 2>/dev/null \
+        || die "pillow-heif is not installed for $PY (needed for album HEIC decoding). Install with: $PY -m pip install -r slide6_console/requirements.txt"
 
     command -v iconutil >/dev/null 2>&1 || warn "iconutil not found; icon generation may fail."
     command -v sips >/dev/null 2>&1 || warn "sips not found; icon generation may fail."
@@ -155,6 +157,8 @@ run_nuitka_multidist() {
         --include-package=pymobiledevice3 \
         --include-package=executor_ios \
         --include-package=slide6_console \
+        --include-package=pillow_heif \
+        --include-package=PIL \
         "${COMMON_FLAGS[@]}" \
         --main="$GUI_MAIN" \
         --main="$TUNNELD_MAIN"
@@ -242,6 +246,8 @@ build_fallback() {
         --include-package=pymobiledevice3 \
         --include-package=executor_ios \
         --include-package=slide6_console \
+        --include-package=pillow_heif \
+        --include-package=PIL \
         "${COMMON_FLAGS[@]}" \
         "$GUI_MAIN" >&2
 

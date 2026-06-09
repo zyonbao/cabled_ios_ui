@@ -130,7 +130,9 @@ def _safe_remote_path(sub_path: str) -> str:
 # device path differs by vend mode: VendDocuments still roots AFC at the app
 # container, with the documents living under '/Documents' (listing the bare
 # container root is denied), whereas VendContainer roots AFC at the container.
-_AFC_BASE = {"documents": "/Documents", "container": "/"}
+# root="media" targets the device media partition (com.apple.afc) whose logical
+# root maps directly to the AFC root '/'.
+_AFC_BASE = {"documents": "/Documents", "container": "/", "media": "/"}
 
 
 def _afc_device_path(root: str, safe_path: str) -> str:
@@ -1315,21 +1317,33 @@ class iOSDevice:
         bundle_id: str,
         op: "Callable[[object], Awaitable]",
     ):
-        """Open a house-arrest AFC session for one app and run ``op`` on it.
+        """Open an AFC session for one request and run ``op`` on it.
 
         Uses a short-lived connection (opened and closed per request) to avoid
-        cross-request connection-state management. ``op`` receives the vended
-        AfcService-compatible HouseArrestService and may await AFC calls on it.
+        cross-request connection-state management. For root="media" the session
+        is a plain ``AfcService`` over the device media partition (no app
+        sandbox, no bundle_id); otherwise it is a house-arrest vended session
+        for one app. Both expose the same AFC method surface, so ``op`` can await
+        listdir/stat/pull/push/rm/makedirs/rename/get_file_contents uniformly.
         """
         from pymobiledevice3.lockdown import create_using_usbmux
-        from pymobiledevice3.services.house_arrest import (
-            HouseArrestService, VEND_CONTAINER, VEND_DOCUMENTS,
-        )
 
-        documents = root == "documents"
-        cmd = VEND_DOCUMENTS if documents else VEND_CONTAINER
         lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
         async with lockdown:
+            if root == "media":
+                from pymobiledevice3.services.afc import AfcService
+
+                # async-with so the AfcService reader-loop task is cancelled and
+                # the session closed after each request (no orphaned tasks).
+                async with AfcService(lockdown) as afc:
+                    return await op(afc)
+
+            from pymobiledevice3.services.house_arrest import (
+                HouseArrestService, VEND_CONTAINER, VEND_DOCUMENTS,
+            )
+
+            documents = root == "documents"
+            cmd = VEND_DOCUMENTS if documents else VEND_CONTAINER
             async with HouseArrestService(lockdown, documents_only=documents) as house:
                 await house.send_command(bundle_id, cmd)
                 return await op(house)
@@ -1338,7 +1352,7 @@ class iOSDevice:
         """List a directory inside an app's Documents or sandbox container."""
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         path = _safe_remote_path(sub_path)
         device_path = _afc_device_path(root, path)
@@ -1375,7 +1389,7 @@ class iOSDevice:
         """Export (download) a device file to a local path."""
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         if not local_path:
             return _err("BAD_TARGET", "local_path is required")
@@ -1401,7 +1415,7 @@ class iOSDevice:
 
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         if not local_path or not os.path.exists(local_path):
             return _err("BAD_TARGET", f"local path not found: {local_path}")
@@ -1427,7 +1441,7 @@ class iOSDevice:
         """Delete a file or directory inside the vended app area."""
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         rpath = _safe_remote_path(remote_path)
         if rpath == "/":
@@ -1450,7 +1464,7 @@ class iOSDevice:
         """Create a directory inside the vended app area."""
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         rdir = _safe_remote_path(remote_dir)
         if rdir == "/":
@@ -1473,7 +1487,7 @@ class iOSDevice:
         """Rename (or move) a file/directory inside the vended app area."""
         from .toolkit_api import _ok, _err
 
-        if not bundle_id:
+        if root != "media" and not bundle_id:
             return _err("BAD_TARGET", "bundle_id is required")
         src = _safe_remote_path(remote_path)
         dst = _safe_remote_path(new_path)
@@ -1491,6 +1505,41 @@ class iOSDevice:
         try:
             future.result(timeout=120)
             return _ok({"renamed": True, "from": src, "to": dst})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_read(
+        self, bundle_id: str, root: str, remote_path: str, max_bytes: "int | None" = None
+    ) -> dict:
+        """Read raw bytes of a file in the vended area (e.g. for thumbnails).
+
+        When ``max_bytes`` is set, the file size is checked first and oversized
+        files are refused so a huge original is never loaded into memory.
+        """
+        from .toolkit_api import _ok, _err
+
+        if root != "media" and not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        rpath = _safe_remote_path(remote_path)
+        if rpath == "/":
+            return _err("BAD_TARGET", "remote_path is required")
+        device_path = _afc_device_path(root, rpath)
+
+        async def _op(afc) -> bytes:
+            st = await afc.stat(device_path)
+            if st.get("st_ifmt") == "S_IFDIR":
+                raise IsADirectoryError(f"{rpath} is a directory")
+            size = int(st.get("st_size", 0))
+            if max_bytes is not None and size > max_bytes:
+                raise ValueError(f"file too large: {size} > {max_bytes} bytes")
+            return await afc.get_file_contents(device_path)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            data = future.result(timeout=120)
+            return _ok({"remote": rpath, "size": len(data), "data": data})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 

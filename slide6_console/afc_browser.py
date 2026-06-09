@@ -1,15 +1,22 @@
-"""afc_browser.py — the per-app file browser dialog.
+"""afc_browser.py — the reusable AFC file browser.
 
-AfcBrowserDialog browses one app's Documents (root="documents") or sandbox
-container (root="container") and supports file / folder import & export, rename,
-delete and make-directory. _FileTable adds drag-out export (to Finder) and
-drag-in import (from Finder).
+AfcBrowserPanel is an embeddable widget that browses one AFC area and supports
+file / folder import & export, rename, delete and make-directory. The area is
+selected by ``root``:
+
+* ``documents`` / ``container`` — one app's Documents or sandbox container
+  (house-arrest vended, requires ``bundle_id``);
+* ``media`` — the device media partition (``com.apple.afc``, no ``bundle_id``).
+
+AfcBrowserDialog is a thin QDialog wrapper around the panel for the per-app
+"open browser" flow. _FileTable adds drag-out export (to Finder) and drag-in
+import (from Finder).
 
 All non-blocking executor_ios calls go through the shared AsyncRunner so the Qt
 GUI thread never blocks. The only deliberate exception is drag-export, which
 must materialise a local copy synchronously before the drag starts; it runs
-behind a wait cursor. File management talks to lockdown/house-arrest services
-directly and needs neither WDA nor the XPC tunnel.
+behind a wait cursor. File management talks to lockdown/house-arrest/AFC
+services directly and needs neither WDA nor the XPC tunnel.
 """
 
 from __future__ import annotations
@@ -123,31 +130,52 @@ class _FileTable(QTableWidget):
         event.ignore()
 
 
-class AfcBrowserDialog(QDialog):
-    """Browse one app's Documents (root="documents") or sandbox container
-    (root="container") with file / folder import & export."""
+class AfcBrowserPanel(QWidget):
+    """Embeddable AFC browser for one area selected by ``root``.
+
+    ``root="documents"`` / ``"container"`` browse an app's Documents / sandbox
+    container (require ``bundle_id``); ``root="media"`` browses the device media
+    partition (no ``bundle_id``). When ``target`` is empty the panel shows a
+    "select a device" prompt and issues no calls until ``set_target`` is given a
+    real device.
+    """
 
     def __init__(
         self,
-        parent: QWidget,
+        parent: QWidget | None,
         runner: AsyncRunner,
         target: str,
         bundle_id: str,
         root: str,
-        app_name: str,
+        multi_select: bool = False,
     ) -> None:
         super().__init__(parent)
         self.runner = runner
         self.target = target
         self.bundle_id = bundle_id
         self.root = root
+        # multi_select enables row multi-selection plus right-click batch
+        # download / delete; the per-app sandbox dialog keeps the single-select
+        # default so its behavior is unchanged.
+        self.multi_select = multi_select
         self.cur_path = "/"
 
-        scope = "Documents" if root == "documents" else "沙盒"
-        self.setWindowTitle(f"{app_name} — {scope}")
-        self.resize(620, 480)
         self._build_ui()
-        self._refresh()
+        if self.target:
+            self._refresh()
+        else:
+            self.status.setText("请选择一个设备")
+
+    def set_target(self, target: str) -> None:
+        """Point the panel at a (possibly empty) device and reload from root."""
+        self.target = target or ""
+        self.cur_path = "/"
+        if self.target:
+            self._refresh()
+        else:
+            self.table.setRowCount(0)
+            self.path_edit.setText(self._display_path())
+            self.status.setText("请选择一个设备")
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -167,7 +195,11 @@ class AfcBrowserDialog(QDialog):
         self.table = _FileTable(self._make_export_mime, self._import_paths)
         self.table.setHorizontalHeaderLabels(["名称", "大小", "操作"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+            if self.multi_select
+            else QAbstractItemView.SingleSelection
+        )
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
@@ -238,6 +270,10 @@ class AfcBrowserDialog(QDialog):
 
     def _refresh(self) -> None:
         self.path_edit.setText(self._display_path())
+        if not self.target:
+            self.table.setRowCount(0)
+            self.status.setText("请选择一个设备")
+            return
         self.status.setText("正在加载…")
         self.table.setRowCount(0)
         self.runner.submit(
@@ -304,7 +340,22 @@ class AfcBrowserDialog(QDialog):
         entry = self.table.item(item.row(), 0).data(Qt.UserRole)
         if not entry or entry.get("_parent"):
             return
+
+        # In multi-select mode, when more than one selectable item is selected,
+        # offer batch operations instead of single-item ones.
+        selected = self._selected_entries() if self.multi_select else []
         menu = QMenu(self)
+        if self.multi_select and len(selected) > 1:
+            menu.addAction(
+                f"批量下载 {len(selected)} 项到…", lambda: self._batch_export(selected)
+            )
+            menu.addSeparator()
+            menu.addAction(
+                f"批量删除 {len(selected)} 项…", lambda: self._batch_delete(selected)
+            )
+            menu.exec(QCursor.pos())
+            return
+
         if entry.get("isDir"):
             menu.addAction("导入到此文件夹…", lambda: self._import_into(entry))
         menu.addAction("导出…", lambda: self._export(entry))
@@ -316,6 +367,20 @@ class AfcBrowserDialog(QDialog):
     def _current_entry(self) -> dict | None:
         item = self.table.item(self.table.currentRow(), 0)
         return item.data(Qt.UserRole) if item else None
+
+    def _selected_entries(self) -> list[dict]:
+        """Selectable entries in the current selection (excludes the '..' row)."""
+        entries: list[dict] = []
+        seen_rows: set[int] = set()
+        for item in self.table.selectedItems():
+            row = item.row()
+            if row in seen_rows:
+                continue
+            seen_rows.add(row)
+            entry = self.table.item(row, 0).data(Qt.UserRole)
+            if entry and not entry.get("_parent"):
+                entries.append(entry)
+        return entries
 
     # ------------------------------------------------------------ navigation
 
@@ -458,3 +523,100 @@ class AfcBrowserDialog(QDialog):
             lambda: api.afc_rm(self.target, self.bundle_id, self.root, remote),
             "已删除", "删除失败",
         )
+
+    # ----------------------------------------------------------- batch ops
+
+    def _batch_export(self, entries: list[dict]) -> None:
+        """Download several selected items into one chosen directory."""
+        out_dir = QFileDialog.getExistingDirectory(self, "批量下载到")
+        if not out_dir:
+            return
+        names = [e.get("name", "") for e in entries]
+        cur_path, target, bundle_id, root = (
+            self.cur_path, self.target, self.bundle_id, self.root
+        )
+        self.status.setText(f"正在下载 {len(names)} 项…")
+
+        def _do() -> dict:
+            ok, failed = 0, []
+            for name in names:
+                remote = posixpath.join(cur_path, name)
+                # For a directory source, pull creates out_dir/<name>; for a file
+                # it writes out_dir/<name>. Same-name files are overwritten.
+                local = os.path.join(out_dir, name)
+                res = api.afc_pull(target, bundle_id, root, remote, local)
+                if res.get("ok"):
+                    ok += 1
+                else:
+                    failed.append(name)
+            return {"ok": ok, "failed": failed}
+
+        self.runner.submit(
+            _do,
+            on_done=lambda r: self._on_batch_done(r, "已下载", refresh=False),
+            on_error=lambda e: self.status.setText(f"批量下载失败: {e}"),
+        )
+
+    def _batch_delete(self, entries: list[dict]) -> None:
+        """Delete several selected items after one summary confirmation."""
+        names = [e.get("name", "") for e in entries]
+        sample = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
+        reply = QMessageBox.question(
+            self, "批量删除",
+            f"确定删除 {len(names)} 项？此操作不可撤销。\n示例：{sample}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        cur_path, target, bundle_id, root = (
+            self.cur_path, self.target, self.bundle_id, self.root
+        )
+        self.status.setText(f"正在删除 {len(names)} 项…")
+
+        def _do() -> dict:
+            ok, failed = 0, []
+            for name in names:
+                remote = posixpath.join(cur_path, name)
+                res = api.afc_rm(target, bundle_id, root, remote)
+                if res.get("ok"):
+                    ok += 1
+                else:
+                    failed.append(name)
+            return {"ok": ok, "failed": failed}
+
+        self.runner.submit(
+            _do,
+            on_done=lambda r: self._on_batch_done(r, "已删除", refresh=True),
+            on_error=lambda e: self.status.setText(f"批量删除失败: {e}"),
+        )
+
+    def _on_batch_done(self, result: dict, verb: str, *, refresh: bool) -> None:
+        failed = result.get("failed", [])
+        if failed:
+            self.status.setText(f"{verb} {result['ok']} 项，{len(failed)} 项失败")
+        else:
+            self.status.setText(f"{verb} {result['ok']} 项")
+        if refresh:
+            self._refresh()
+
+
+class AfcBrowserDialog(QDialog):
+    """Thin dialog wrapper hosting an AfcBrowserPanel for the per-app flow."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        runner: AsyncRunner,
+        target: str,
+        bundle_id: str,
+        root: str,
+        app_name: str,
+    ) -> None:
+        super().__init__(parent)
+        scope = "Documents" if root == "documents" else "沙盒"
+        self.setWindowTitle(f"{app_name} — {scope}")
+        self.resize(620, 480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.panel = AfcBrowserPanel(self, runner, target, bundle_id, root)
+        layout.addWidget(self.panel)
