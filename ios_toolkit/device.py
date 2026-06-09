@@ -1248,15 +1248,17 @@ class iOSDevice:
         apps: list[dict] = []
         for bundle_id, info in raw.items():
             entitlements = info.get("Entitlements") or {}
-            # Sandbox (VendContainer) access is granted to debuggable apps. The
-            # ideal signal is the get-task-allow entitlement, but installation_
-            # proxy returns a trimmed Entitlements dict that usually omits it.
-            # A reliable fallback is SignerIdentity: present for development /
-            # ad-hoc / enterprise-signed apps (whose containers are vendable)
-            # and absent for App Store and system apps.
+            # Sandbox (VendContainer) access is only granted to *debuggable*
+            # apps, i.e. those carrying the get-task-allow entitlement. On iOS
+            # installation_proxy returns this under the bare key "get-task-allow"
+            # (the "com.apple.security." prefix is the macOS spelling, kept here
+            # only as a secondary fallback). SignerIdentity is NOT a valid
+            # signal: App Store apps also carry one ("Apple iPhone OS
+            # Application Signing") yet their containers cannot be vended.
             sandbox_accessible = bool(
-                entitlements.get("com.apple.security.get-task-allow", False)
-            ) or ("SignerIdentity" in info)
+                entitlements.get("get-task-allow")
+                or entitlements.get("com.apple.security.get-task-allow")
+            )
             apps.append({
                 "bundleId": bundle_id,
                 "name": (info.get("CFBundleDisplayName")

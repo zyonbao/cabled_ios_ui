@@ -1,8 +1,5 @@
-# app-inventory-op Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
-## Requirements
 ### Requirement: 列出已安装 App 及元数据
 
 `ios_toolkit.toolkit_api` SHALL 提供 `list_apps(target)`，通过 `pymobiledevice3` 的 `InstallationProxyService.get_apps()` 返回设备上已安装 App 列表，每项至少包含 `bundleId`、`name`、`appType`，以及 `fileSharing`（是否开启 `UIFileSharingEnabled`）与 `sandboxAccessible`（沙盒容器是否可经 house-arrest `VendContainer` 访问）两个布尔标志。
@@ -30,37 +27,3 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 - **WHEN** 某 App 为 App Store 签名（带 `SignerIdentity` 但 `Entitlements` 不含 `get-task-allow=true`）
 - **THEN** 其 `sandboxAccessible` 为 `false`
-
-### Requirement: 从本地 IPA 安装 App
-
-`ios_toolkit.toolkit_api` SHALL 提供 `install_app(target, ipa_path)`，通过 `InstallationProxyService.install_from_local()` 将本地 `.ipa` 安装到设备，并以统一包络返回结果。
-
-#### Scenario: 安装成功
-
-- **WHEN** 调用 `install_app(target, ipa_path)` 且 IPA 可被设备接受
-- **THEN** 安装完成后返回 `ok` 包络
-
-#### Scenario: IPA 路径无效
-
-- **WHEN** `ipa_path` 不存在或扩展名不是 `.ipa`
-- **THEN** 返回 `error` 包络，`error.kind` 为 `BAD_TARGET`，且不调用安装服务
-
-#### Scenario: 设备拒绝安装（签名不匹配）
-
-- **WHEN** 设备因签名/证书校验拒绝安装
-- **THEN** 返回 `error` 包络，`error.message` 携带可读失败原因，不抛出未捕获异常
-
-### Requirement: 卸载 App
-
-`ios_toolkit.toolkit_api` SHALL 提供 `uninstall_app(target, bundle_id)`，通过 `InstallationProxyService.uninstall()` 卸载指定 App。
-
-#### Scenario: 卸载成功
-
-- **WHEN** 调用 `uninstall_app(target, bundle_id)` 且该 App 已安装
-- **THEN** 卸载完成后返回 `ok` 包络
-
-#### Scenario: 缺少 bundleId
-
-- **WHEN** `bundle_id` 为空
-- **THEN** 返回 `error` 包络，`error.kind` 为 `BAD_TARGET`，且不调用卸载服务
-
