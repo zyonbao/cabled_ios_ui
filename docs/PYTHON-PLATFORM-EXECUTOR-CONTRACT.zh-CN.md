@@ -64,11 +64,13 @@ studio/src-tauri/vendor/runtime/executor_<platform>/
 
 ```text
 executor_android/
-executor_ios/
+ios_toolkit/
 executor_macos/
 executor_windows/
 executor_web/
 ```
+
+> **注意（iOS 实现命名偏离约定）**：本仓库的 iOS 执行器包已由 `executor_ios` 重命名为 `ios_toolkit`，不再遵循 `executor_<platform>` 命名约定。因此下文所有通用模板中出现的 `executor_<platform>`，在 iOS 平台上对应 `ios_toolkit`——broker 入口为 `python3 -B -m ios_toolkit.toolkit_cli`。这是对外契约的 **BREAKING** 变更，Studio broker 侧需同步调用路径。
 
 每个平台目录建议至少包含：
 

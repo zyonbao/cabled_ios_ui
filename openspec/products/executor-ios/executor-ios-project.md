@@ -8,7 +8,7 @@
 
 ### Phase 3 多设备设备管理器
 
-Phase 3 引入 `executor_ios/device.py`，用 `iOSDevicesManager` 单例维护 UDID 到 `iOSDevice` 的注册表。`device.py` 在模块加载时创建后台 `asyncio` event loop 和 daemon thread，每个 `iOSDevice` 注册时启动一个持久 usbmux 端口转发任务，设备操作直接访问对应 `local_port` 上的 WDA HTTP 服务。来源：`openspec/archive/executor-ios-phase3-device-manager/`
+Phase 3 引入 `ios_toolkit/device.py`，用 `iOSDevicesManager` 单例维护 UDID 到 `iOSDevice` 的注册表。`device.py` 在模块加载时创建后台 `asyncio` event loop 和 daemon thread，每个 `iOSDevice` 注册时启动一个持久 usbmux 端口转发任务，设备操作直接访问对应 `local_port` 上的 WDA HTTP 服务。来源：`openspec/archive/executor-ios-phase3-device-manager/`
 
 `toolkit_api.py` 通过 `_get_manager()` 延迟导入 `_manager`，公开操作统一执行：解析设备、必要时 `do_prepare()` 启动 WDA、委托 `iOSDevice` 方法。这样保留同步 API 形态，同时移除 Phase 1 的 `asyncio.run()` 和每次操作临时转发模式。来源：`openspec/archive/executor-ios-phase3-device-manager/`
 
@@ -32,9 +32,9 @@ Phase 3 引入 `executor_ios/device.py`，用 `iOSDevicesManager` 单例维护 U
 
 | 路径 | 说明 |
 |---|---|
-| `executor_ios/device.py` | 多设备管理器、持久端口转发、WDA 生命周期、session 复用和 WDA 操作实现。 |
-| `executor_ios/toolkit_api.py` | iOS 平台同步 API，对外保持统一返回格式，对内委托 `iOSDevice`。 |
-| `executor_ios/tunneld_main.py` | `ios_tunneld` 独立入口，监听 `127.0.0.1:49151`，为 iOS 17+ 提供 RSD 信息。 |
+| `ios_toolkit/device.py` | 多设备管理器、持久端口转发、WDA 生命周期、session 复用和 WDA 操作实现。 |
+| `ios_toolkit/toolkit_api.py` | iOS 平台同步 API，对外保持统一返回格式，对内委托 `iOSDevice`。 |
+| `ios_toolkit/tunneld_main.py` | `ios_tunneld` 独立入口，监听 `127.0.0.1:49151`，为 iOS 17+ 提供 RSD 信息。 |
 
 ## 平台支持
 

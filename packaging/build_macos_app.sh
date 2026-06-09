@@ -11,15 +11,15 @@
 #   - GUI:     CablediOS.py        -> basename "CablediOS"
 #   - tunneld: cabled_ios_tunnel.py -> basename "cabled_ios_tunnel"
 # After the build we add a "cabled_ios_tunnel" executable next to the GUI binary in
-# Contents/MacOS/ so slide6_console/tunnel.py can launch it under elevation.
+# Contents/MacOS/ so slide6_ui/tunnel.py can launch it under elevation.
 #
 # Why both --main files live at the repo root:
 #   A Nuitka multidist --main is compiled as a top-level __main__ and its
 #   directory becomes a top-level import root. Keeping every --main at the repo
-#   root means executor_ios/ never becomes such a root, so executor_ios/secrets.py
+#   root means ios_toolkit/ never becomes such a root, so ios_toolkit/secrets.py
 #   can never shadow the stdlib "secrets" module that pymobiledevice3 imports.
 #   (This is why the tunneld --main is cabled_ios_tunnel.py here, not the in-package
-#   executor_ios/ios_tunneld.py — and why credentials.py could be renamed back to
+#   ios_toolkit/ios_tunneld.py — and why credentials.py could be renamed back to
 #   secrets.py.)
 #
 # Usage:
@@ -45,12 +45,12 @@ BUILD_DIR="$REPO_ROOT/build/nuitka"
 CACHE_DIR="$REPO_ROOT/build/.nuitka-cache"
 export NUITKA_CACHE_DIR="$CACHE_DIR"
 APP_NAME="CablediOS"
-ICON_SRC="$REPO_ROOT/slide6_console/AppIcon.png"
+ICON_SRC="$REPO_ROOT/slide6_ui/AppIcon.png"
 ICON_ICNS="$BUILD_DIR/AppIcon.icns"
 # GUI entry is a top-level launcher (absolute imports) so multidist does not
 # break on relative imports; its basename becomes CFBundleExecutable.
 GUI_MAIN="$REPO_ROOT/CablediOS.py"
-# tunneld entry is a top-level launcher (repo root) so executor_ios/ never becomes
+# tunneld entry is a top-level launcher (repo root) so ios_toolkit/ never becomes
 # a top-level import root; its basename becomes the multidist dispatch name.
 TUNNELD_MAIN="$REPO_ROOT/cabled_ios_tunnel.py"
 
@@ -73,11 +73,11 @@ preflight() {
     "$PY" -c "import nuitka" 2>/dev/null \
         || die "Nuitka is not installed for $PY. Install with: $PY -m pip install -r packaging/requirements-build.txt"
     "$PY" -c "import PySide6" 2>/dev/null \
-        || die "PySide6 is not installed for $PY. Install with: $PY -m pip install -r slide6_console/requirements.txt"
+        || die "PySide6 is not installed for $PY. Install with: $PY -m pip install -r slide6_ui/requirements.txt"
     "$PY" -c "import pymobiledevice3" 2>/dev/null \
-        || die "pymobiledevice3 is not installed for $PY. Install with: $PY -m pip install -r executor_ios/requirements.txt"
+        || die "pymobiledevice3 is not installed for $PY. Install with: $PY -m pip install -r ios_toolkit/requirements.txt"
     "$PY" -c "import pillow_heif" 2>/dev/null \
-        || die "pillow-heif is not installed for $PY (needed for album HEIC decoding). Install with: $PY -m pip install -r slide6_console/requirements.txt"
+        || die "pillow-heif is not installed for $PY (needed for album HEIC decoding). Install with: $PY -m pip install -r slide6_ui/requirements.txt"
 
     command -v iconutil >/dev/null 2>&1 || warn "iconutil not found; icon generation may fail."
     command -v sips >/dev/null 2>&1 || warn "sips not found; icon generation may fail."
@@ -155,8 +155,8 @@ run_nuitka_multidist() {
         $ICON_FLAG \
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
-        --include-package=executor_ios \
-        --include-package=slide6_console \
+        --include-package=ios_toolkit \
+        --include-package=slide6_ui \
         --include-package=pillow_heif \
         --include-package=PIL \
         "${COMMON_FLAGS[@]}" \
@@ -244,8 +244,8 @@ build_fallback() {
         $ICON_FLAG \
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
-        --include-package=executor_ios \
-        --include-package=slide6_console \
+        --include-package=ios_toolkit \
+        --include-package=slide6_ui \
         --include-package=pillow_heif \
         --include-package=PIL \
         "${COMMON_FLAGS[@]}" \
@@ -255,7 +255,7 @@ build_fallback() {
     "$PY" -m nuitka \
         --standalone \
         --include-package=pymobiledevice3 \
-        --include-package=executor_ios \
+        --include-package=ios_toolkit \
         "${COMMON_FLAGS[@]}" \
         "$TUNNELD_MAIN" >&2
 

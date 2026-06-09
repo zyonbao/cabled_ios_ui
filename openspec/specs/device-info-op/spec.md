@@ -5,7 +5,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 ## Requirements
 ### Requirement: 读取设备信息
 
-`executor_ios.toolkit_api` SHALL 提供 `device_info(target)`，通过 lockdown（usbmux，无需配对）读取设备的全量公开属性并返回。返回值 SHALL 为 `ok` 包络，`data.info` 为字段名到值的扁平映射；原始字节类字段（如配对/证书 blob）SHALL 被剔除，嵌套结构 SHALL 以字符串形式呈现。该能力无需 WDA 或 XPC tunnel。
+`ios_toolkit.toolkit_api` SHALL 提供 `device_info(target)`，通过 lockdown（usbmux，无需配对）读取设备的全量公开属性并返回。返回值 SHALL 为 `ok` 包络，`data.info` 为字段名到值的扁平映射；原始字节类字段（如配对/证书 blob）SHALL 被剔除，嵌套结构 SHALL 以字符串形式呈现。该能力无需 WDA 或 XPC tunnel。
 
 #### Scenario: 读取成功
 

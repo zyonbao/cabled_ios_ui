@@ -5,7 +5,7 @@
 ## Requirements
 ### Requirement: 访问设备媒体分区根（root="media"）
 
-`executor_ios.toolkit_api` 的 AFC 系列函数 SHALL 支持 `root="media"`，经 `AfcService`（`com.apple.afc`，lockdown 直连）访问设备**媒体分区根**（含 `DCIM`、`Downloads`、`Books` 等，**不含** App 沙盒）。`media` 模式下逻辑根 `/` 直接对应媒体分区根（无路径偏移），`bundle_id` SHALL 被忽略（可为空）。访问无需 WDA 或 XPC tunnel。`sub_path`/`remote_path` SHALL 沿用既有规范化与越界校验。
+`ios_toolkit.toolkit_api` 的 AFC 系列函数 SHALL 支持 `root="media"`，经 `AfcService`（`com.apple.afc`，lockdown 直连）访问设备**媒体分区根**（含 `DCIM`、`Downloads`、`Books` 等，**不含** App 沙盒）。`media` 模式下逻辑根 `/` 直接对应媒体分区根（无路径偏移），`bundle_id` SHALL 被忽略（可为空）。访问无需 WDA 或 XPC tunnel。`sub_path`/`remote_path` SHALL 沿用既有规范化与越界校验。
 
 #### Scenario: 列出媒体分区目录
 
@@ -53,7 +53,7 @@
 
 ### Requirement: 按需读取文件字节（缩略图）
 
-`executor_ios.toolkit_api` SHALL 提供 `afc_read(target, bundle_id, root, remote_path, max_bytes=None)`，经 AFC 读取并返回指定文件的字节内容，供 UI 生成缩略图等用途。`max_bytes` 非空时 SHALL 限制读取上限（超出则截断或拒绝），避免大文件造成内存峰值。
+`ios_toolkit.toolkit_api` SHALL 提供 `afc_read(target, bundle_id, root, remote_path, max_bytes=None)`，经 AFC 读取并返回指定文件的字节内容，供 UI 生成缩略图等用途。`max_bytes` 非空时 SHALL 限制读取上限（超出则截断或拒绝），避免大文件造成内存峰值。
 
 #### Scenario: 读取文件字节成功
 

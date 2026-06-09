@@ -1,18 +1,14 @@
 ## Purpose
 
 executor 的 JSON CLI 协议——定义可执行模块入口、请求/响应格式、退出码约定与支持的 op 列表。
-
 ## Requirements
-
 ### Requirement: CLI 入口作为可执行模块运行
 
-`toolkit_cli.py` SHALL 可通过 `python3 -B -m executor_ios.toolkit_cli` 启动，以 stdin/stdout 一次性 JSON 协议处理单条请求后退出。
+`toolkit_cli.py` SHALL 可通过 `python3 -B -m ios_toolkit.toolkit_cli` 启动，以 stdin/stdout 一次性 JSON 协议处理单条请求后退出。
 
 #### Scenario: 正常启动并处理请求
-- **WHEN** 调用方通过子进程启动 `python3 -B -m executor_ios.toolkit_cli` 并向 stdin 写入合法 JSON
+- **WHEN** 调用方通过子进程启动 `python3 -B -m ios_toolkit.toolkit_cli` 并向 stdin 写入合法 JSON
 - **THEN** CLI 处理请求，向 stdout 输出一个完整 JSON 响应，进程以退出码 0 结束
-
----
 
 ### Requirement: 请求格式
 
@@ -118,3 +114,4 @@ CLI SHALL 路由以下所有 op 到 `toolkit_api.py` 对应函数：
 #### Scenario: 未知 op 返回 NOT_IMPLEMENTED
 - **WHEN** 请求 op 不在支持列表中
 - **THEN** CLI 返回 `{"ok":false,"error":{"kind":"NOT_IMPLEMENTED",...}}` 并以退出码 0 退出
+

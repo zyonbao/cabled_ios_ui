@@ -5,7 +5,7 @@
 ## Requirements
 ### Requirement: 文件系统 Tab
 
-`slide6_console` SHALL 在左侧 Tab 栏提供「文件系统」Tab，通过 `root="media"` 的 AFC 函数浏览设备**媒体分区**目录树（不含 App 沙盒），交互与 App 文件浏览器一致：可编辑相对路径（回车跳转）、非根目录顶部 `..` 行双击返回、每个条目右侧提供导入/导出/重命名/删除操作并支持等价右键菜单。该 Tab 无需 WDA 或 tunnel，选中设备即可用。
+`slide6_ui` SHALL 在左侧 Tab 栏提供「文件系统」Tab，通过 `root="media"` 的 AFC 函数浏览设备**媒体分区**目录树（不含 App 沙盒），交互与 App 文件浏览器一致：可编辑相对路径（回车跳转）、非根目录顶部 `..` 行双击返回、每个条目右侧提供导入/导出/重命名/删除操作并支持等价右键菜单。该 Tab 无需 WDA 或 tunnel，选中设备即可用。
 
 #### Scenario: 浏览媒体分区
 

@@ -5,7 +5,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 ## Requirements
 ### Requirement: 浏览 App 文件目录
 
-`executor_ios.toolkit_api` SHALL 提供 `afc_list(target, bundle_id, root, sub_path)`，通过 `HouseArrestService` 建立对指定 App 的 AFC 访问并列出 `sub_path` 目录条目。`root` 取值 `documents` 时使用 `VendDocuments`，取值 `container` 时使用 `VendContainer`。两种模式下 AFC 根均位于容器根，因此用户可见的逻辑路径（根为 `/`）在 `documents` 模式下 SHALL 映射到设备侧 `/Documents`、在 `container` 模式下映射到 `/`。每个条目至少包含 `name`、`isDir`、`size`、`mtime`。
+`ios_toolkit.toolkit_api` SHALL 提供 `afc_list(target, bundle_id, root, sub_path)`，通过 `HouseArrestService` 建立对指定 App 的 AFC 访问并列出 `sub_path` 目录条目。`root` 取值 `documents` 时使用 `VendDocuments`，取值 `container` 时使用 `VendContainer`。两种模式下 AFC 根均位于容器根，因此用户可见的逻辑路径（根为 `/`）在 `documents` 模式下 SHALL 映射到设备侧 `/Documents`、在 `container` 模式下映射到 `/`。每个条目至少包含 `name`、`isDir`、`size`、`mtime`。
 
 #### Scenario: 列出 Documents 目录（fileSharing App）
 
@@ -29,7 +29,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 导出（pull）设备文件或目录到本地
 
-`executor_ios.toolkit_api` SHALL 提供 `afc_pull(target, bundle_id, root, remote_path, local_path)`，将设备侧文件或目录读取并写入本地。导出文件时 `local_path` 为目标文件全路径；导出目录时 `local_path` 为目标**父目录**，pull SHALL 在其下递归重建以 `remote_path` 末段命名的目录。
+`ios_toolkit.toolkit_api` SHALL 提供 `afc_pull(target, bundle_id, root, remote_path, local_path)`，将设备侧文件或目录读取并写入本地。导出文件时 `local_path` 为目标文件全路径；导出目录时 `local_path` 为目标**父目录**，pull SHALL 在其下递归重建以 `remote_path` 末段命名的目录。
 
 #### Scenario: 导出文件成功
 
@@ -48,7 +48,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 导入（push）本地文件或目录到设备
 
-`executor_ios.toolkit_api` SHALL 提供 `afc_push(target, bundle_id, root, local_path, remote_dir)`，将本地文件或目录写入设备侧 `remote_dir` 目录。文件写入为 `remote_dir/<文件名>`；目录递归复制为 `remote_dir/<目录名>`。
+`ios_toolkit.toolkit_api` SHALL 提供 `afc_push(target, bundle_id, root, local_path, remote_dir)`，将本地文件或目录写入设备侧 `remote_dir` 目录。文件写入为 `remote_dir/<文件名>`；目录递归复制为 `remote_dir/<目录名>`。
 
 #### Scenario: 导入文件成功
 
@@ -67,7 +67,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 删除、新建目录与重命名
 
-`executor_ios.toolkit_api` SHALL 提供 `afc_rm(target, bundle_id, root, remote_path)`、`afc_mkdir(target, bundle_id, root, remote_dir)` 与 `afc_rename(target, bundle_id, root, remote_path, new_path)`，分别用于删除设备侧文件/目录、创建目录与重命名（移动）文件/目录。
+`ios_toolkit.toolkit_api` SHALL 提供 `afc_rm(target, bundle_id, root, remote_path)`、`afc_mkdir(target, bundle_id, root, remote_dir)` 与 `afc_rename(target, bundle_id, root, remote_path, new_path)`，分别用于删除设备侧文件/目录、创建目录与重命名（移动）文件/目录。
 
 #### Scenario: 删除文件
 

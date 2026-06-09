@@ -3,8 +3,8 @@
 #   .venv/bin/python -m pip install -r packaging/requirements-build.txt
 #
 # Runtime deps (installed separately) live in:
-#   - executor_ios/requirements.txt  (requests, pymobiledevice3, ...)
-#   - slide6_console/requirements.txt (PySide6)
+#   - ios_toolkit/requirements.txt  (requests, pymobiledevice3, ...)
+#   - slide6_ui/requirements.txt (PySide6)
 
 nuitka>=2.4
 ordered-set>=4.1.0

@@ -5,7 +5,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 ## Requirements
 ### Requirement: App 列表展示
 
-`slide6_console` SHALL 在「App 列表」Tab 通过 `toolkit_api.list_apps(target)` 展示当前设备已安装 App，每行至少显示名称与 bundleId，并提供一个「操作」列。「操作」列 SHALL 依据该 App 的能力按需展示 `Documents`、`Sandbox`、`卸载` 按钮：开启 fileSharing 时展示 `Documents`，沙盒可访问时展示 `Sandbox`，`卸载` 始终展示。列表加载在后台线程执行，避免界面卡顿。
+`slide6_ui` SHALL 在「App 列表」Tab 通过 `toolkit_api.list_apps(target)` 展示当前设备已安装 App，每行至少显示名称与 bundleId，并提供一个「操作」列。「操作」列 SHALL 依据该 App 的能力按需展示 `Documents`、`Sandbox`、`卸载` 按钮：开启 fileSharing 时展示 `Documents`，沙盒可访问时展示 `Sandbox`，`卸载` 始终展示。列表加载在后台线程执行，避免界面卡顿。
 
 #### Scenario: 选中设备后加载列表
 
@@ -20,7 +20,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: App 搜索与筛选
 
-`slide6_console` SHALL 提供按关键字搜索 App（匹配名称或 bundleId，不区分大小写），以及按"文件已共享"（fileSharing）与"沙盒可访问"进行筛选。
+`slide6_ui` SHALL 提供按关键字搜索 App（匹配名称或 bundleId，不区分大小写），以及按"文件已共享"（fileSharing）与"沙盒可访问"进行筛选。
 
 #### Scenario: 关键字搜索
 
@@ -39,7 +39,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 安装与卸载 App
 
-`slide6_console` SHALL 支持通过点击按钮选择 `.ipa` 或将 `.ipa` 拖拽到列表区来安装 App，并支持对选中 App 执行卸载。安装/卸载完成后自动刷新列表。
+`slide6_ui` SHALL 支持通过点击按钮选择 `.ipa` 或将 `.ipa` 拖拽到列表区来安装 App，并支持对选中 App 执行卸载。安装/卸载完成后自动刷新列表。
 
 #### Scenario: 点击选择 IPA 安装
 
@@ -63,7 +63,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: App 文件浏览器与导入导出
 
-`slide6_console` SHALL 为开启 fileSharing 的 App 提供浏览 `Documents` 及其子目录的入口，为沙盒可访问的 App 提供浏览整个容器的入口。文件浏览器 SHALL：
+`slide6_ui` SHALL 为开启 fileSharing 的 App 提供浏览 `Documents` 及其子目录的入口，为沙盒可访问的 App 提供浏览整个容器的入口。文件浏览器 SHALL：
 
 - 顶部以**可编辑的相对路径输入框**展示当前路径（documents 根显示为 `Documents/...`、container 根显示为绝对沙盒路径），用户编辑后回车 SHALL 跳转到目标路径；路径右侧提供「刷新」与「添加文件夹」按钮。
 - 当当前路径非根目录时，条目列表顶部 SHALL 显示一个 `..` 行，双击 `..` 返回上一级；`..` 行不提供任何条目操作。

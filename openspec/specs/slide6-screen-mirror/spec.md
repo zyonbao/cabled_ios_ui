@@ -1,9 +1,7 @@
 ## Purpose
 
 桌面应用屏幕镜像——消费 WDA MJPEG broadcaster 实时渲染画面，处理解码/断流/设备切换并按屏幕方向渲染与映射坐标。
-
 ## Requirements
-
 ### Requirement: 消费 WDA MJPEG broadcaster 渲染实时画面
 
 应用 SHALL 在后台线程连接设备的 MJPEG broadcaster（`device.mjpeg_local_port`），完成握手后按 multipart 边界解析出每帧 JPEG，并在主线程渲染到画面控件。
@@ -50,7 +48,7 @@
 
 ### Requirement: 按屏幕方向渲染画面与坐标映射
 
-`slide6_console` 的画面控件 SHALL 在准备设备后取得 `toolkit_api.orientation(target)`，并据此渲染 MJPEG 画面：当帧方向与 `window_size`（当前方向）不一致时按 `degrees` 把帧旋转 90°/270° 使其与当前方向对齐；当帧方向已一致但朝向为 `PORTRAIT_UPSIDE_DOWN` 时额外旋转 180°（仅凭宽高比无法识别 180° 翻转）。旋转后再 letterbox 居中绘制，使画面朝向与设备一致、宽高比正确，且手势坐标映射到 `window_size`（当前方向）空间在四方向下都正确。
+`slide6_ui` 的画面控件 SHALL 在准备设备后取得 `ios_toolkit.toolkit_api.orientation(target)`，并据此渲染 MJPEG 画面：当帧方向与 `window_size`（当前方向）不一致时按 `degrees` 把帧旋转 90°/270° 使其与当前方向对齐；当帧方向已一致但朝向为 `PORTRAIT_UPSIDE_DOWN` 时额外旋转 180°（仅凭宽高比无法识别 180° 翻转）。旋转后再 letterbox 居中绘制，使画面朝向与设备一致、宽高比正确，且手势坐标映射到 `window_size`（当前方向）空间在四方向下都正确。
 
 #### Scenario: 竖屏渲染
 
@@ -73,3 +71,4 @@
 
 - **WHEN** `orientation` 查询失败或返回未知方向
 - **THEN** 按竖屏（不旋转）渲染，且不崩溃
+

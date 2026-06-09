@@ -181,7 +181,7 @@ WDA 是运行在 iOS 设备 / 模拟器上的 XCTest 进程，暴露标准 WebDr
 | **xcrun devicectl** | CoreDevice（RemoteXPC）| ✅ | 需 Xcode 15+ |
 | **quicktime_video_hack** | USB hidden config 0x2A | ✅ | Go 实现，30–60fps 镜像 |
 | **tapflow** | IOSurface + CoreSimulator | ✅（仅模拟器）| Swift，~30fps |
-| **本项目（executor_ios）** | WDA REST API（HTTP）| ✅ | 纯 Python + requests |
+| **本项目（ios_toolkit）** | WDA REST API（HTTP）| ✅ | 纯 Python + requests |
 
 ---
 

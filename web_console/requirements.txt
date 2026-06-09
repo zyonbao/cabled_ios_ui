@@ -1,4 +1,0 @@
-# web_console depends on the executor_ios package (same repo) plus a web stack.
-# Install executor_ios deps first: pip install -r ../executor_ios/requirements.txt
-fastapi==0.136.3
-uvicorn==0.48.0

@@ -1,14 +1,14 @@
 ## Purpose
 
-定义 `slide6_console` PySide6 桌面应用主壳（设备发现/选择、左侧多 Tab 布局、WDA 准备生命周期、画面区域、设备动作与帧率配置等），为各功能 Tab 提供统一的进程内入口与设备生命周期管理。
+定义 `slide6_ui` PySide6 桌面应用主壳（设备发现/选择、左侧多 Tab 布局、WDA 准备生命周期、画面区域、设备动作与帧率配置等），为各功能 Tab 提供统一的进程内入口与设备生命周期管理。
 ## Requirements
 ### Requirement: 桌面应用启动与入口
 
-`slide6_console` SHALL 提供一个可通过 `python3 -m slide6_console.app` 启动的 PySide6 桌面应用，并在进程内直接复用 `executor_ios.toolkit_api`，不依赖任何 HTTP 服务。主窗口 SHALL 采用左侧纵向多 Tab 布局：顶部为设备选择控件与"刷新设备列表"按钮，左侧自上而下依次为「设备信息」「键鼠操作」「App 列表」三个 Tab。「键鼠操作」Tab 承载画面区域、状态指示与设备动作控件。顶部 SHALL NOT 展示系统版本 / UDID 等设备明细（改由「设备信息」Tab 承载）。选中设备后 SHALL 默认切换到「设备信息」Tab（避免自动支付 WDA/镜像启动开销）。
+`slide6_ui` SHALL 提供一个可通过 `python3 -m slide6_ui.app` 启动的 PySide6 桌面应用，并在进程内直接复用 `ios_toolkit.toolkit_api`，不依赖任何 HTTP 服务。主窗口 SHALL 采用左侧纵向多 Tab 布局：顶部为设备选择控件与"刷新设备列表"按钮，左侧自上而下依次为「设备信息」「键鼠操作」「App 列表」三个 Tab。「键鼠操作」Tab 承载画面区域、状态指示与设备动作控件。顶部 SHALL NOT 展示系统版本 / UDID 等设备明细（改由「设备信息」Tab 承载）。选中设备后 SHALL 默认切换到「设备信息」Tab（避免自动支付 WDA/镜像启动开销）。
 
 #### Scenario: 启动主窗口
 
-- **WHEN** 用户执行 `python3 -m slide6_console.app`
+- **WHEN** 用户执行 `python3 -m slide6_ui.app`
 - **THEN** 弹出主窗口，顶部显示设备选择控件与刷新按钮，左侧自上而下显示「设备信息」「键鼠操作」「App 列表」三个 Tab
 - **AND**「键鼠操作」Tab 显示画面区域、状态指示与设备动作控件
 - **AND** 顶部不展示系统版本 / UDID
@@ -99,7 +99,7 @@
 
 ### Requirement: 选中设备后提供刷新按钮
 
-`slide6_console` SHALL 在选中设备后提供一个"刷新"按钮，点击后执行与重新选中当前设备**完全一致**的逻辑（停旧流 → `prepare` → 取 `window_size` 与 `orientation` → `configure_mjpeg` → 重连视频流），并沿用 generation 计数丢弃过期回调。该按钮用于设备旋转后手动重新同步，区别于"刷新设备列表"。
+`slide6_ui` SHALL 在选中设备后提供一个"刷新"按钮，点击后执行与重新选中当前设备**完全一致**的逻辑（停旧流 → `prepare` → 取 `window_size` 与 `orientation` → `configure_mjpeg` → 重连视频流），并沿用 generation 计数丢弃过期回调。该按钮用于设备旋转后手动重新同步，区别于"刷新设备列表"。
 
 #### Scenario: 点击刷新重新同步当前设备
 

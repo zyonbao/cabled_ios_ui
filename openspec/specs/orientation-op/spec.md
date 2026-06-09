@@ -1,12 +1,10 @@
 ## Purpose
 
 屏幕方向查询能力——查询设备当前屏幕方向并对取值做归一化与容错。
-
 ## Requirements
-
 ### Requirement: 查询设备当前屏幕方向
 
-`executor_ios.toolkit_api` SHALL 提供 `orientation(target)` 接口，返回设备当前屏幕方向。底层 SHALL **优先**通过 WDA `GET /session/{sid}/rotation` 的 `z` 角（`0/90/180/270`）解析完整四方向；当该接口不可用时 SHALL 回退 `GET /session/{sid}/orientation`。两者均复用既有会话准备与重建逻辑（必要时自动 `prepare`）。
+`ios_toolkit.toolkit_api` SHALL 提供 `orientation(target)` 接口，返回设备当前屏幕方向。底层 SHALL **优先**通过 WDA `GET /session/{sid}/rotation` 的 `z` 角（`0/90/180/270`）解析完整四方向；当该接口不可用时 SHALL 回退 `GET /session/{sid}/orientation`。两者均复用既有会话准备与重建逻辑（必要时自动 `prepare`）。
 
 返回 MUST 使用统一成功信封，`data` 至少包含：
 - `orientation`：归一化方向枚举，取值 `PORTRAIT` | `PORTRAIT_UPSIDE_DOWN` | `LANDSCAPE_LEFT` | `LANDSCAPE_RIGHT`。
@@ -45,3 +43,4 @@
 
 - **WHEN** WDA 请求过程中发生异常
 - **THEN** 返回 `ok:false` 且错误 `kind` 为 `SUBPROCESS`
+

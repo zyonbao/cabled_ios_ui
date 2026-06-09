@@ -1,12 +1,10 @@
 ## Purpose
 
 Web 控制台长按能力——提供后端 long_press 端点与前端原地长按手势识别。
-
 ## Requirements
-
 ### Requirement: 后端 long_press 端点
 
-`web_console` 后端 SHALL 提供 `POST /api/long_press` 端点，请求体为 `{target, x, y, durationMs}`（`durationMs` 可选，默认 800），调用 `toolkit_api.long_press` 并透传成功数据或将错误信封转换为对应 HTTP 状态码（`BAD_TARGET` → 404，其它 → 503）。
+`web_page` 后端 SHALL 提供 `POST /api/long_press` 端点，请求体为 `{target, x, y, durationMs}`（`durationMs` 可选，默认 800），调用 `toolkit_api.long_press` 并透传成功数据或将错误信封转换为对应 HTTP 状态码（`BAD_TARGET` → 404，其它 → 503）。
 
 #### Scenario: 转发长按
 
@@ -20,7 +18,7 @@ Web 控制台长按能力——提供后端 long_press 端点与前端原地长�
 
 ### Requirement: 前端原地长按手势识别
 
-`web_console` 前端 SHALL 在画面触控区把"原地按住"识别为长按：在 `pointerup` 时，若按下到抬起的位移小于点按阈值（约 8px）且按住时长达到长按阈值（约 600ms，高于 iOS 系统约 0.5s 的长按阈值），则调用 `POST /api/long_press`，坐标为按下点映射到 `window_size` 的结果，`durationMs` 取实测按住时长并钳制到合理上限（≤ 3000ms）。长按与点按、滑动三者互斥。
+`web_page` 前端 SHALL 在画面触控区把"原地按住"识别为长按：在 `pointerup` 时，若按下到抬起的位移小于点按阈值（约 8px）且按住时长达到长按阈值（约 600ms，高于 iOS 系统约 0.5s 的长按阈值），则调用 `POST /api/long_press`，坐标为按下点映射到 `window_size` 的结果，`durationMs` 取实测按住时长并钳制到合理上限（≤ 3000ms）。长按与点按、滑动三者互斥。
 
 #### Scenario: 原地长按触发长按
 
@@ -41,3 +39,4 @@ Web 控制台长按能力——提供后端 long_press 端点与前端原地长�
 
 - **WHEN** 键盘镜像处于开启状态且用户完成一次长按
 - **THEN** 长按完成后输入焦点仍回到键盘捕获控件
+

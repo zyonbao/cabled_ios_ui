@@ -4,7 +4,7 @@
 ## Requirements
 ### Requirement: 选中 iOS 17+ 设备后检测 XPC tunnel 端口
 
-应用 SHALL 在用户选中设备后、执行 `prepare` 之前，依据设备元数据判定 iOS 主版本；仅当设备为 iOS 17+ 时检测 `executor_ios` 使用的 XPC tunnel 端口（`127.0.0.1:49151`）是否有进程在监听。iOS 17 以下设备 SHALL 跳过该检测。
+应用 SHALL 在用户选中设备后、执行 `prepare` 之前，依据设备元数据判定 iOS 主版本；仅当设备为 iOS 17+ 时检测 `ios_toolkit` 使用的 XPC tunnel 端口（`127.0.0.1:49151`）是否有进程在监听。iOS 17 以下设备 SHALL 跳过该检测。
 
 #### Scenario: 选中 iOS 17 以下设备
 
@@ -23,7 +23,7 @@
 
 ### Requirement: 经系统授权以管理员权限拉起 tunneld
 
-当用户确认启动 tunnel 时，应用 SHALL 通过 macOS 系统原生授权（osascript，管理员权限）拉起 tunneld，且被执行的命令路径固定、不拼接任何外部输入。tunneld 入口 SHALL 按运行环境解析：在冻结打包环境下执行随包分发的独立 `cabled_ios_tunnel` 二进制（位于 App bundle 内与主二进制同级）；在开发环境下回退为用项目解释器运行 `executor_ios.tunneld_main`。该方案为按需拉起，每次启动 tunnel 均触发一次系统授权。
+当用户确认启动 tunnel 时，应用 SHALL 通过 macOS 系统原生授权（osascript，管理员权限）拉起 tunneld，且被执行的命令路径固定、不拼接任何外部输入。tunneld 入口 SHALL 按运行环境解析：在冻结打包环境下执行随包分发的独立 `cabled_ios_tunnel` 二进制（位于 App bundle 内与主二进制同级）；在开发环境下回退为用项目解释器运行 `ios_toolkit.tunneld_main`。该方案为按需拉起，每次启动 tunnel 均触发一次系统授权。
 
 #### Scenario: 用户确认并授权成功
 
@@ -40,7 +40,7 @@
 #### Scenario: 开发环境回退到解释器方式
 
 - **WHEN** 应用以未打包的源码形态运行且用户确认启动 tunnel
-- **THEN** 用于授权拉起的命令以项目解释器运行 `executor_ios.tunneld_main`
+- **THEN** 用于授权拉起的命令以项目解释器运行 `ios_toolkit.tunneld_main`
 
 #### Scenario: 每次拉起均需授权
 

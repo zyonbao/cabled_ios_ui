@@ -1,0 +1,4 @@
+# web_page depends on the ios_toolkit package (same repo) plus a web stack.
+# Install ios_toolkit deps first: pip install -r ../ios_toolkit/requirements.txt
+fastapi==0.136.3
+uvicorn==0.48.0

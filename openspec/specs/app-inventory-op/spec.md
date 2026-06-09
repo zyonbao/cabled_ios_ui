@@ -5,7 +5,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 ## Requirements
 ### Requirement: 列出已安装 App 及元数据
 
-`executor_ios.toolkit_api` SHALL 提供 `list_apps(target)`，通过 `pymobiledevice3` 的 `InstallationProxyService.get_apps()` 返回设备上已安装 App 列表，每项至少包含 `bundleId`、`name`、`appType`，以及 `fileSharing`（是否开启 `UIFileSharingEnabled`）与 `sandboxAccessible`（沙盒容器是否可经 house-arrest 访问）两个布尔标志。`sandboxAccessible` 判定 SHALL 以 `Entitlements` 中的 `get-task-allow` 为真，或 App 信息中存在 `SignerIdentity`（开发 / 临时 / 企业签名）为准——因为 installation_proxy 返回的 `Entitlements` 经系统裁剪，通常不含 `get-task-allow`。
+`ios_toolkit.toolkit_api` SHALL 提供 `list_apps(target)`，通过 `pymobiledevice3` 的 `InstallationProxyService.get_apps()` 返回设备上已安装 App 列表，每项至少包含 `bundleId`、`name`、`appType`，以及 `fileSharing`（是否开启 `UIFileSharingEnabled`）与 `sandboxAccessible`（沙盒容器是否可经 house-arrest 访问）两个布尔标志。`sandboxAccessible` 判定 SHALL 以 `Entitlements` 中的 `get-task-allow` 为真，或 App 信息中存在 `SignerIdentity`（开发 / 临时 / 企业签名）为准——因为 installation_proxy 返回的 `Entitlements` 经系统裁剪，通常不含 `get-task-allow`。
 
 #### Scenario: 成功返回 App 列表
 
@@ -26,7 +26,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 从本地 IPA 安装 App
 
-`executor_ios.toolkit_api` SHALL 提供 `install_app(target, ipa_path)`，通过 `InstallationProxyService.install_from_local()` 将本地 `.ipa` 安装到设备，并以统一包络返回结果。
+`ios_toolkit.toolkit_api` SHALL 提供 `install_app(target, ipa_path)`，通过 `InstallationProxyService.install_from_local()` 将本地 `.ipa` 安装到设备，并以统一包络返回结果。
 
 #### Scenario: 安装成功
 
@@ -45,7 +45,7 @@ TBD - created by archiving change add-app-list-and-file-manager. Update Purpose 
 
 ### Requirement: 卸载 App
 
-`executor_ios.toolkit_api` SHALL 提供 `uninstall_app(target, bundle_id)`，通过 `InstallationProxyService.uninstall()` 卸载指定 App。
+`ios_toolkit.toolkit_api` SHALL 提供 `uninstall_app(target, bundle_id)`，通过 `InstallationProxyService.uninstall()` 卸载指定 App。
 
 #### Scenario: 卸载成功
 

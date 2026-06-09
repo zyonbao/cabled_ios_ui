@@ -1,17 +1,17 @@
 # nuitka-macos-packaging Specification
 
 ## Purpose
-定义 macOS 上用 Nuitka 将 `executor_ios` 与 `slide6_console` 打包为独立 `CablediOS.app` 的能力：multidist 合并 GUI 与 tunneld 入口共享依赖、设置应用图标、确保冻结环境下 `pymobiledevice3` 与 HEIC 解码依赖（pillow-heif/libheif/PIL）完整可用，并在缺少构建依赖时明确报错。
+定义 macOS 上用 Nuitka 将 `ios_toolkit` 与 `slide6_ui` 打包为独立 `CablediOS.app` 的能力：multidist 合并 GUI 与 tunneld 入口共享依赖、设置应用图标、确保冻结环境下 `pymobiledevice3` 与 HEIC 解码依赖（pillow-heif/libheif/PIL）完整可用，并在缺少构建依赖时明确报错。
 ## Requirements
 ### Requirement: 提供 Nuitka 打包脚本产出 CablediOS.app
 
-仓库 SHALL 提供一个可重复执行的 Nuitka 打包脚本，用于在 macOS 上将 `executor_ios` 与 `slide6_console` 编译为非 onefile 的独立应用 `CablediOS.app`。脚本 SHALL 启用 PySide6 插件并显式包含 `pymobiledevice3` 包，使产物在未安装 Python 与依赖的 macOS 上可运行。
+仓库 SHALL 提供一个可重复执行的 Nuitka 打包脚本，用于在 macOS 上将 `ios_toolkit` 与 `slide6_ui` 编译为非 onefile 的独立应用 `CablediOS.app`。脚本 SHALL 启用 PySide6 插件并显式包含 `pymobiledevice3` 包，使产物在未安装 Python 与依赖的 macOS 上可运行。
 
 #### Scenario: 执行打包脚本生成主 App
 
 - **WHEN** 在已安装 Nuitka 与项目依赖的 macOS 上执行打包脚本
 - **THEN** 在输出目录生成 `CablediOS.app`
-- **AND** 该 App 以 `slide6_console.app:main` 为入口，启动后显示设备控制台窗口
+- **AND** 该 App 以 `slide6_ui.app:main` 为入口，启动后显示设备控制台窗口
 
 #### Scenario: 缺少构建依赖时给出明确报错
 
@@ -44,7 +44,7 @@
 
 ### Requirement: 为 CablediOS.app 设置应用图标
 
-打包脚本 SHALL 由 `slide6_console/AppIcon.png` 生成多分辨率 `.icns`，并经 Nuitka `--macos-app-icon` 设为 `CablediOS.app` 的应用图标，使其在 Finder 与 Dock 中显示自定义图标。
+打包脚本 SHALL 由 `slide6_ui/AppIcon.png` 生成多分辨率 `.icns`，并经 Nuitka `--macos-app-icon` 设为 `CablediOS.app` 的应用图标，使其在 Finder 与 Dock 中显示自定义图标。
 
 #### Scenario: 打包后 App 显示自定义图标
 
@@ -58,7 +58,7 @@
 
 ### Requirement: 冻结环境下 pymobiledevice3 依赖完整可用
 
-打包产物 SHALL 包含 `executor_ios` 运行所需的 `pymobiledevice3` 子模块（含 `usbmux`、`lockdown`、`installation_proxy`、`remote_service_discovery`、`dvt.testmanaged.xcuitest` 等懒加载引用），使设备发现与 WDA 生命周期在 iOS≤16 与 iOS17+ 两条路径下均可运行。
+打包产物 SHALL 包含 `ios_toolkit` 运行所需的 `pymobiledevice3` 子模块（含 `usbmux`、`lockdown`、`installation_proxy`、`remote_service_discovery`、`dvt.testmanaged.xcuitest` 等懒加载引用），使设备发现与 WDA 生命周期在 iOS≤16 与 iOS17+ 两条路径下均可运行。
 
 #### Scenario: 冻结 App 中列出设备
 

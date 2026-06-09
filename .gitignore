@@ -26,7 +26,10 @@ htmlcov/
 coverage.xml
 
 # Screenshots and local test outputs
-executor_ios/screenshot.png
+ios_toolkit/screenshot.png
+
+# IDE
+.idea/
 
 # macOS
 .DS_Store

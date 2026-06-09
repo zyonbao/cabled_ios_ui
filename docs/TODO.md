@@ -1,4 +1,4 @@
-# executor_ios 实现任务清单
+# ios_toolkit 实现任务清单
 
 > 本文档按实现阶段分解任务，供开发中逐项对照执行。
 > 每个任务项均注明依赖文件、实现要点和验收标准。
@@ -34,8 +34,8 @@
 ### 1.1 基础设施
 
 - [ ] **创建 `__init__.py`**
-  - 空文件，将 `executor_ios` 标记为 Python 包
-  - 验收：`python3 -c "import executor_ios"` 不报错
+  - 空文件，将 `ios_toolkit` 标记为 Python 包
+  - 验收：`python3 -c "import ios_toolkit"` 不报错
 
 - [ ] **创建 `_ephemeral_forward(udid, device_port)` 异步上下文管理器**
   - 文件：`toolkit_api.py`（模块内私有）
@@ -263,7 +263,7 @@
   - 说明：待后续实现 `secrets.py` 时再填充
 
 - [ ] **（备忘）`secrets.py` 接口约定**（实现 `type_credential` 时参考）
-  - 文件：`executor_ios/secrets.py`（可选，仅在实现 `type_credential` 时创建）
+  - 文件：`ios_toolkit/secrets.py`（可选，仅在实现 `type_credential` 时创建）
   - 接口：
     ```python
     def get_credential(env: str, role: str, field: str) -> str:
@@ -308,7 +308,7 @@
 
 - [ ] **实现 stdin → stdout 一次性 JSON 协议**
   - 文件：`toolkit_cli.py`
-  - 启动方式：`python3 -B -m executor_ios.toolkit_cli`
+  - 启动方式：`python3 -B -m ios_toolkit.toolkit_cli`
   - 流程：
     1. 从 `stdin` 读取完整 JSON（一个对象）
     2. 解析 `op`、`requestId`、`deadlineMs`、`args` 字段
@@ -360,8 +360,8 @@
 
 - [ ] 通过 shell 管道模拟 broker 调用，各 op 正常响应：
   ```bash
-  echo '{"op":"list_targets","args":{}}' | python3 -B -m executor_ios.toolkit_cli
-  echo '{"op":"screenshot","args":{"target":"<udid>"}}' | python3 -B -m executor_ios.toolkit_cli
+  echo '{"op":"list_targets","args":{}}' | python3 -B -m ios_toolkit.toolkit_cli
+  echo '{"op":"screenshot","args":{"target":"<udid>"}}' | python3 -B -m ios_toolkit.toolkit_cli
   ```
 - [ ] 非法 JSON 输入返回 exit code 2
 - [ ] 未知 op 返回 `NOT_IMPLEMENTED` 响应，exit code 0
@@ -428,7 +428,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
   ```
 - XPC tunnel 启动后，通过以下命令以 JSON 格式获取当前设备的 RSD 信息（`rsd_address`、`rsd_port`）：
   ```bash
-  sudo python3 -m executor_ios.xpc_tunnel --json
+  sudo python3 -m ios_toolkit.xpc_tunnel --json
   ```
 - `iOSDevice` 对象需接收 RSD 配置，供 `do_prepare()` 在 iOS 17+ 上使用
 
@@ -449,7 +449,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
 ### 3.1 `iOSDevice` 类
 
 - [ ] **创建 `iOSDevice` 类**
-  - 文件：建议新建 `executor_ios/device.py`
+  - 文件：建议新建 `ios_toolkit/device.py`
   - 属性：
     - `udid: str`：设备唯一标识，**仅 USB 连接设备**（Wi-Fi 设备不支持）
     - `local_port: int`：本机上与该设备 8100 端口对应的 usbmux 转发端口（持久分配，进程生命周期内不变）
@@ -498,7 +498,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
   - **不负责下载或安装 WDA**，安装失败/未安装时抛出带描述的异常
 
 - [ ] **实现 `iOSDevice._ensure_session() -> str`（session 复用）**
-  - 文件：`executor_ios/device.py`（`iOSDevice` 实例方法，私有）
+  - 文件：`ios_toolkit/device.py`（`iOSDevice` 实例方法，私有）
   - 实现逻辑：
     ```
     with self._session_lock:
@@ -532,7 +532,7 @@ iOS 17+ 设备上，启动 WDA xctrunner 需要通过 CoreDevice/RemoteXPC 通�
 ### 3.2 `iOSDevicesManager` 类
 
 - [ ] **创建 `iOSDevicesManager` 类（单例）**
-  - 文件：`executor_ios/device.py`（与 `iOSDevice` 同文件）
+  - 文件：`ios_toolkit/device.py`（与 `iOSDevice` 同文件）
   - 内部维护：`dict[str, iOSDevice]`，key 为 UDID
 
 - [ ] **实现设备发现与注册**
