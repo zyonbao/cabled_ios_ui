@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Web 控制台屏幕方向能力——暴露方向查询端点，按方向渲染视频流并在横竖屏下正确做坐标映射。
+
+## Requirements
 
 ### Requirement: 暴露屏幕方向查询端点
 

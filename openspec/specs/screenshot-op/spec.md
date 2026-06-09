@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+截图能力——执行设备截图并返回 PNG（base64）。
+
+## Requirements
 
 ### Requirement: 截图操作返回 PNG base64
 系统 SHALL 通过 WDA `GET /screenshot` 获取设备截图，将响应中 `value` 字段的 base64 字符串封装为统一格式返回。此端点无需 WDA session。

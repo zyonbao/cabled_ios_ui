@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+UI 树导出能力——dump 设备 UI 层级并转换为统一 selector 格式（含去重、数量上限与 bounds 转换）。
+
+## Requirements
 
 ### Requirement: 导出 UI 树并转换为统一 selector 格式
 系统 SHALL 通过 WDA `GET /source?format=xml` 获取 UI 层级树，将 XML 原文存入 `raw` 字段，并将每个元素解析为含以下 8 个字段的 selector：`resourceId`（←`name`）、`text`（←`label`）、`contentDesc`（←`value`）、`class`（←`type`）、`bounds`（←坐标计算）、`clickable`（推断）、`enabled`（←`enabled`）、`visible`（←`visible`）。

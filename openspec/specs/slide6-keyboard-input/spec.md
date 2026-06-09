@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+桌面应用键盘输入——键盘镜像开关、文本/IME 输入、按键分流与命令串行化，并拦截 Tab 等快捷键键序。
+
+## Requirements
 
 ### Requirement: 键盘镜像开关
 

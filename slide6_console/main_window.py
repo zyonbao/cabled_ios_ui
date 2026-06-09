@@ -13,9 +13,10 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, Qt
-from PySide6.QtGui import QImage, QTransform
+from PySide6.QtCore import QBuffer, QIODevice, QSettings, QStandardPaths, Qt
+from PySide6.QtGui import QAction, QImage, QTransform
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -36,8 +37,11 @@ from PySide6.QtWidgets import (
 from executor_ios import toolkit_api as api
 
 from . import tunnel
+from .app_manager import AppManagerTab
+from .device_info import DeviceInfoTab
 from .keyboard import KeyboardCapture, KeyboardSender
 from .mirror import MjpegThread, ScreenView
+from .sidebar_tabs import SidebarTabs
 from .workers import AsyncRunner
 
 # Opt-in lifecycle tracing: set SLIDE6_DEBUG=1 to print device-lifecycle steps.
@@ -54,6 +58,9 @@ _FPS_CHOICES = [5, 10, 15, 20]
 _DEFAULT_FPS = 10
 _MJPEG_SCALING = 60
 _MJPEG_QUALITY = 70
+_SETTINGS_ORG = "ios_ui_ta_proxy"
+_SETTINGS_APP = "slide6_console"
+_ASK_CLEAN_TUNNEL_ON_EXIT_KEY = "settings/ask_clean_tunnel_on_exit"
 
 _ORIENT_LABEL = {
     "PORTRAIT": "竖屏",
@@ -69,6 +76,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CablediOS")
         self.resize(1100, 820)
 
+        self.settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
         self.runner = AsyncRunner()
         self.devices: dict = {}
         self.target = ""
@@ -79,6 +87,7 @@ class MainWindow(QMainWindow):
         self.kbd_on = False
 
         self._build_ui()
+        self._build_menu()
         self._wire()
         self.load_devices()
 
@@ -88,46 +97,70 @@ class MainWindow(QMainWindow):
         central = QWidget()
         root = QVBoxLayout(central)
 
-        # Top bar: device picker / refresh / fps / status.
+        # Top bar: device picker / refresh / status. The top bar is shared across
+        # tabs; detailed device info now lives in the "设备信息" tab and the fps
+        # control lives in the key/mouse tab.
         top = QHBoxLayout()
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(320)
         self.refresh_btn = QPushButton("刷新")
-        self.fps_combo = QComboBox()
-        for f in _FPS_CHOICES:
-            self.fps_combo.addItem(f"{f} fps", f)
-        self.fps_combo.setCurrentText(f"{_DEFAULT_FPS} fps")
         self.status_label = QLabel("未连接")
         top.addWidget(QLabel("设备"))
         top.addWidget(self.device_combo)
         top.addWidget(self.refresh_btn)
-        top.addWidget(QLabel("帧率"))
-        top.addWidget(self.fps_combo)
         top.addStretch(1)
         top.addWidget(self.status_label)
         root.addLayout(top)
 
-        # Center: screen view + sidebar.
-        center = QHBoxLayout()
+        # Tabbed body: key/mouse control + app manager + device info. Tabs run
+        # down the left side (vertical column, horizontal labels) via SidebarTabs.
+        self.tabs = SidebarTabs()
+        self.device_info_tab = DeviceInfoTab(self.runner, lambda: self.target)
+        self.tabs.addTab(self.device_info_tab, "设备信息")
+        self.keymouse_tab = self._build_keymouse_tab()
+        self.tabs.addTab(self.keymouse_tab, "键鼠操作")
+        self.app_tab = AppManagerTab(self.runner, lambda: self.target)
+        self.tabs.addTab(self.app_tab, "App 列表")
+        root.addWidget(self.tabs, stretch=1)
+
+        self.setCentralWidget(central)
+
+        # Keyboard sender worker (started lazily on first enable).
+        self.kbd_sender = KeyboardSender(self)
+
+    def _build_keymouse_tab(self) -> QWidget:
+        tab = QWidget()
+        center = QHBoxLayout(tab)
         self.screen = ScreenView()
         center.addWidget(self.screen, stretch=1)
 
-        sidebar = QVBoxLayout()
+        # Right-side operation area: a fixed-width container so its background
+        # box does not stretch/collapse with the mirror view.
+        sidebar_box = QWidget()
+        sidebar_box.setFixedWidth(260)
+        sidebar = QVBoxLayout(sidebar_box)
+        sidebar.setContentsMargins(8, 0, 0, 0)
+
+        # Non-interactive device info first (read-only): resolution / orientation.
         info_box = QWidget()
         info = QFormLayout(info_box)
-        self.info_name = QLabel("—")
-        self.info_model = QLabel("—")
-        self.info_os = QLabel("—")
-        self.info_udid = QLabel("—")
         self.info_size = QLabel("—")
         self.info_orient = QLabel("—")
-        info.addRow("名称", self.info_name)
-        info.addRow("型号", self.info_model)
-        info.addRow("系统", self.info_os)
-        info.addRow("UDID", self.info_udid)
         info.addRow("分辨率(点)", self.info_size)
         info.addRow("方向", self.info_orient)
         sidebar.addWidget(info_box)
+
+        # Interactive controls below the read-only info: fps (moved off the top bar).
+        fps_row = QWidget()
+        fps_layout = QHBoxLayout(fps_row)
+        fps_layout.setContentsMargins(0, 0, 0, 0)
+        self.fps_combo = QComboBox()
+        for f in _FPS_CHOICES:
+            self.fps_combo.addItem(f"{f} fps", f)
+        self.fps_combo.setCurrentText(f"{_DEFAULT_FPS} fps")
+        fps_layout.addWidget(QLabel("帧率"))
+        fps_layout.addWidget(self.fps_combo, 1)
+        sidebar.addWidget(fps_row)
 
         self.home_btn = QPushButton("主屏幕 (HOME)")
         self.switcher_btn = QPushButton("应用切换 (后台)")
@@ -182,17 +215,18 @@ class MainWindow(QMainWindow):
             sidebar.addWidget(btn)
 
         sidebar.addStretch(1)
-        center.addLayout(sidebar)
-        root.addLayout(center, stretch=1)
+        center.addWidget(sidebar_box)
+        return tab
 
-        self.setCentralWidget(central)
-
-        # Keyboard sender worker (started lazily on first enable).
-        self.kbd_sender = KeyboardSender(self)
+    def _build_menu(self) -> None:
+        settings_menu = self.menuBar().addMenu("Settings")
+        self.preferences_action = QAction("Preferences...", self)
+        settings_menu.addAction(self.preferences_action)
 
     def _wire(self) -> None:
         self.refresh_btn.clicked.connect(self.load_devices)
         self.device_combo.activated.connect(self.on_select_device)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.fps_combo.activated.connect(self.on_fps_changed)
         self.home_btn.clicked.connect(self.on_home)
         self.switcher_btn.clicked.connect(self.on_switcher)
@@ -215,6 +249,7 @@ class MainWindow(QMainWindow):
         self.kbd_capture.key_pressed.connect(self.kbd_sender.enqueue_key)
         self.kbd_capture.chord.connect(self.kbd_sender.enqueue_chord)
         self.kbd_sender.failed.connect(lambda m: self._flash(f"输入失败: {m}"))
+        self.preferences_action.triggered.connect(self._open_preferences)
 
     # -------------------------------------------------------------- status
 
@@ -223,6 +258,37 @@ class MainWindow(QMainWindow):
 
     def _flash(self, message: str) -> None:
         self._set_status(message)
+
+    def _ask_clean_tunnel_on_exit(self) -> bool:
+        value = self.settings.value(_ASK_CLEAN_TUNNEL_ON_EXIT_KEY, True, type=bool)
+        return bool(value)
+
+    def _set_ask_clean_tunnel_on_exit(self, enabled: bool) -> None:
+        self.settings.setValue(_ASK_CLEAN_TUNNEL_ON_EXIT_KEY, enabled)
+
+    def _open_preferences(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Preferences")
+        layout = QVBoxLayout(dlg)
+
+        general_box = QWidget(dlg)
+        general = QVBoxLayout(general_box)
+        general.setContentsMargins(0, 0, 0, 0)
+        general.addWidget(QLabel("General"))
+
+        ask_clean_checkbox = QCheckBox("Ask to clean XPC tunnel on exit", general_box)
+        ask_clean_checkbox.setChecked(self._ask_clean_tunnel_on_exit())
+        ask_clean_checkbox.toggled.connect(self._set_ask_clean_tunnel_on_exit)
+        general.addWidget(ask_clean_checkbox)
+        layout.addWidget(general_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.resize(360, 140)
+        dlg.exec()
 
     # --------------------------------------------------------- device list
 
@@ -268,6 +334,14 @@ class MainWindow(QMainWindow):
         self.screen.set_window_size(0, 0)
         self.screen.set_orientation(0)
         self.info_orient.setText("—")
+        # App management / device info work without WDA/tunnel, so refresh those
+        # tabs for any selected device (they clear when no device is selected).
+        self.app_tab.set_target(self.target)
+        self.device_info_tab.set_target(self.target)
+        # Device info is the default landing tab on selection; the user opts into
+        # the key/mouse tab to pay the WDA/mirror startup cost.
+        if self.target:
+            self.tabs.setCurrentWidget(self.device_info_tab)
 
         if not self.target:
             self._fill_info(None)
@@ -282,6 +356,48 @@ class MainWindow(QMainWindow):
             self.screen.set_overlay("该设备未安装 WebDriverAgent (WDA)\n无法镜像或控制此设备")
             return
 
+        # WDA / mirror startup is costly and only the key/mouse tab needs it.
+        # Defer it until that tab is active (start now if it already is).
+        if self._on_keymouse_tab():
+            self._start_mirror_flow(gen)
+        else:
+            self._set_status("已选择设备")
+            self.screen.set_overlay("切换到「键鼠操作」标签以启动镜像与控制")
+
+    def _on_keymouse_tab(self) -> bool:
+        return self.tabs.currentWidget() is self.keymouse_tab
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._on_keymouse_tab():
+            # Entering: lazily start the WDA / mirror flow for a connected,
+            # not-yet-streaming device.
+            if not self.target or self.mirror_thread is not None:
+                return
+            dev = self.devices.get(self.target)
+            if not dev or dev.get("state") != "online":
+                return
+            gen = self.runner.bump_generation()
+            self._start_mirror_flow(gen)
+        else:
+            # Leaving: stop mirroring and the WDA runner to free the device.
+            self._teardown_mirror()
+
+    def _teardown_mirror(self) -> None:
+        # Bump generation so any in-flight prepare/tunnel callbacks are dropped.
+        self.runner.bump_generation()
+        self.stop_stream()
+        target = self.target
+        if target:
+            self.runner.submit(
+                lambda: api.stop_wda(target),
+                on_error=lambda e: _dbg(f"stop_wda error: {e}"),
+            )
+        self.screen.set_overlay("切换到「键鼠操作」标签以启动镜像与控制")
+
+    def _start_mirror_flow(self, gen: int) -> None:
+        dev = self.devices.get(self.target)
+        if not dev:
+            return
         os_version = (dev.get("metadata") or {}).get("os_version", "")
         need = tunnel.needs_tunnel(os_version)
         running = tunnel.is_tunnel_running()
@@ -659,11 +775,6 @@ class MainWindow(QMainWindow):
         )
 
     def _fill_info(self, dev: dict | None) -> None:
-        meta = (dev or {}).get("metadata") or {}
-        self.info_name.setText((dev or {}).get("name") or "—")
-        self.info_model.setText(meta.get("model") or "—")
-        self.info_os.setText(meta.get("os_version") or "—")
-        self.info_udid.setText((dev or {}).get("id") or "—")
         self.info_size.setText(
             f"{self.win_size['width']} × {self.win_size['height']}" if self.win_size else "—"
         )
@@ -676,7 +787,7 @@ class MainWindow(QMainWindow):
             self.kbd_sender.stop()
             self.kbd_sender.wait(1000)
 
-        if tunnel.is_tunnel_running():
+        if self._ask_clean_tunnel_on_exit() and tunnel.is_tunnel_running():
             reply = QMessageBox.question(
                 self,
                 "停止 XPC tunnel",

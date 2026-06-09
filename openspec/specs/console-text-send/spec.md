@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Web 控制台独立文本发送能力——通过独立输入框把文本直接送至设备，独立于键盘镜像。
+
+## Requirements
 
 ### Requirement: 独立文本发送输入框
 

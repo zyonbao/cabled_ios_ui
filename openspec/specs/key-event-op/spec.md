@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+按键事件能力——通过路由表把各按键映射到对应 WDA 实现，HOME/POWER 键无需 session。
+
+## Requirements
 
 ### Requirement: 按键路由表映射各按键到对应 WDA 实现
 系统 SHALL 根据按键路由表将 `key` 参数路由到对应的 WDA 实现：`HOME`/`POWER` 通过 `POST /wda/pressButton`；`ENTER`/`DEL`/`TAB`/`SPACE`/`ESCAPE` 通过 `POST /session/<id>/actions`（W3C key event）；`BACK`/`MENU`/`RECENTS` 及其他未知 key 返回 `NOT_IMPLEMENTED`。

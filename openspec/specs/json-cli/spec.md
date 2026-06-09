@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+executor 的 JSON CLI 协议——定义可执行模块入口、请求/响应格式、退出码约定与支持的 op 列表。
+
+## Requirements
 
 ### Requirement: CLI 入口作为可执行模块运行
 
@@ -72,6 +76,8 @@ CLI SHALL 向 stdout 输出且仅输出一个完整 JSON 对象。
 ---
 
 ### Requirement: 退出码约定
+
+CLI SHALL 按下表约定的语义设置进程退出码：
 
 | 退出码 | 含义 |
 |---|---|

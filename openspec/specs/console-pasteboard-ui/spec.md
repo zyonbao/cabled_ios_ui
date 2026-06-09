@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Web 控制台剪贴板交互 UI——提供设置/读取设备剪贴板的入口与弹窗，并支持把读取内容复制到本机。
+
+## Requirements
 
 ### Requirement: 设置剪贴板入口与弹窗
 

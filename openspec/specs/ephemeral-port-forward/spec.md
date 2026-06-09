@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+临时端口转发能力——以上下文管理器形式建立短时 usbmux device 端口转发，并动态探测可用本地端口。
+
+## Requirements
 
 ### Requirement: 临时 usbmux 端口转发上下文管理器
 系统 SHALL 提供 `_ephemeral_forward(udid, device_port)` 异步上下文管理器，在 `async with` 块内持续运行端口转发 server，退出时自动关闭。每次操作使用独立的临时转发，不维护跨调用的持久转发。

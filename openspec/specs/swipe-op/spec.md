@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+滑动手势能力——通过 W3C pointer actions 实现滑动。
+
+## Requirements
 
 ### Requirement: 通过 W3C pointer actions 实现滑动
 系统 SHALL 通过 WDA W3C Actions（`POST /session/<id>/actions`，pointer 事件序列：pointerDown → pause（`duration_ms`）→ pointerMove → pointerUp）执行滑动操作。坐标单位为逻辑点（pt）。`duration_ms` 默认值为 250。

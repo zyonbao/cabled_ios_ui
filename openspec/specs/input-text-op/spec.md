@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+文本输入能力——经 WDA 活跃元素 value API 向设备输入文本，不可用时回退到 W3C key actions。
+
+## Requirements
 
 ### Requirement: 输入文本前校验输入内容
 系统 SHALL 在执行文本输入前，对 `text` 参数进行校验：拒绝包含换行符（`\n`、`\r`）、单引号（`'`）、反引号（`` ` ``）的文本，以及超过 1024 字节的文本。校验失败返回 `BAD_TARGET`。

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+桌面应用屏幕镜像——消费 WDA MJPEG broadcaster 实时渲染画面，处理解码/断流/设备切换并按屏幕方向渲染与映射坐标。
+
+## Requirements
 
 ### Requirement: 消费 WDA MJPEG broadcaster 渲染实时画面
 

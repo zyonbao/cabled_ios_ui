@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Web 控制台长按能力——提供后端 long_press 端点与前端原地长按手势识别。
+
+## Requirements
 
 ### Requirement: 后端 long_press 端点
 

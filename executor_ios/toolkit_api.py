@@ -59,6 +59,21 @@ def _prepare_device(target: str):
     return device, None
 
 
+def _prepare_device_basic(target: str):
+    """
+    Resolve target UDID to an iOSDevice WITHOUT starting WDA.
+
+    App and file-management operations talk to lockdown services directly, so
+    they neither need WDA nor an XPC tunnel. Returns (device, None) on success,
+    or (None, error_dict) when the device is not found.
+    """
+    manager = _get_manager()
+    device = manager.get_device(target)
+    if device is None:
+        return None, _err("BAD_TARGET", f"Device not found: {target}")
+    return device, None
+
+
 # ---------------------------------------------------------------------------
 # list_targets
 # ---------------------------------------------------------------------------
@@ -106,6 +121,18 @@ def prepare(target: str) -> dict:
     if err:
         return err
     return _ok({"prepared": True, "target": device.udid})
+
+
+def stop_wda(target: str) -> dict:
+    """Stop the WDA runner for target (no-op if the device is not registered).
+
+    Used to free the device when mirroring/control is no longer needed (e.g.
+    leaving the key/mouse tab). prepare() restarts WDA transparently later.
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.stop_wda()
 
 
 def window_size(target: str) -> dict:
@@ -466,6 +493,136 @@ def kill_app(target: str, package: str) -> dict:
     if err:
         return err
     return device.kill_app(package)
+
+
+# ---------------------------------------------------------------------------
+# App inventory (list / install / uninstall)
+# ---------------------------------------------------------------------------
+
+def list_apps(target: str) -> dict:
+    """List installed apps with fileSharing / sandbox-access metadata.
+
+    data = {"apps": [{"bundleId", "name", "appType", "fileSharing",
+            "sandboxAccessible"}, ...]}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.list_apps()
+
+
+def install_app(target: str, ipa_path: str) -> dict:
+    """Install a local .ipa onto the device.
+
+    The device validates the package signature; an improperly signed .ipa is
+    rejected by the device, surfaced here as an error envelope.
+    """
+    if not ipa_path or not ipa_path.lower().endswith(".ipa"):
+        return _err("BAD_TARGET", "ipa_path must point to a .ipa file")
+    import os
+    if not os.path.isfile(ipa_path):
+        return _err("BAD_TARGET", f"file not found: {ipa_path}")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.install_app(ipa_path)
+
+
+def uninstall_app(target: str, bundle_id: str) -> dict:
+    """Uninstall an app by bundle id."""
+    if not bundle_id:
+        return _err("BAD_TARGET", "bundle_id is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.uninstall_app(bundle_id)
+
+
+# ---------------------------------------------------------------------------
+# App file transfer (house_arrest + AFC)
+# ---------------------------------------------------------------------------
+
+def _validate_root(root: str) -> str | None:
+    if root not in ("documents", "container"):
+        return "root must be 'documents' or 'container'"
+    return None
+
+
+def afc_list(target: str, bundle_id: str, root: str, sub_path: str = "/") -> dict:
+    """List a directory inside an app's Documents or sandbox container.
+
+    data = {"root", "path", "entries": [{"name","isDir","size","mtime"}, ...]}
+    """
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_list(bundle_id, root, sub_path)
+
+
+def afc_pull(target: str, bundle_id: str, root: str, remote_path: str, local_path: str) -> dict:
+    """Export (download) a single device file to a local path."""
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_pull(bundle_id, root, remote_path, local_path)
+
+
+def afc_push(target: str, bundle_id: str, root: str, local_path: str, remote_dir: str) -> dict:
+    """Import (upload) a single local file into a device directory."""
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_push(bundle_id, root, local_path, remote_dir)
+
+
+def afc_rm(target: str, bundle_id: str, root: str, remote_path: str) -> dict:
+    """Delete a file or directory inside the vended app area."""
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_rm(bundle_id, root, remote_path)
+
+
+def afc_mkdir(target: str, bundle_id: str, root: str, remote_dir: str) -> dict:
+    """Create a directory inside the vended app area."""
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_mkdir(bundle_id, root, remote_dir)
+
+
+def afc_rename(target: str, bundle_id: str, root: str, remote_path: str, new_path: str) -> dict:
+    """Rename (or move) a file/directory inside the vended app area."""
+    msg = _validate_root(root)
+    if msg:
+        return _err("BAD_TARGET", msg)
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.afc_rename(bundle_id, root, remote_path, new_path)
+
+
+def device_info(target: str) -> dict:
+    """Return the full lockdown property set for a device (no WDA/tunnel needed)."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.device_info()
 
 
 # ---------------------------------------------------------------------------

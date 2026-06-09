@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+WDA 会话能力——每次操作新建 WDA Session（Phase 1 不缓存），并封装 WDA HTTP 工具与错误（WdaError）。
+
+## Requirements
 
 ### Requirement: 每次操作新建 WDA Session（Phase 1 不缓存）
 系统 SHALL 提供 `_create_session(local_port)` 函数，通过 `POST /session` 新建 WDA session 并返回 `sessionId`。Phase 1 中每次需要 session 的操作均调用此函数，不读写任何全局 session 状态。

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+点击手势能力——通过 W3C pointer actions 在指定逻辑坐标执行点击。
+
+## Requirements
 
 ### Requirement: 通过 W3C pointer actions 实现点击
 系统 SHALL 通过 WDA W3C Actions（`POST /session/<id>/actions`，pointer 类型，pointerDown + pointerUp 序列）在指定逻辑坐标执行点击操作。坐标单位为逻辑点（pt），不需要乘以 scale factor。

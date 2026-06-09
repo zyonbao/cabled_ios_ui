@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+屏幕方向查询能力——查询设备当前屏幕方向并对取值做归一化与容错。
+
+## Requirements
 
 ### Requirement: 查询设备当前屏幕方向
 

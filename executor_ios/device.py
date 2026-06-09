@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import posixpath
 import socket
 import threading
 import time
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import requests
 
@@ -37,6 +38,12 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.lockdown import create_using_usbmux  # noqa: F401
     from pymobiledevice3.services.installation_proxy import (  # noqa: F401
         InstallationProxyService,
+    )
+    from pymobiledevice3.services.afc import AfcService  # noqa: F401
+    from pymobiledevice3.services.house_arrest import (  # noqa: F401
+        HouseArrestService,
+        VEND_CONTAINER,
+        VEND_DOCUMENTS,
     )
     from pymobiledevice3.remote.remote_service_discovery import (  # noqa: F401
         RemoteServiceDiscoveryService,
@@ -102,6 +109,36 @@ def _get_rsd_from_tunneld(udid: str) -> Optional[tuple[str, int]]:
     except Exception:
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Device-path safety (AFC file management)
+# ---------------------------------------------------------------------------
+
+def _safe_remote_path(sub_path: str) -> str:
+    """Normalize a user-supplied, root-relative device path.
+
+    The returned path is always absolute and rooted at the vended app area
+    ('/'). posixpath.normpath collapses any '..' segments and clamps them at
+    '/', so the result can never escape the vended root regardless of input.
+    """
+    raw = (sub_path or "").strip().replace("\\", "/").lstrip("/")
+    return posixpath.normpath("/" + raw)
+
+
+# Logical user paths are rooted at the area the UI shows ('/'). The actual AFC
+# device path differs by vend mode: VendDocuments still roots AFC at the app
+# container, with the documents living under '/Documents' (listing the bare
+# container root is denied), whereas VendContainer roots AFC at the container.
+_AFC_BASE = {"documents": "/Documents", "container": "/"}
+
+
+def _afc_device_path(root: str, safe_path: str) -> str:
+    """Map a root-relative logical path to the real on-device AFC path."""
+    base = _AFC_BASE.get(root, "/")
+    if safe_path == "/":
+        return base
+    return posixpath.normpath(base + safe_path)
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +475,26 @@ class iOSDevice:
             return int(self.os_version.split(".")[0])
         except (ValueError, IndexError):
             return 0
+
+    def stop_wda(self) -> dict:
+        """Stop the WDA XCUITest runner and drop the cached session.
+
+        Cancels the long-lived runner task (which ends the test session and
+        terminates WDA on the device) so the device is freed when mirroring is
+        no longer needed. do_prepare() will transparently restart it later.
+        """
+        from .toolkit_api import _ok, _err
+
+        try:
+            task = self._wda_task
+            if task is not None:
+                task.cancel()
+            self._wda_task = None
+            with self._session_lock:
+                self._session_id = None
+            return _ok({"stopped": True})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
 
     # ------------------------------------------------------------------
     # Session management
@@ -1149,6 +1206,326 @@ class iOSDevice:
                                   "attempts": max_attempts, "confirmed": False}})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
+
+    # ------------------------------------------------------------------
+    # App management (installation_proxy)
+    # ------------------------------------------------------------------
+    #
+    # These operate over lockdown/usbmux and do NOT require WDA or an XPC
+    # tunnel, so they work regardless of WDA install state or iOS version.
+
+    def list_apps(self) -> dict:
+        """List installed apps with fileSharing / sandbox-access metadata."""
+        from .toolkit_api import _ok, _err
+
+        future = asyncio.run_coroutine_threadsafe(self._list_apps_async(), _bg_loop)
+        try:
+            return _ok({"apps": future.result(timeout=30)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    async def _list_apps_async(self) -> list[dict]:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.installation_proxy import InstallationProxyService
+
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
+            async with InstallationProxyService(lockdown=lockdown) as iproxy:
+                raw = await iproxy.get_apps(application_type="Any")
+
+        apps: list[dict] = []
+        for bundle_id, info in raw.items():
+            entitlements = info.get("Entitlements") or {}
+            # Sandbox (VendContainer) access is granted to debuggable apps. The
+            # ideal signal is the get-task-allow entitlement, but installation_
+            # proxy returns a trimmed Entitlements dict that usually omits it.
+            # A reliable fallback is SignerIdentity: present for development /
+            # ad-hoc / enterprise-signed apps (whose containers are vendable)
+            # and absent for App Store and system apps.
+            sandbox_accessible = bool(
+                entitlements.get("com.apple.security.get-task-allow", False)
+            ) or ("SignerIdentity" in info)
+            apps.append({
+                "bundleId": bundle_id,
+                "name": (info.get("CFBundleDisplayName")
+                         or info.get("CFBundleName") or bundle_id),
+                "appType": info.get("ApplicationType", ""),
+                "fileSharing": bool(info.get("UIFileSharingEnabled", False)),
+                "sandboxAccessible": sandbox_accessible,
+            })
+        apps.sort(key=lambda a: a["name"].lower())
+        return apps
+
+    def install_app(self, ipa_path: str) -> dict:
+        """Install a local .ipa onto the device (device validates signature)."""
+        from .toolkit_api import _ok, _err
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._install_app_async(ipa_path), _bg_loop
+        )
+        try:
+            future.result(timeout=300)
+            return _ok({"installed": True, "path": ipa_path})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    async def _install_app_async(self, ipa_path: str) -> None:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.installation_proxy import InstallationProxyService
+
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
+            async with InstallationProxyService(lockdown=lockdown) as iproxy:
+                await iproxy.install_from_local(ipa_path)
+
+    def uninstall_app(self, bundle_id: str) -> dict:
+        """Uninstall an app by bundle id."""
+        from .toolkit_api import _ok, _err
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._uninstall_app_async(bundle_id), _bg_loop
+        )
+        try:
+            future.result(timeout=120)
+            return _ok({"uninstalled": True, "bundleId": bundle_id})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    async def _uninstall_app_async(self, bundle_id: str) -> None:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.installation_proxy import InstallationProxyService
+
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
+            async with InstallationProxyService(lockdown=lockdown) as iproxy:
+                await iproxy.uninstall(bundle_id)
+
+    # ------------------------------------------------------------------
+    # App file transfer (house_arrest + AFC)
+    # ------------------------------------------------------------------
+    #
+    # root="documents" vends the app's Documents dir (works for any app with
+    # UIFileSharingEnabled); root="container" vends the whole sandbox container
+    # (only for apps carrying get-task-allow). For both, the vended area is the
+    # AFC root ('/'), so all paths are normalized relative to '/'.
+
+    async def _with_afc(
+        self,
+        root: str,
+        bundle_id: str,
+        op: "Callable[[object], Awaitable]",
+    ):
+        """Open a house-arrest AFC session for one app and run ``op`` on it.
+
+        Uses a short-lived connection (opened and closed per request) to avoid
+        cross-request connection-state management. ``op`` receives the vended
+        AfcService-compatible HouseArrestService and may await AFC calls on it.
+        """
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.house_arrest import (
+            HouseArrestService, VEND_CONTAINER, VEND_DOCUMENTS,
+        )
+
+        documents = root == "documents"
+        cmd = VEND_DOCUMENTS if documents else VEND_CONTAINER
+        lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+        async with lockdown:
+            async with HouseArrestService(lockdown, documents_only=documents) as house:
+                await house.send_command(bundle_id, cmd)
+                return await op(house)
+
+    def afc_list(self, bundle_id: str, root: str, sub_path: str) -> dict:
+        """List a directory inside an app's Documents or sandbox container."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        path = _safe_remote_path(sub_path)
+        device_path = _afc_device_path(root, path)
+
+        async def _op(house) -> list[dict]:
+            names = await house.listdir(device_path)
+            entries: list[dict] = []
+            for name in names:
+                if name in (".", ".."):
+                    continue
+                child = posixpath.join(device_path, name)
+                is_dir, size, mtime = False, 0, ""
+                try:
+                    st = await house.stat(child)
+                    is_dir = st.get("st_ifmt") == "S_IFDIR"
+                    size = int(st.get("st_size", 0))
+                    mt = st.get("st_mtime")
+                    mtime = mt.isoformat() if hasattr(mt, "isoformat") else str(mt or "")
+                except Exception:
+                    pass  # unreadable entry: surface name with default metadata
+                entries.append({"name": name, "isDir": is_dir, "size": size, "mtime": mtime})
+            entries.sort(key=lambda e: (not e["isDir"], e["name"].lower()))
+            return entries
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            return _ok({"root": root, "path": path, "entries": future.result(timeout=30)})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_pull(self, bundle_id: str, root: str, remote_path: str, local_path: str) -> dict:
+        """Export (download) a device file to a local path."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        if not local_path:
+            return _err("BAD_TARGET", "local_path is required")
+        rpath = _safe_remote_path(remote_path)
+        device_path = _afc_device_path(root, rpath)
+
+        async def _op(house) -> None:
+            # pull reads in chunks and writes to the local destination file.
+            await house.pull(device_path, local_path, progress_bar=False)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            future.result(timeout=600)
+            return _ok({"pulled": True, "remote": rpath, "local": local_path})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_push(self, bundle_id: str, root: str, local_path: str, remote_dir: str) -> dict:
+        """Import (upload) a local file or directory into a device directory."""
+        import os
+
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        if not local_path or not os.path.exists(local_path):
+            return _err("BAD_TARGET", f"local path not found: {local_path}")
+        rdir = _safe_remote_path(remote_dir)
+        device_dir = _afc_device_path(root, rdir)
+
+        async def _op(house) -> None:
+            # push targets the destination directory: a file is written under it
+            # as dir/basename, a directory is copied recursively into it. Both
+            # are chunked internally by pymobiledevice3.
+            await house.push(local_path, device_dir)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            future.result(timeout=600)
+            return _ok({"pushed": True, "local": local_path, "remote": device_dir})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_rm(self, bundle_id: str, root: str, remote_path: str) -> dict:
+        """Delete a file or directory inside the vended app area."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        rpath = _safe_remote_path(remote_path)
+        if rpath == "/":
+            return _err("BAD_TARGET", "refusing to delete the vended root")
+        device_path = _afc_device_path(root, rpath)
+
+        async def _op(house) -> None:
+            await house.rm(device_path, force=True)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            future.result(timeout=120)
+            return _ok({"removed": True, "remote": rpath})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_mkdir(self, bundle_id: str, root: str, remote_dir: str) -> dict:
+        """Create a directory inside the vended app area."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        rdir = _safe_remote_path(remote_dir)
+        if rdir == "/":
+            return _err("BAD_TARGET", "directory name is required")
+        device_path = _afc_device_path(root, rdir)
+
+        async def _op(house) -> None:
+            await house.makedirs(device_path)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            future.result(timeout=60)
+            return _ok({"created": True, "remote": rdir})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def afc_rename(self, bundle_id: str, root: str, remote_path: str, new_path: str) -> dict:
+        """Rename (or move) a file/directory inside the vended app area."""
+        from .toolkit_api import _ok, _err
+
+        if not bundle_id:
+            return _err("BAD_TARGET", "bundle_id is required")
+        src = _safe_remote_path(remote_path)
+        dst = _safe_remote_path(new_path)
+        if src == "/" or dst == "/":
+            return _err("BAD_TARGET", "cannot rename the vended root")
+        src_device = _afc_device_path(root, src)
+        dst_device = _afc_device_path(root, dst)
+
+        async def _op(house) -> None:
+            await house.rename(src_device, dst_device)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_afc(root, bundle_id, _op), _bg_loop
+        )
+        try:
+            future.result(timeout=120)
+            return _ok({"renamed": True, "from": src, "to": dst})
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+    def device_info(self) -> dict:
+        """Return a flat dict of lockdown property values for this device.
+
+        Reads the full public lockdown value set (no domain), which exposes the
+        most detail available over USB without pairing (DeviceName, ProductType,
+        ProductVersion, BuildVersion, SerialNumber, hardware/region fields, ...).
+        """
+        from .toolkit_api import _ok, _err
+
+        async def _op() -> dict:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                return dict(await lockdown.get_value() or {})
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            raw = future.result(timeout=30)
+        except Exception as exc:
+            return _err("SUBPROCESS", str(exc))
+
+        # Flatten for display: keep scalars as-is, stringify nested structures,
+        # and drop raw bytes (pairing/certificate blobs are noise for a UI list).
+        info: dict[str, object] = {}
+        for key, value in raw.items():
+            if isinstance(value, (bytes, bytearray)):
+                continue
+            if isinstance(value, (dict, list, tuple)):
+                value = str(value)
+            info[str(key)] = value
+        return _ok({"udid": self.udid, "info": info})
 
 
 # ---------------------------------------------------------------------------

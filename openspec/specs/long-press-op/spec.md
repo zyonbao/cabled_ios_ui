@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+长按手势能力——通过 W3C pointer actions 实现长按，并经 JSON CLI 暴露 long_press op。
+
+## Requirements
 
 ### Requirement: 通过 W3C pointer actions 实现长按
 

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+设备发现能力——枚举 USB 连接的物理 iOS 设备及其元数据，`list_targets` 不触发端口转发。
+
+## Requirements
 
 ### Requirement: 枚举 USB 连接的物理 iOS 设备
 系统 SHALL 通过 `pymobiledevice3` 的 `usbmux.list_devices()` 获取当前已连接的 iOS 设备列表，并仅保留 `connection_type == "USB"` 的条目，过滤所有 Wi-Fi 配对设备。

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+App 启停能力——通过 WDA apps API 启动与终止指定 App。
+
+## Requirements
 
 ### Requirement: 通过 WDA apps API 启动 App
 系统 SHALL 通过 `POST /session/<id>/wda/apps/launch`（body：`{"bundleId": package}`）启动 App。`activity` 参数对 iOS 无意义，忽略。WDA 请求失败时 fallback 到 `pymobiledevice3` 的 `AppServiceClient` 启动。

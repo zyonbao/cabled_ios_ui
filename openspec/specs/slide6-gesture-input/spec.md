@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+桌面应用手势输入——把鼠标坐标映射到设备逻辑坐标，区分点按与滑动，且不打断键盘捕获。
+
+## Requirements
 
 ### Requirement: 鼠标坐标到设备逻辑坐标的映射
 

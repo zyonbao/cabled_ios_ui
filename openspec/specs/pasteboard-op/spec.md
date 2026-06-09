@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+设备剪贴板读写能力——读写设备剪贴板，读写前自动前台化 WDA 并还原，并提供 web 控制台端点。
+
+## Requirements
 
 ### Requirement: 设置设备剪贴板
 
