@@ -338,15 +338,16 @@ main() {
 
     log "Done."
     printf '\n\033[1;32mBuilt:\033[0m %s\n' "$app"
-    cat <<EOF
-
-First launch is blocked by Gatekeeper because the app is not signed/notarized.
-To allow it:
-  - Right-click $APP_NAME.app > Open, then confirm, OR
-  - System Settings > Privacy & Security > "Open Anyway", OR
-  - Remove the quarantine attribute:
-      xattr -dr com.apple.quarantine "$app"
-EOF
+    # Use plain printf (not a heredoc) for the trailing guidance: under bash 3.2
+    # + `set -u` a heredoc that expands a function-local variable can spuriously
+    # report it as unbound, which previously made the script exit 1 even though
+    # the bundle built successfully.
+    printf '\n%s\n' "First launch is blocked by Gatekeeper because the app is not signed/notarized."
+    printf '%s\n' "To allow it:"
+    printf '%s\n' "  - Right-click ${APP_NAME}.app > Open, then confirm, OR"
+    printf '%s\n' "  - System Settings > Privacy & Security > \"Open Anyway\", OR"
+    printf '%s\n' "  - Remove the quarantine attribute:"
+    printf '%s\n' "      xattr -dr com.apple.quarantine \"${app}\""
 }
 
 main "$@"

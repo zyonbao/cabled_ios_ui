@@ -20,15 +20,14 @@
 - [x] 3.2a 建缓存流水线：优先经 `afc_read` 读 `PhotoData/Thumbnails/V2/DCIM/<相册>/<文件名>/` 下小 JPG 直接落地；缺失时读原图生成 JPEG（HEIC/HEIF 用 `pillow-heif`，非 HEIC 用 `QImage` 缩放）；超阈值/失败/视频/非图片回退占位（真机：iOS 缩略图命中 57511/53668/4175B）
 - [x] 3.3 进入相册子目录与返回上一级（如 `100APPLE`，不越过 `/DCIM`）
 - [x] 3.4 双击查看大图对话框：HEIC/HEIF 用 `pillow-heif`、非 HEIC 用 `QImage` 解码显示（真机 PNG 1179×2556、合成 HEIC 800×600 通过）；视频/不支持类型给占位/提示
-- [x] 3.5 导出（`afc_pull`，保字节+按 mtime 回写本地时间戳，HEIC 原样）；相册 Tab **不提供**导入到相册（导入走「文件系统」Tab）
-- [x] 3.6 多选（ExtendedSelection）删除：一次汇总二次确认（数量+示例名）→ 逐项 `afc_rm` → 刷新
+- [x] 3.5 导出（`afc_pull`，保字节+按 mtime 回写本地时间戳，HEIC 原样）；相册 Tab **不提供**导入到相册与删除（相册增删需设备上 iOS App 调用系统照片库接口；文件级写入/删除走「文件系统」Tab）
 - [x] 3.7 注册「相册」Tab 到 `main_window` 左侧 Tab；`set_target` 联动
 
 ## 4. 校验与收尾
 
-- [ ] 4.1 真机回归：iOS ≤16 与 iOS 17+ 各验证 文件系统浏览/传输、相册缩略图（含 iOS 缓存命中与回退）/查看（含 HEIC）/导出/多选删除
-- [ ] 4.2 验证 `PhotoData/Thumbnails/V2/DCIM/<相册>/<文件名>/` 缩略图映射在目标 iOS 版本上的可用性；缺失/布局不同的回退路径生效
-- [ ] 4.3 媒体分区受限目录（如 `PhotoData/CPL/...`）失败路径友好提示，不崩溃
-- [x] 4.4 HEIC 解码：`pillow-heif>=1.0` 已加入 `slide6_console/requirements.txt`（必备），模块导入时 `register_heif_opener()`；打包确认 `pillow-heif` 及其 libheif 随 .app 存在（与上一变更打包验证一并处理）
+- [x] 4.1 真机回归：iOS ≤16 与 iOS 17+ 各验证 文件系统浏览/传输/删除、相册缩略图（含 iOS 缓存命中与回退）/查看（含 HEIC）/导出
+- [x] 4.2 验证 `PhotoData/Thumbnails/V2/DCIM/<相册>/<文件名>/` 缩略图映射在目标 iOS 版本上的可用性；缺失/布局不同的回退路径生效
+- [x] 4.3 媒体分区受限目录（如 `PhotoData/CPL/...`）失败路径友好提示，不崩溃
+- [x] 4.4 HEIC 解码：`pillow-heif>=1.0` 已加入 `slide6_console/requirements.txt`（必备），模块导入时 `register_heif_opener()`；打包已确认 `pillow-heif`（`_pillow_heif.so` 原生扩展 + `libheif.1.21.2.dylib`）与 `PIL` 随 `.app` 存在，离屏启动冻结产物可正常启动
 - [x] 4.5 更新 `slide6_console/README.md` 说明两个新 Tab 与限制（相册不提供导入到相册、Photos 同步可见性、HEIC 用 pillow-heif 解码、本地缩略图缓存位置、受限目录友好提示）
 - [x] 4.6 运行 `openspec validate "add-afc-filesystem-and-dcim" --strict` 通过
