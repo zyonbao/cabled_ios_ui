@@ -1,0 +1,215 @@
+{
+  "source": "https://github.com/doronz88/DeveloperDiskImage",
+  "ref": "main",
+  "raw_base": "https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main",
+  "generated_at": "2026-06-10T06:03:13.757469+00:00",
+  "developer_image_versions": [
+    "11.4",
+    "12.0",
+    "12.1",
+    "12.2",
+    "12.3",
+    "12.4",
+    "13.0",
+    "13.1",
+    "13.2",
+    "13.3",
+    "13.4",
+    "13.5",
+    "13.6",
+    "13.7",
+    "14.0",
+    "14.1",
+    "14.2",
+    "14.3",
+    "14.4",
+    "14.5",
+    "14.6",
+    "14.7",
+    "14.8",
+    "15.0",
+    "15.1",
+    "15.2",
+    "15.3",
+    "15.4",
+    "15.5",
+    "15.6",
+    "15.7",
+    "15.8",
+    "16.0",
+    "16.1",
+    "16.2",
+    "16.3",
+    "16.4",
+    "16.5",
+    "16.6",
+    "16.7"
+  ],
+  "developer_images": {
+    "11.4": {
+      "dmg": "DeveloperDiskImages/11.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/11.4/DeveloperDiskImage.dmg.signature"
+    },
+    "12.0": {
+      "dmg": "DeveloperDiskImages/12.0/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/12.0/DeveloperDiskImage.dmg.signature"
+    },
+    "12.1": {
+      "dmg": "DeveloperDiskImages/12.1/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/12.1/DeveloperDiskImage.dmg.signature"
+    },
+    "12.2": {
+      "dmg": "DeveloperDiskImages/12.2/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/12.2/DeveloperDiskImage.dmg.signature"
+    },
+    "12.3": {
+      "dmg": "DeveloperDiskImages/12.3/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/12.3/DeveloperDiskImage.dmg.signature"
+    },
+    "12.4": {
+      "dmg": "DeveloperDiskImages/12.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/12.4/DeveloperDiskImage.dmg.signature"
+    },
+    "13.0": {
+      "dmg": "DeveloperDiskImages/13.0/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.0/DeveloperDiskImage.dmg.signature"
+    },
+    "13.1": {
+      "dmg": "DeveloperDiskImages/13.1/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.1/DeveloperDiskImage.dmg.signature"
+    },
+    "13.2": {
+      "dmg": "DeveloperDiskImages/13.2/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.2/DeveloperDiskImage.dmg.signature"
+    },
+    "13.3": {
+      "dmg": "DeveloperDiskImages/13.3/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.3/DeveloperDiskImage.dmg.signature"
+    },
+    "13.4": {
+      "dmg": "DeveloperDiskImages/13.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.4/DeveloperDiskImage.dmg.signature"
+    },
+    "13.5": {
+      "dmg": "DeveloperDiskImages/13.5/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.5/DeveloperDiskImage.dmg.signature"
+    },
+    "13.6": {
+      "dmg": "DeveloperDiskImages/13.6/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.6/DeveloperDiskImage.dmg.signature"
+    },
+    "13.7": {
+      "dmg": "DeveloperDiskImages/13.7/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/13.7/DeveloperDiskImage.dmg.signature"
+    },
+    "14.0": {
+      "dmg": "DeveloperDiskImages/14.0/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.0/DeveloperDiskImage.dmg.signature"
+    },
+    "14.1": {
+      "dmg": "DeveloperDiskImages/14.1/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.1/DeveloperDiskImage.dmg.signature"
+    },
+    "14.2": {
+      "dmg": "DeveloperDiskImages/14.2/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.2/DeveloperDiskImage.dmg.signature"
+    },
+    "14.3": {
+      "dmg": "DeveloperDiskImages/14.3/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.3/DeveloperDiskImage.dmg.signature"
+    },
+    "14.4": {
+      "dmg": "DeveloperDiskImages/14.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.4/DeveloperDiskImage.dmg.signature"
+    },
+    "14.5": {
+      "dmg": "DeveloperDiskImages/14.5/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.5/DeveloperDiskImage.dmg.signature"
+    },
+    "14.6": {
+      "dmg": "DeveloperDiskImages/14.6/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.6/DeveloperDiskImage.dmg.signature"
+    },
+    "14.7": {
+      "dmg": "DeveloperDiskImages/14.7/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.7/DeveloperDiskImage.dmg.signature"
+    },
+    "14.8": {
+      "dmg": "DeveloperDiskImages/14.8/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/14.8/DeveloperDiskImage.dmg.signature"
+    },
+    "15.0": {
+      "dmg": "DeveloperDiskImages/15.0/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.0/DeveloperDiskImage.dmg.signature"
+    },
+    "15.1": {
+      "dmg": "DeveloperDiskImages/15.1/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.1/DeveloperDiskImage.dmg.signature"
+    },
+    "15.2": {
+      "dmg": "DeveloperDiskImages/15.2/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.2/DeveloperDiskImage.dmg.signature"
+    },
+    "15.3": {
+      "dmg": "DeveloperDiskImages/15.3/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.3/DeveloperDiskImage.dmg.signature"
+    },
+    "15.4": {
+      "dmg": "DeveloperDiskImages/15.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.4/DeveloperDiskImage.dmg.signature"
+    },
+    "15.5": {
+      "dmg": "DeveloperDiskImages/15.5/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.5/DeveloperDiskImage.dmg.signature"
+    },
+    "15.6": {
+      "dmg": "DeveloperDiskImages/15.6/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.6/DeveloperDiskImage.dmg.signature"
+    },
+    "15.7": {
+      "dmg": "DeveloperDiskImages/15.7/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.7/DeveloperDiskImage.dmg.signature"
+    },
+    "15.8": {
+      "dmg": "DeveloperDiskImages/15.8/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/15.8/DeveloperDiskImage.dmg.signature"
+    },
+    "16.0": {
+      "dmg": "DeveloperDiskImages/16.0/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.0/DeveloperDiskImage.dmg.signature"
+    },
+    "16.1": {
+      "dmg": "DeveloperDiskImages/16.1/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.1/DeveloperDiskImage.dmg.signature"
+    },
+    "16.2": {
+      "dmg": "DeveloperDiskImages/16.2/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.2/DeveloperDiskImage.dmg.signature"
+    },
+    "16.3": {
+      "dmg": "DeveloperDiskImages/16.3/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.3/DeveloperDiskImage.dmg.signature"
+    },
+    "16.4": {
+      "dmg": "DeveloperDiskImages/16.4/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.4/DeveloperDiskImage.dmg.signature"
+    },
+    "16.5": {
+      "dmg": "DeveloperDiskImages/16.5/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.5/DeveloperDiskImage.dmg.signature"
+    },
+    "16.6": {
+      "dmg": "DeveloperDiskImages/16.6/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.6/DeveloperDiskImage.dmg.signature"
+    },
+    "16.7": {
+      "dmg": "DeveloperDiskImages/16.7/DeveloperDiskImage.dmg",
+      "signature": "DeveloperDiskImages/16.7/DeveloperDiskImage.dmg.signature"
+    }
+  },
+  "personalized_image": {
+    "image": "PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg",
+    "build_manifest": "PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist",
+    "trustcache": "PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg.trustcache"
+  }
+}

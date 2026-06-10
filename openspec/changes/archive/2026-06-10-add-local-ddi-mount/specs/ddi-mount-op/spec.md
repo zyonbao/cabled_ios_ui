@@ -1,8 +1,5 @@
-# ddi-mount-op Specification
+## MODIFIED Requirements
 
-## Purpose
-定义平台层 DeveloperDiskImage（DDI）的查询、挂载、卸载与开发者服务（DVT）就绪探测能力：版本感知、按来源优先级的统一 `auto` 流程（镜像获取与设备挂载解耦），对 mounter 在挂载/卸载后短时无响应的免疫，以及挂载成功后用最轻量 DVT 握手解锁依赖 DVT 的功能。
-## Requirements
 ### Requirement: 多方式挂载 DDI
 
 平台层 SHALL 提供 `ddi_mount(target, method, **opts)`，支持两种挂载方式：`auto`（版本感知、按来源优先级的统一流程）与 `manual`（手动本地镜像文件）。已挂载（`AlreadyMountedError`）MUST 视为成功（幂等）；开发者模式未开启 MUST 返回可读错误提示用户在设备设置中开启；挂载 MUST NOT 依赖 XPC tunnel；未知方式 MUST 返回可读错误。
@@ -93,19 +90,7 @@
 - **WHEN** 个性化挂载刚成功，`CopyDevices` 在设备侧卡死不回包
 - **THEN** 状态查询在限时内回退，仍基于 `is_image_mounted` 返回 `{ok, data:{mounted:true}}`（可不含镜像路径明细），不超时失败
 
-### Requirement: 卸载 DDI
-
-平台层 SHALL 提供 `ddi_unmount(target)`，按 iOS 版本选择对应 mounter（iOS<17 `DeveloperDiskImageMounter`、iOS 17+ `PersonalizedImageMounter`）调用 `umount()` 卸载已挂载的 DDI。未挂载时 MUST 返回可读结果而非崩溃。卸载 MUST 对"`CopyDevices` 卡死"免疫：MUST 限时读取真实挂载路径，超时/失败时回退到按版本推导的 well-known 路径执行 `umount()`，不得因 `CopyDevices` 卡死而阻塞卸载。
-
-#### Scenario: 卸载成功
-
-- **WHEN** 设备已挂载 DDI 且用户请求卸载
-- **THEN** 卸载该镜像，返回 `{ok, data:{unmounted:true}}`
-
-#### Scenario: CopyDevices 卡死时仍能卸载
-
-- **WHEN** 个性化挂载刚成功后请求卸载，`CopyDevices` 在设备侧卡死不回包
-- **THEN** 限时回退到 well-known 挂载路径执行 `umount()`，卸载成功返回
+## ADDED Requirements
 
 ### Requirement: 探测开发者服务（DVT）就绪
 

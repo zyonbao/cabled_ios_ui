@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import posixpath
 import random
 import socket
@@ -69,9 +70,6 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
         DeveloperDiskImageMounter,
         MobileImageMounterService,
         PersonalizedImageMounter,
-        auto_mount,
-        auto_mount_developer,
-        auto_mount_personalized,
     )
     from pymobiledevice3.dtx_service_provider import (  # noqa: F401
         DtxServiceProvider,
@@ -2113,23 +2111,91 @@ class iOSDevice:
         )
         return _ok(data)
 
-    def ddi_mount(self, method: str = "auto", **paths: "Optional[str]") -> dict:
-        """Mount the DeveloperDiskImage using one of several methods.
+    def ddi_wait_ready(self, timeout: float = 500.0) -> dict:
+        """Wait until the developer (DVT) services are reachable.
 
-        method:
-          - "auto": version-dispatching auto-mount (Xcode / online image).
-          - "personalized": iOS 17+ personalized image (downloaded).
-          - "developer": iOS < 17 developer image (Xcode / downloaded).
-          - "manual": local files — iOS 17+ needs image/build_manifest/trustcache,
-            iOS < 17 needs image/signature.
+        The lightest reliable readiness signal: open + immediately close a
+        ``DvtProvider`` — i.e. just the DTX capability handshake, with no
+        instrument call — retrying with backoff until it succeeds or ``timeout``
+        (seconds) elapses. This probes the developer-services path (RSD/tunnel on
+        iOS 17+, usbmux on iOS<17), NOT the mounter — which is exactly the
+        service that stays unresponsive while the device finalises a fresh
+        personalized mount. Use it to gate DVT features after a successful mount
+        instead of polling ``ddi_status`` (which would just hit the busy mounter).
+        """
+        from .toolkit_api import _ok, _err
+
+        async def _probe(_dvt) -> bool:
+            # Reaching the body means RSD + DvtProvider handshake succeeded.
+            return True
+
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        attempt = 0
+        last_err: "Optional[Exception]" = None
+        logger.info("ddi_wait_ready: probing DVT readiness (udid=%s timeout=%ss)",
+                    self.udid, timeout)
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                # Bound each attempt: a hung RSD/handshake must not pin the loop.
+                async def _attempt() -> bool:
+                    return await asyncio.wait_for(self._with_dvt(_probe), timeout=20)
+
+                future = asyncio.run_coroutine_threadsafe(_attempt(), _bg_loop)
+                future.result(timeout=25)
+                logger.info("ddi_wait_ready: DVT ready (udid=%s, attempt=%s)",
+                            self.udid, attempt)
+                return _ok({"ready": True, "attempts": attempt})
+            except Exception as exc:
+                last_err = exc
+                logger.debug("ddi_wait_ready: attempt %s not ready: %s", attempt, exc)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(5.0, max(0.5, remaining)))
+        logger.warning(
+            "ddi_wait_ready: timed out (udid=%s, %ss, last=%s)",
+            self.udid, timeout, last_err,
+        )
+        return _err("TIMEOUT", "等待 DVT 就绪超时（设备仍在准备 DeveloperDiskImage）")
+
+    def ddi_mount(
+        self,
+        family: str,
+        *,
+        image: "Optional[str]" = None,
+        signature: "Optional[str]" = None,
+        build_manifest: "Optional[str]" = None,
+        trustcache: "Optional[str]" = None,
+    ) -> dict:
+        """Mount an already-resolved DeveloperDiskImage onto the device.
+
+        Pure device interaction over usbmux lockdown (no XPC tunnel): image
+        acquisition (offline index, local lookup, GitHub download, fallback) is
+        handled upstream by ``ios_toolkit.ddi_provider``; this only uploads and
+        mounts the given files. ``family`` selects the mounter:
+          - "personalized" (iOS 17+): needs image / build_manifest / trustcache
+          - "developer"    (iOS <17): needs image / signature
         An already-mounted image is treated as success (idempotent).
         """
         from .toolkit_api import _ok, _err
 
-        major = self._ios_major_version()
+        if not image:
+            return _err("BAD_TARGET", "缺少镜像文件 (image)")
+        if family == "personalized":
+            if not build_manifest or not trustcache:
+                return _err(
+                    "BAD_TARGET",
+                    "personalized 挂载需要 image / build_manifest / trustcache",
+                )
+        elif family == "developer":
+            if not signature:
+                return _err("BAD_TARGET", "developer 挂载需要 image / signature")
+        else:
+            return _err("BAD_TARGET", f"未知的 DDI 类型：{family}")
+
         logger.info(
-            "ddi_mount: udid=%s method=%s os_major=%s manual_keys=%s",
-            self.udid, method, major, sorted(k for k, v in paths.items() if v),
+            "ddi_mount: udid=%s family=%s image=%s", self.udid, family, image,
         )
 
         async def _op() -> None:
@@ -2138,48 +2204,23 @@ class iOSDevice:
 
             lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
             async with lockdown:
-                if method == "auto":
-                    await mim.auto_mount(lockdown)
-                elif method == "personalized":
-                    await mim.auto_mount_personalized(lockdown)
-                elif method == "developer":
-                    await mim.auto_mount_developer(lockdown)
-                elif method == "manual":
-                    image = paths.get("image")
-                    if not image:
-                        raise ValueError("manual mount requires an image file")
-                    if major >= 17:
-                        build_manifest = paths.get("build_manifest")
-                        trustcache = paths.get("trustcache")
-                        if not build_manifest or not trustcache:
-                            raise ValueError(
-                                "iOS 17+ manual mount requires image, "
-                                "build_manifest and trustcache files"
-                            )
-                        await mim.PersonalizedImageMounter(lockdown=lockdown).mount(
-                            Path(image), Path(build_manifest), Path(trustcache)
-                        )
-                    else:
-                        signature = paths.get("signature")
-                        if not signature:
-                            raise ValueError(
-                                "iOS < 17 manual mount requires image and signature files"
-                            )
-                        await mim.DeveloperDiskImageMounter(lockdown=lockdown).mount(
-                            Path(image), Path(signature)
-                        )
+                if family == "personalized":
+                    await mim.PersonalizedImageMounter(lockdown=lockdown).mount(
+                        Path(image), Path(build_manifest), Path(trustcache)
+                    )
                 else:
-                    raise ValueError(f"unknown mount method: {method}")
+                    await mim.DeveloperDiskImageMounter(lockdown=lockdown).mount(
+                        Path(image), Path(signature)
+                    )
 
-        # Mounting downloads (auto/personalized) and uploads the image, both of
-        # which can block for a long time; run it on a private loop so it does
-        # not freeze the shared _bg_loop (mirror, syslog, status, ...). A
-        # generous timeout still guards against a permanently stuck operation.
+        # Uploading the image can block for a while; run on a private loop so it
+        # does not freeze the shared _bg_loop. A generous timeout guards against
+        # a permanently stuck operation.
         try:
             _run_isolated(_op(), timeout=300)
         except asyncio.TimeoutError:
-            logger.warning("ddi_mount timed out (method=%s)", method)
-            return _err("TIMEOUT", "挂载 DDI 超时（下载/上传镜像耗时过长或卡住）")
+            logger.warning("ddi_mount timed out (family=%s)", family)
+            return _err("TIMEOUT", "挂载 DDI 超时（上传镜像耗时过长或卡住）")
         except Exception as exc:
             from pymobiledevice3.services.mobile_image_mounter import (
                 AlreadyMountedError,
@@ -2187,18 +2228,18 @@ class iOSDevice:
             )
 
             if isinstance(exc, AlreadyMountedError):
-                logger.info("ddi_mount: already mounted (method=%s)", method)
-                return _ok({"mounted": True, "method": method, "already": True})
+                logger.info("ddi_mount: already mounted (family=%s)", family)
+                return _ok({"mounted": True, "family": family, "already": True})
             if isinstance(exc, DeveloperModeIsNotEnabledError):
                 logger.warning("ddi_mount: developer mode not enabled")
                 return _err(
                     "SUBPROCESS",
                     "开发者模式未开启：请在设备「设置 → 隐私与安全性 → 开发者模式」开启后重试。",
                 )
-            logger.warning("ddi_mount failed (method=%s): %s", method, exc, exc_info=True)
+            logger.warning("ddi_mount failed (family=%s): %s", family, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
-        logger.info("ddi_mount: mounted (method=%s)", method)
-        return _ok({"mounted": True, "method": method})
+        logger.info("ddi_mount: mounted (family=%s)", family)
+        return _ok({"mounted": True, "family": family})
 
     def ddi_unmount(self) -> dict:
         """Unmount the DeveloperDiskImage by its actual mount path(s).

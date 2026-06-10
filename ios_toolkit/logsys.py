@@ -24,7 +24,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 # Default location follows the macOS convention for app logs.
-DEFAULT_LOG_DIR = os.path.expanduser("~/Library/Logs/CablediOS")
+DEFAULT_LOG_DIR = os.path.expanduser("~/Library/CablediOS/Logs")
 
 _FILE_PREFIX = "cabledios_log_"
 _FILE_SUFFIX = ".log"

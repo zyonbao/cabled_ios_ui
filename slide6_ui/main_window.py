@@ -9,19 +9,28 @@ KeymouseTab, which MainWindow drives through a small delegation surface
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings
+import os
+import shutil
+import subprocess
+
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -50,6 +59,59 @@ _SETTINGS_APP = "slide6_console"
 _ASK_CLEAN_TUNNEL_ON_EXIT_KEY = "settings/ask_clean_tunnel_on_exit"
 _LOGGING_ENABLED_KEY = "settings/logging_enabled"
 _LOGGING_DIR_KEY = "settings/logging_dir"
+
+# DeveloperDiskImage (DDI) mount source settings. These are the persisted
+# config surface; the actual mount-time consumption lives in the
+# add-local-ddi-mount change. Defaults are computed lazily for display only.
+_DDI_LOCAL_ENABLED_KEY = "settings/ddi_local_enabled"
+_DDI_LEGACY_DIR_KEY = "settings/ddi_legacy_dir"
+_DDI_MODERN_DIR_KEY = "settings/ddi_modern_dir"
+_DDI_GITHUB_ENABLED_KEY = "settings/ddi_github_enabled"
+_DDI_GITHUB_TOKEN_KEY = "settings/ddi_github_token"
+_DDI_GITHUB_SAVE_DIR_KEY = "settings/ddi_github_save_dir"
+_DDI_SOURCE_PRIORITY_KEY = "settings/ddi_source_priority"
+
+# Image source identifiers used by the priority ordering.
+_DDI_SOURCE_LOCAL = "local"
+_DDI_SOURCE_GITHUB = "github"
+_DDI_SOURCE_LABELS = {
+    _DDI_SOURCE_LOCAL: "System Developer Image (本地)",
+    _DDI_SOURCE_GITHUB: "GitHub Download Image",
+}
+_DDI_DEFAULT_PRIORITY = f"{_DDI_SOURCE_LOCAL},{_DDI_SOURCE_GITHUB}"
+
+# Standard locations used as placeholder defaults when the user leaves a field
+# blank. The legacy directory follows the active Xcode toolchain.
+_DDI_MODERN_DEFAULT_DIR = "/Library/Developer/CoreDevice/CandidateDDIs"
+_DDI_GITHUB_SAVE_DEFAULT_DIR = os.path.expanduser("~/Library/CablediOS/DDI")
+_DDI_DORONZ88_REPO = "https://github.com/doronz88/DeveloperDiskImage"
+
+
+def _xcode_developer_dir() -> str:
+    """Resolve the active Xcode developer dir via xcode-select, with fallback."""
+    xcode_select = shutil.which("xcode-select")
+    if xcode_select:
+        try:
+            out = subprocess.run(
+                [xcode_select, "-p"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            path = (out.stdout or "").strip()
+            if out.returncode == 0 and path:
+                return path
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "/Applications/Xcode.app/Contents/Developer"
+
+
+def _ddi_legacy_default_dir() -> str:
+    """Standard Xcode DeviceSupport folder holding per-version (iOS<17) images."""
+    return os.path.join(
+        _xcode_developer_dir(),
+        "Platforms/iPhoneOS.platform/DeviceSupport",
+    )
 
 
 class MainWindow(QMainWindow):
@@ -157,42 +219,73 @@ class MainWindow(QMainWindow):
             log_dir=self._logging_dir() or None,
         )
 
+    # ------------------------------------------------------ DDI mount prefs
+
+    def _ddi_local_enabled(self) -> bool:
+        return bool(self.settings.value(_DDI_LOCAL_ENABLED_KEY, True, type=bool))
+
+    def _ddi_github_enabled(self) -> bool:
+        return bool(self.settings.value(_DDI_GITHUB_ENABLED_KEY, True, type=bool))
+
+    def _ddi_source_priority(self) -> list[str]:
+        """Return the ordered source list, sanitized against known sources."""
+        raw = self.settings.value(_DDI_SOURCE_PRIORITY_KEY, _DDI_DEFAULT_PRIORITY, type=str)
+        order = [s.strip() for s in (raw or "").split(",") if s.strip()]
+        # Keep only known sources, then append any missing ones in default order.
+        known = [s for s in order if s in _DDI_SOURCE_LABELS]
+        for src in (_DDI_SOURCE_LOCAL, _DDI_SOURCE_GITHUB):
+            if src not in known:
+                known.append(src)
+        return known
+
     def _open_preferences(self) -> None:
         dlg = QDialog(self)
-        dlg.setWindowTitle("Preferences")
+        dlg.setWindowTitle("Settings")
         layout = QVBoxLayout(dlg)
 
-        general_box = QWidget(dlg)
-        general = QVBoxLayout(general_box)
-        general.setContentsMargins(0, 0, 0, 0)
-        general.addWidget(QLabel("General"))
+        tabs = QTabWidget(dlg)
+        tabs.addTab(self._build_general_tab(dlg), "General")
+        tabs.addTab(self._build_logging_tab(dlg), "Logging")
+        tabs.addTab(self._build_ddi_tab(dlg), "DeveloperDiskImage")
+        layout.addWidget(tabs)
 
-        ask_clean_checkbox = QCheckBox("Ask to clean XPC tunnel on exit", general_box)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.resize(560, 460)
+        dlg.exec()
+
+    def _build_general_tab(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        col = QVBoxLayout(page)
+
+        ask_clean_checkbox = QCheckBox("Ask to clean XPC tunnel on exit", page)
         ask_clean_checkbox.setChecked(self._ask_clean_tunnel_on_exit())
         ask_clean_checkbox.toggled.connect(self._set_ask_clean_tunnel_on_exit)
-        general.addWidget(ask_clean_checkbox)
-        layout.addWidget(general_box)
+        col.addWidget(ask_clean_checkbox)
 
-        # Logging section: enable toggle + log directory (browse or type).
-        logging_box = QWidget(dlg)
-        logging_layout = QVBoxLayout(logging_box)
-        logging_layout.setContentsMargins(0, 8, 0, 0)
-        logging_layout.addWidget(QLabel("日志 (Logging)"))
+        col.addStretch(1)
+        return page
 
-        log_enabled_checkbox = QCheckBox("启用文件日志", logging_box)
+    def _build_logging_tab(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        col = QVBoxLayout(page)
+
+        log_enabled_checkbox = QCheckBox("启用文件日志", page)
         log_enabled_checkbox.setChecked(self._logging_enabled())
-        logging_layout.addWidget(log_enabled_checkbox)
+        col.addWidget(log_enabled_checkbox)
 
         dir_row = QHBoxLayout()
         dir_row.addWidget(QLabel("目录"))
-        log_dir_edit = QLineEdit(logging_box)
-        log_dir_edit.setPlaceholderText(f"留空使用默认：{logsys.DEFAULT_LOG_DIR}")
+        log_dir_edit = QLineEdit(page)
+        log_dir_edit.setPlaceholderText(f"默认:{logsys.DEFAULT_LOG_DIR}")
         log_dir_edit.setText(self._logging_dir())
-        browse_btn = QPushButton("浏览…", logging_box)
+        browse_btn = QPushButton("浏览…", page)
         dir_row.addWidget(log_dir_edit, 1)
         dir_row.addWidget(browse_btn)
-        logging_layout.addLayout(dir_row)
-        layout.addWidget(logging_box)
+        col.addLayout(dir_row)
 
         def _save_logging() -> None:
             self.settings.setValue(_LOGGING_ENABLED_KEY, log_enabled_checkbox.isChecked())
@@ -201,7 +294,7 @@ class MainWindow(QMainWindow):
 
         def _browse_dir() -> None:
             start = log_dir_edit.text().strip() or logsys.DEFAULT_LOG_DIR
-            chosen = open_directory(dlg, "选择日志目录", start)
+            chosen = open_directory(page, "选择日志目录", start)
             if chosen:
                 log_dir_edit.setText(chosen)
                 _save_logging()
@@ -210,13 +303,204 @@ class MainWindow(QMainWindow):
         log_dir_edit.editingFinished.connect(_save_logging)
         browse_btn.clicked.connect(_browse_dir)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
-        buttons.rejected.connect(dlg.reject)
-        buttons.accepted.connect(dlg.accept)
-        layout.addWidget(buttons)
+        col.addStretch(1)
+        return page
 
-        dlg.resize(420, 240)
-        dlg.exec()
+    def _ddi_dir_row(
+        self,
+        parent: QWidget,
+        label: str,
+        key: str,
+        default_dir: str,
+    ) -> tuple[QHBoxLayout, list[QWidget]]:
+        """Build a labeled directory row (edit + browse) bound to a settings key."""
+        row = QHBoxLayout()
+        lbl = QLabel(label, parent)
+        edit = QLineEdit(parent)
+        edit.setPlaceholderText(f"默认:{default_dir}")
+        edit.setText(self.settings.value(key, "", type=str) or "")
+        # Pin to natural height so sibling layout pressure can't clip the text.
+        edit.setMinimumHeight(edit.sizeHint().height())
+        browse = QPushButton("浏览…", parent)
+        row.addWidget(lbl)
+        row.addWidget(edit, 1)
+        row.addWidget(browse)
+
+        def _save() -> None:
+            self.settings.setValue(key, edit.text().strip())
+
+        def _browse() -> None:
+            start = edit.text().strip() or default_dir
+            chosen = open_directory(parent, label, start)
+            if chosen:
+                edit.setText(chosen)
+                _save()
+
+        edit.editingFinished.connect(_save)
+        browse.clicked.connect(_browse)
+        return row, [lbl, edit, browse]
+
+    def _build_ddi_tab(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        col = QVBoxLayout(page)
+
+        # --- Section: System Developer Image (local) ---------------------
+        local_box = QGroupBox("System Developer Image", page)
+        local_col = QVBoxLayout(local_box)
+        local_enabled = QCheckBox("启用本地镜像来源", local_box)
+        local_enabled.setChecked(self._ddi_local_enabled())
+        local_col.addWidget(local_enabled)
+
+        legacy_row, legacy_widgets = self._ddi_dir_row(
+            local_box,
+            "Legacy (iOS<17) 目录",
+            _DDI_LEGACY_DIR_KEY,
+            _ddi_legacy_default_dir(),
+        )
+        modern_row, modern_widgets = self._ddi_dir_row(
+            local_box,
+            "Modern (iOS17+) 目录",
+            _DDI_MODERN_DIR_KEY,
+            _DDI_MODERN_DEFAULT_DIR,
+        )
+        local_col.addLayout(legacy_row)
+        local_col.addLayout(modern_row)
+        col.addWidget(local_box)
+
+        # --- Section: GitHub Download Image ------------------------------
+        github_box = QGroupBox("GitHub Download Image", page)
+        github_col = QVBoxLayout(github_box)
+        github_enabled = QCheckBox("启用 GitHub 下载来源", github_box)
+        github_enabled.setChecked(self._ddi_github_enabled())
+        github_col.addWidget(github_enabled)
+
+        token_row = QHBoxLayout()
+        token_lbl = QLabel("GitHub Token", github_box)
+        token_edit = QLineEdit(github_box)
+        token_edit.setEchoMode(QLineEdit.Password)
+        token_edit.setPlaceholderText("可选")
+        token_edit.setText(self.settings.value(_DDI_GITHUB_TOKEN_KEY, "", type=str) or "")
+        token_row.addWidget(token_lbl)
+        token_row.addWidget(token_edit, 1)
+        github_col.addLayout(token_row)
+
+        token_hint = QLabel(
+            f"默认从 {_DDI_DORONZ88_REPO} 的 raw CDN 直下（不受限额、无需 token）；"
+            "token 仅在回退到 GitHub API 下载时生效（无 token 60 次/小时，"
+            "配置后 5000 次/小时）。",
+            github_box,
+        )
+        token_hint.setWordWrap(True)
+        token_hint.setStyleSheet("color: gray; font-size: 11px;")
+        github_col.addWidget(token_hint)
+
+        save_row, save_widgets = self._ddi_dir_row(
+            github_box,
+            "镜像保存目录",
+            _DDI_GITHUB_SAVE_DIR_KEY,
+            _DDI_GITHUB_SAVE_DEFAULT_DIR,
+        )
+        github_col.addLayout(save_row)
+        col.addWidget(github_box)
+
+        # --- Section: source priority ------------------------------------
+        priority_box = QGroupBox("来源优先级", page)
+        priority_col = QVBoxLayout(priority_box)
+        priority_hint = QLabel("挂载时按从上到下的顺序尝试可用来源。", priority_box)
+        priority_hint.setStyleSheet("color: gray; font-size: 11px;")
+        priority_col.addWidget(priority_hint)
+
+        prio_row = QHBoxLayout()
+        prio_list = QListWidget(priority_box)
+        for src in self._ddi_source_priority():
+            item = QListWidgetItem(_DDI_SOURCE_LABELS[src])
+            item.setData(Qt.ItemDataRole.UserRole, src)
+            prio_list.addItem(item)
+        prio_list.setCurrentRow(0)
+        # Only ever a couple of rows: pin to content height so the list does not
+        # greedily expand and squeeze the other sections' inputs.
+        _row_h = prio_list.sizeHintForRow(0)
+        prio_list.setFixedHeight(_row_h * prio_list.count() + 2 * prio_list.frameWidth())
+        prio_list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        prio_row.addWidget(prio_list, 1)
+
+        prio_btns = QVBoxLayout()
+        up_btn = QPushButton("上移", priority_box)
+        down_btn = QPushButton("下移", priority_box)
+        prio_btns.addWidget(up_btn)
+        prio_btns.addWidget(down_btn)
+        prio_btns.addStretch(1)
+        prio_row.addLayout(prio_btns)
+        priority_col.addLayout(prio_row)
+        col.addWidget(priority_box)
+
+        # --- persistence + enable/disable linkage ------------------------
+        def _save_priority() -> None:
+            order = [
+                prio_list.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(prio_list.count())
+            ]
+            self.settings.setValue(_DDI_SOURCE_PRIORITY_KEY, ",".join(order))
+
+        def _move(delta: int) -> None:
+            row = prio_list.currentRow()
+            target = row + delta
+            if row < 0 or target < 0 or target >= prio_list.count():
+                return
+            item = prio_list.takeItem(row)
+            prio_list.insertItem(target, item)
+            prio_list.setCurrentRow(target)
+            _save_priority()
+
+        def _refresh_priority_enabled() -> None:
+            local_on = local_enabled.isChecked()
+            github_on = github_enabled.isChecked()
+            # Disable each source's item when its section is off.
+            for i in range(prio_list.count()):
+                it = prio_list.item(i)
+                src = it.data(Qt.ItemDataRole.UserRole)
+                on = local_on if src == _DDI_SOURCE_LOCAL else github_on
+                flags = it.flags()
+                if on:
+                    it.setFlags(flags | Qt.ItemFlag.ItemIsEnabled)
+                else:
+                    it.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
+            # If both sources disabled, disable the whole priority section.
+            both_off = not local_on and not github_on
+            priority_box.setEnabled(not both_off)
+            if both_off:
+                priority_hint.setText("至少启用一个来源后才能配置优先级。")
+            else:
+                priority_hint.setText("挂载时按从上到下的顺序尝试可用来源。")
+
+        def _set_local_enabled(on: bool) -> None:
+            self.settings.setValue(_DDI_LOCAL_ENABLED_KEY, on)
+            for w in legacy_widgets + modern_widgets:
+                w.setEnabled(on)
+            _refresh_priority_enabled()
+
+        def _set_github_enabled(on: bool) -> None:
+            self.settings.setValue(_DDI_GITHUB_ENABLED_KEY, on)
+            for w in [token_lbl, token_edit, token_hint] + save_widgets:
+                w.setEnabled(on)
+            _refresh_priority_enabled()
+
+        def _save_token() -> None:
+            # Token is a credential: persist locally only, never log it.
+            self.settings.setValue(_DDI_GITHUB_TOKEN_KEY, token_edit.text())
+
+        up_btn.clicked.connect(lambda: _move(-1))
+        down_btn.clicked.connect(lambda: _move(1))
+        local_enabled.toggled.connect(_set_local_enabled)
+        github_enabled.toggled.connect(_set_github_enabled)
+        token_edit.editingFinished.connect(_save_token)
+
+        # Apply initial enable state.
+        _set_local_enabled(local_enabled.isChecked())
+        _set_github_enabled(github_enabled.isChecked())
+
+        col.addStretch(1)
+        return page
 
     # --------------------------------------------------------- device list
 

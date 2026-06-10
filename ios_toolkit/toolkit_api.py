@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -754,14 +755,96 @@ def ddi_status(target: str) -> dict:
     return device.ddi_status()
 
 
-def ddi_mount(target: str, method: str = "auto", **paths: str) -> dict:
-    """Mount the DDI via ``method`` (auto / personalized / developer / manual)."""
-    if method not in ("auto", "personalized", "developer", "manual"):
+def ddi_wait_ready(target: str, timeout: float = 500.0) -> dict:
+    """Wait until the developer (DVT) services are reachable after a mount.
+
+    Returns ``{ok, data:{ready:true}}`` once the DVT/DTX handshake succeeds, or a
+    ``TIMEOUT`` error after ``timeout`` seconds. Probes the developer-services
+    path (RSD/tunnel on iOS 17+, usbmux on iOS<17), not the mounter.
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.ddi_wait_ready(timeout=timeout)
+
+
+def ddi_mount(
+    target: str,
+    method: str = "auto",
+    *,
+    sources: "Optional[list[str]]" = None,
+    legacy_dir: "Optional[str]" = None,
+    modern_dir: "Optional[str]" = None,
+    github_token: "Optional[str]" = None,
+    github_save_dir: "Optional[str]" = None,
+    image: "Optional[str]" = None,
+    signature: "Optional[str]" = None,
+    build_manifest: "Optional[str]" = None,
+    trustcache: "Optional[str]" = None,
+) -> dict:
+    """Mount the DDI via ``method`` (``auto`` or ``manual``).
+
+    Orchestrates the two halves of DDI support: ``ddi_provider`` resolves the
+    image files (offline index → local → GitHub download/fallback) and
+    ``iOSDevice.ddi_mount`` performs the pure device-side mount.
+
+    - ``auto``: resolve from the configured source priority (``sources`` + dirs +
+      token + save dir, all from the UI's Settings), then mount the result.
+    - ``manual``: mount the caller-provided files directly (image + signature for
+      iOS<17, image + build_manifest + trustcache for iOS 17+).
+
+    ``github_token`` is never logged in clear (only a bool).
+    """
+    if method not in ("auto", "manual"):
         return _err("BAD_TARGET", f"unknown mount method: {method}")
     device, err = _prepare_device_basic(target)
     if err:
         return err
-    return device.ddi_mount(method, **paths)
+
+    from . import ddi_provider
+
+    major = device._ios_major_version()
+    family = ddi_provider.ddi_family(major)
+    logger.info(
+        "api ddi_mount: target=%s method=%s family=%s sources=%s has_token=%s",
+        target, method, family, sources, bool(github_token),
+    )
+
+    if method == "manual":
+        return device.ddi_mount(
+            family,
+            image=image,
+            signature=signature,
+            build_manifest=build_manifest,
+            trustcache=trustcache,
+        )
+
+    # auto: resolve the image files from the configured sources, then mount.
+    mm = ddi_provider.parse_major_minor(device.os_version or "")
+    minor = mm[1] if mm else 0
+    resolved = ddi_provider.resolve_ddi_image(
+        major,
+        minor,
+        sources=sources,
+        legacy_dir=legacy_dir,
+        modern_dir=modern_dir,
+        github_token=github_token,
+        github_save_dir=github_save_dir,
+    )
+    if resolved is None:
+        return _err(
+            "SUBPROCESS",
+            "没有可用的 DDI 来源：请检查来源设置（本地目录/下载开关）或网络。",
+        )
+    try:
+        result = device.ddi_mount(resolved.family, **resolved.mount_kwargs())
+    finally:
+        resolved.cleanup()
+    # Annotate the successful result with which source/target was used.
+    if result.get("ok") and isinstance(result.get("data"), dict):
+        result["data"]["source"] = resolved.source
+        result["data"]["target"] = resolved.target
+    return result
 
 
 def ddi_unmount(target: str) -> dict:

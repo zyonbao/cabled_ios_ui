@@ -199,6 +199,25 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     return is_tunnel_running(timeout=0.3)
 
 
+def restart_tunneld(timeout: float = 30.0) -> bool:
+    """Stop and relaunch tunneld so the RSD service list is re-enumerated.
+
+    iOS 17+ developer services (e.g. ``com.apple.dt.testmanagerd.remote``) are
+    enumerated into a tunnel session's RSD service list at tunnel-establishment
+    time. A tunnel created before the DDI was mounted therefore never exposes
+    them; restarting forces a fresh handshake that picks up the now-available
+    services. Both stop and relaunch run under the native admin authorization
+    (tunneld is root); a failing stop is non-fatal (the port may already be
+    free). Returns True if the tunnel is up again afterwards.
+    """
+    logger.info("restarting XPC tunnel to refresh RSD developer services")
+    if not stop_tunneld():
+        # Non-fatal: nothing listening, or the user/auth declined the kill. We
+        # still attempt a relaunch and judge success by the port coming up.
+        logger.warning("restart: stop_tunneld did not confirm; attempting relaunch anyway")
+    return launch_tunneld(timeout=timeout)
+
+
 def stop_tunneld() -> bool:
     """Stop the tunneld process with administrator privileges.
 

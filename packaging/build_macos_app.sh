@@ -156,6 +156,7 @@ run_nuitka_multidist() {
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
         --include-package=ios_toolkit \
+        --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
         --include-package=pillow_heif \
         --include-package=PIL \
@@ -245,6 +246,7 @@ build_fallback() {
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
         --include-package=ios_toolkit \
+        --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
         --include-package=pillow_heif \
         --include-package=PIL \
