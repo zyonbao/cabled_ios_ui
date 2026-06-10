@@ -254,7 +254,6 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget(dlg)
         tabs.addTab(self._build_general_tab(dlg), "General")
-        tabs.addTab(self._build_logging_tab(dlg), "Logging")
         tabs.addTab(self._build_ddi_tab(dlg), "DeveloperDiskImage")
         layout.addWidget(tabs)
 
@@ -271,6 +270,9 @@ class MainWindow(QMainWindow):
         page = QWidget(parent)
         col = QVBoxLayout(page)
 
+        col.addWidget(self._build_config_file_group(page))
+        col.addWidget(self._build_logging_group(page))
+
         ask_clean_checkbox = QCheckBox("Ask to clean XPC tunnel on exit", page)
         ask_clean_checkbox.setChecked(self._ask_clean_tunnel_on_exit())
         ask_clean_checkbox.toggled.connect(self._set_ask_clean_tunnel_on_exit)
@@ -279,20 +281,53 @@ class MainWindow(QMainWindow):
         col.addStretch(1)
         return page
 
-    def _build_logging_tab(self, parent: QWidget) -> QWidget:
-        page = QWidget(parent)
-        col = QVBoxLayout(page)
+    def _build_config_file_group(self, parent: QWidget) -> QWidget:
+        """Config-file path display + a button that reveals it in Finder."""
+        group = QGroupBox("配置文件", parent)
+        row = QHBoxLayout(group)
+        path_edit = QLineEdit(group)
+        path_edit.setReadOnly(True)
+        path_edit.setText(self.settings.fileName())
+        path_edit.setCursorPosition(0)
+        reveal_btn = QPushButton("Show in Finder", group)
+        reveal_btn.clicked.connect(self._reveal_settings_file)
+        row.addWidget(path_edit, 1)
+        row.addWidget(reveal_btn)
+        return group
 
-        log_enabled_checkbox = QCheckBox("启用文件日志", page)
+    def _reveal_settings_file(self) -> None:
+        """Reveal (and select) the QSettings backing file in Finder.
+
+        The path comes from QSettings.fileName() (app-internal, never user input).
+        If the file has not been written yet (no setting ever changed), flush it
+        first; if it still does not exist, fall back to revealing its parent dir.
+        """
+        path = self.settings.fileName()
+        if not os.path.exists(path):
+            self.settings.sync()  # force the backing store to materialize
+        if os.path.exists(path):
+            subprocess.run(["open", "-R", path], check=False)
+            return
+        parent_dir = os.path.dirname(path)
+        if os.path.isdir(parent_dir):
+            subprocess.run(["open", parent_dir], check=False)
+        self._set_status("配置文件尚未生成（修改任意设置后会创建）")
+
+    def _build_logging_group(self, parent: QWidget) -> QWidget:
+        """File-logging controls (enable + directory), formerly the Logging tab."""
+        group = QGroupBox("日志", parent)
+        col = QVBoxLayout(group)
+
+        log_enabled_checkbox = QCheckBox("启用文件日志", group)
         log_enabled_checkbox.setChecked(self._logging_enabled())
         col.addWidget(log_enabled_checkbox)
 
         dir_row = QHBoxLayout()
         dir_row.addWidget(QLabel("目录"))
-        log_dir_edit = QLineEdit(page)
+        log_dir_edit = QLineEdit(group)
         log_dir_edit.setPlaceholderText(f"默认:{logsys.DEFAULT_LOG_DIR}")
         log_dir_edit.setText(self._logging_dir())
-        browse_btn = QPushButton("浏览…", page)
+        browse_btn = QPushButton("浏览…", group)
         dir_row.addWidget(log_dir_edit, 1)
         dir_row.addWidget(browse_btn)
         col.addLayout(dir_row)
@@ -304,7 +339,7 @@ class MainWindow(QMainWindow):
 
         def _browse_dir() -> None:
             start = log_dir_edit.text().strip() or logsys.DEFAULT_LOG_DIR
-            chosen = open_directory(page, "选择日志目录", start)
+            chosen = open_directory(group, "选择日志目录", start)
             if chosen:
                 log_dir_edit.setText(chosen)
                 _save_logging()
@@ -313,8 +348,7 @@ class MainWindow(QMainWindow):
         log_dir_edit.editingFinished.connect(_save_logging)
         browse_btn.clicked.connect(_browse_dir)
 
-        col.addStretch(1)
-        return page
+        return group
 
     def _ddi_dir_row(
         self,
