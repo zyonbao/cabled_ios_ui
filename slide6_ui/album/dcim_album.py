@@ -319,7 +319,7 @@ class DcimAlbumTab(QWidget):
         # Unified toolbar order across all file browsers: 上一级 - 路径编辑框 - 刷新.
         # Editable path (Enter to jump to any path under the DCIM root).
         self.up_btn = QPushButton("上一级")
-        self.path_edit = QLineEdit(self.cur_path)
+        self.path_edit = QLineEdit(self._display_path())
         self.path_edit.setPlaceholderText("输入路径后回车跳转")
         self.refresh_btn = QPushButton("刷新")
         self.export_btn = QPushButton("导出选中")
@@ -362,11 +362,34 @@ class DcimAlbumTab(QWidget):
             self._gen += 1
             self._pending.clear()
             self.list.clear()
-            self.path_edit.setText(self.cur_path)
+            self.path_edit.setText(self._display_path())
             self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
             self.status.setText("请选择一个设备")
 
     # -------------------------------------------------------------- listing
+
+    def _display_path(self) -> str:
+        """Render the real /DCIM-rooted path with the context root shown as '/'.
+
+        '/DCIM' -> '/', '/DCIM/100APPLE' -> '/100APPLE'. Keeps the path bar
+        consistent with the other browsers while navigation stays clamped to the
+        real DCIM root underneath."""
+        if self.cur_path == _DCIM_ROOT:
+            return "/"
+        return self.cur_path[len(_DCIM_ROOT):] or "/"
+
+    def _to_real_path(self, display: str) -> str:
+        """Map a '/'-rooted display path back to a real /DCIM-rooted path.
+
+        The result is normalized and clamped within the DCIM root so the album
+        tab never browses outside /DCIM."""
+        text = display.strip()
+        if not text.startswith("/"):
+            text = "/" + text
+        norm = posixpath.normpath(_DCIM_ROOT + text)
+        if norm != _DCIM_ROOT and not norm.startswith(_DCIM_ROOT + "/"):
+            norm = _DCIM_ROOT
+        return norm
 
     def _go_up(self) -> None:
         if self.cur_path != _DCIM_ROOT:
@@ -376,22 +399,16 @@ class DcimAlbumTab(QWidget):
             self._refresh()
 
     def _on_path_entered(self) -> None:
-        # Jump to the typed path, normalized and clamped within the DCIM root so
-        # the album tab never browses outside /DCIM.
-        text = self.path_edit.text().strip()
-        if not text.startswith("/"):
-            text = "/" + text
-        norm = posixpath.normpath(text)
-        if norm != _DCIM_ROOT and not norm.startswith(_DCIM_ROOT + "/"):
-            norm = _DCIM_ROOT
-        self.cur_path = norm
+        # The path bar shows the DCIM root as '/'; map it back to the real
+        # /DCIM-rooted path (normalized and clamped) before navigating.
+        self.cur_path = self._to_real_path(self.path_edit.text())
         self._refresh()
 
     def _refresh(self) -> None:
         # New generation: any pending/in-flight thumbnail callbacks become stale.
         self._gen += 1
         self._pending.clear()
-        self.path_edit.setText(self.cur_path)
+        self.path_edit.setText(self._display_path())
         self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
         self.list.clear()
         if not self.target:

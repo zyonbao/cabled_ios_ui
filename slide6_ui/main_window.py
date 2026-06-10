@@ -42,6 +42,7 @@ from .album import DcimAlbumTab
 from .app_manager import AppManagerTab
 from .common import tunnel
 from .common.file_dialogs import open_directory
+from .common.focus import suppress_auto_focus
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
 from .crash import CrashReportsTab
@@ -179,6 +180,16 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.developer_tools_tab, "开发者工具")
         root.addWidget(self.tabs, stretch=1)
 
+        # Don't let filter / path / search fields steal focus when a tab is
+        # shown. The key/mouse tab is exempt: its keyboard-capture field is
+        # meant to auto-focus when the on-screen keyboard is opened.
+        for tab in (
+            self.device_info_tab, self.album_tab, self.fs_tab, self.app_tab,
+            self.profiles_tab, self.crash_tab, self.syslog_tab,
+            self.developer_tools_tab,
+        ):
+            suppress_auto_focus(tab)
+
         self.setCentralWidget(central)
 
     def _build_menu(self) -> None:
@@ -254,6 +265,7 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dlg.accept)
         layout.addWidget(buttons)
 
+        suppress_auto_focus(dlg)
         dlg.resize(560, 460)
         dlg.exec()
 

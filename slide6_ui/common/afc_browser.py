@@ -48,8 +48,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shiboken6 import isValid
+
 from ios_toolkit import toolkit_api as api
 
+from .focus import suppress_auto_focus
 from .workers import AsyncRunner
 
 
@@ -229,6 +232,9 @@ class AfcBrowserPanel(QWidget):
         """Run a blocking afc_* call off-thread and fold the {ok}/{error}
         envelope into a status message (refreshing the listing on success)."""
         def on_done(result: dict) -> None:
+            # Guard against the panel being deleted while the call was in flight.
+            if not isValid(self):
+                return
             if result.get("ok"):
                 self.status.setText(ok_msg)
                 if refresh:
@@ -236,36 +242,28 @@ class AfcBrowserPanel(QWidget):
             else:
                 self.status.setText(f"{fail_prefix}: " + result.get("error", {}).get("message", ""))
 
-        self.runner.submit(
-            call,
-            on_done=on_done,
-            on_error=lambda e: self.status.setText(f"{fail_prefix}: {e}"),
-        )
+        def on_error(exc: object) -> None:
+            if not isValid(self):
+                return
+            self.status.setText(f"{fail_prefix}: {exc}")
+
+        self.runner.submit(call, on_done=on_done, on_error=on_error)
 
     # --------------------------------------------------------------- listing
 
     def _display_path(self) -> str:
-        """Render the current logical path as an editable relative string.
+        """Render the current logical path with the context root shown as '/'.
 
-        documents root: logical '/' maps to the app's Documents folder, so it is
-        shown prefixed with 'Documents'. container root: shown as an absolute
-        sandbox path ('/', '/Documents', ...)."""
-        if self.root == "documents":
-            rel = self.cur_path.strip("/")
-            return f"Documents/{rel}" if rel else "Documents"
+        Every AFC area (documents / container / media) presents its own root as
+        '/', so the path bar is consistent across browsers regardless of which
+        device folder the root maps to underneath. Sub-levels are shown as a
+        '/'-rooted relative path (e.g. '/', '/Subdir')."""
         return self.cur_path or "/"
 
     def _parse_path(self, text: str) -> str:
-        """Inverse of _display_path: turn the edited text back into a logical
-        path rooted at the selected AFC root."""
+        """Inverse of _display_path: a '/'-rooted edit maps to the logical path
+        under the selected AFC root. The real device-path mapping is unchanged."""
         text = text.strip()
-        if self.root == "documents":
-            rel = text.strip("/")
-            if rel == "Documents":
-                return "/"
-            if rel.startswith("Documents/"):
-                rel = rel[len("Documents/"):]
-            return "/" + rel if rel else "/"
         if not text.startswith("/"):
             text = "/" + text
         return text or "/"
@@ -290,6 +288,11 @@ class AfcBrowserPanel(QWidget):
         )
 
     def _on_list(self, result: dict) -> None:
+        # A modal browse dialog can be closed (and its C++ widgets deleted) while
+        # an afc_list load is still in flight; the queued callback then fires on a
+        # dead panel. Drop it instead of touching freed Qt objects.
+        if not isValid(self):
+            return
         if not result.get("ok"):
             self.status.setText("加载失败: " + result.get("error", {}).get("message", ""))
             return
@@ -552,7 +555,7 @@ class AfcBrowserPanel(QWidget):
         self.runner.submit(
             _do,
             on_done=lambda r: self._on_batch_done(r, "已下载", refresh=False),
-            on_error=lambda e: self.status.setText(f"批量下载失败: {e}"),
+            on_error=lambda e: isValid(self) and self.status.setText(f"批量下载失败: {e}"),
         )
 
     def _batch_delete(self, entries: list[dict]) -> None:
@@ -585,10 +588,12 @@ class AfcBrowserPanel(QWidget):
         self.runner.submit(
             _do,
             on_done=lambda r: self._on_batch_done(r, "已删除", refresh=True),
-            on_error=lambda e: self.status.setText(f"批量删除失败: {e}"),
+            on_error=lambda e: isValid(self) and self.status.setText(f"批量删除失败: {e}"),
         )
 
     def _on_batch_done(self, result: dict, verb: str, *, refresh: bool) -> None:
+        if not isValid(self):
+            return
         failed = result.get("failed", [])
         if failed:
             self.status.setText(f"{verb} {result['ok']} 项，{len(failed)} 项失败")
@@ -618,3 +623,5 @@ class AfcBrowserDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         self.panel = AfcBrowserPanel(self, runner, target, bundle_id, root)
         layout.addWidget(self.panel)
+        # Don't auto-focus the path field when the browse dialog opens.
+        suppress_auto_focus(self)

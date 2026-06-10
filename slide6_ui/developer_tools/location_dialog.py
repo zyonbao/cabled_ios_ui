@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from ..common.file_dialogs import open_existing_file
+from ..common.focus import suppress_auto_focus
 from ..common.workers import AsyncRunner
 
 
@@ -48,6 +49,8 @@ class LocationDialog(QDialog):
         self.resize(460, 460)
         self._build_ui()
         self._wire()
+        # Don't auto-focus the coordinate / path fields when the dialog opens.
+        suppress_auto_focus(self)
 
     # -- UI construction ---------------------------------------------------
 

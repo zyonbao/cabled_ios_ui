@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from ..common.focus import suppress_auto_focus
 from ..common.workers import AsyncRunner
 
 
@@ -46,6 +47,8 @@ class ProcessDialog(QDialog):
         self.resize(720, 520)
         self._build_ui()
         self._wire()
+        # Don't auto-focus the bundle-id / filter fields when the dialog opens.
+        suppress_auto_focus(self)
         self.reload()
 
     # ------------------------------------------------------------------ UI
