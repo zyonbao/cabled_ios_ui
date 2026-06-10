@@ -51,7 +51,6 @@ from .device_info import DeviceInfoTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
 from .profiles import ProfilesTab
-from .syslog import SyslogTab
 
 _SETTINGS_ORG = "ios_ui_ta_proxy"
 # Kept as the legacy package name on purpose: this is the QSettings storage key.
@@ -172,8 +171,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.keymouse_tab, "键鼠操作")
         self.crash_tab = CrashReportsTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.crash_tab, "Crash 报告")
-        self.syslog_tab = SyslogTab(self.runner, lambda: self.target)
-        self.tabs.addTab(self.syslog_tab, "系统日志")
+        # System logs moved into the Developer Tools tab (no longer a sidebar tab).
         self.developer_tools_tab = DeveloperToolsTab(
             self.runner, lambda: self.target, self._current_os_version
         )
@@ -185,7 +183,7 @@ class MainWindow(QMainWindow):
         # meant to auto-focus when the on-screen keyboard is opened.
         for tab in (
             self.device_info_tab, self.album_tab, self.fs_tab, self.app_tab,
-            self.profiles_tab, self.crash_tab, self.syslog_tab,
+            self.profiles_tab, self.crash_tab,
             self.developer_tools_tab,
         ):
             suppress_auto_focus(tab)
@@ -560,7 +558,6 @@ class MainWindow(QMainWindow):
         self.album_tab.set_target(self.target)
         self.profiles_tab.set_target(self.target)
         self.crash_tab.set_target(self.target)
-        self.syslog_tab.set_target(self.target)
         self.developer_tools_tab.set_target(self.target)
         # The key/mouse tab owns the costly WDA/mirror flow; only start it when
         # that tab is the current one (otherwise it is deferred until entered).
@@ -584,9 +581,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         self.keymouse_tab.shutdown()
-        # Stop the live log-stream thread (and its toolkit stream) on exit.
-        self.syslog_tab.shutdown()
-        # Release any background virtual-location session (iOS 17+) on exit.
+        # Release background sessions and live log-stream threads on exit (the
+        # system-log windows now live under the Developer Tools tab).
         self.developer_tools_tab.shutdown()
 
         if self._ask_clean_tunnel_on_exit() and tunnel.is_tunnel_running():

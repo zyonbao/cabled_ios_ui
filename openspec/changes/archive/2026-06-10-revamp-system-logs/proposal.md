@@ -8,7 +8,7 @@
 - syslog 入口：保留现有展示逻辑（实时流 / 关键字过滤 / 暂停 / 清空 / 另存为文本，单行只读文本视图）。
 - oslog 入口：**不复用 syslog 的单行文本视图**，改为独立的**多列表格视图**，列取自结构化 `SyslogEntry`：`pid / timestamp / level / filename / image_name / message / subsystem / category`。在此之上提供：
   - **列选择（眼睛图标）**：表格上方一个眼睛图标按钮，点击弹出复选框浮窗，可勾选上述 8 个字段的任意子集，确认后即时更新表格可见列。
-  - **filter（眼睛右侧）**：一个只读的条件文本展示区 + filter 图标按钮。点击图标弹出上述字段的输入浮窗，strip 后为空的字段不生效；生效字段以 `k=v&k=v`（如 `pid=1127&image_name=safari`）显示在文本区。与 syslog 的「仅显示过滤」不同，oslog filter MUST 驱动**读取接口**：`pid`（及 stream/level 掩码）下推到 `OsTraceService.syslog(pid=…, message_filter=…, stream_flags=…)` 重新订阅，其余字段（image_name/filename/subsystem/category/message/level）作为结构化条目的消费侧谓词；任一条件变更后重建视图。
+  - **filter（眼睛右侧）**：一个点击即弹字段输入浮窗的左对齐按钮（与 syslog 直接点击输入相对应）。浮窗 strip 后为空的字段不生效；生效字段以 `k=v&k=v`（如 `pid=1127&image_name=safari`）显示在按钮上，过长则 tail 省略（`…`）、完整串在 tooltip。与 syslog 的关键字过滤一致，oslog filter **仅筛当前内存缓冲做显示**（8 字段含 pid 皆子串匹配），不重订阅实时流、不丢历史。
   - **导出（对应 syslog 的另存）**：点击导出按钮在按钮位置弹出小浮窗，可选「导出为文本」或「导出为 `.logarchive`」（后者经 `OsTraceService` 归档收集）。
   - **点击日志行查看完整结构化明细**（时间戳 / pid / 进程·镜像名 / subsystem / category / level / 完整 message 等）。
 - **Bug 修复 #3**：开始/停止 与 暂停/继续 联动——点「停止/重新开始」时复位暂停状态与按钮文案。

@@ -34,6 +34,7 @@ from ios_toolkit import toolkit_api as api
 
 from ..common import tunnel
 from ..common.workers import AsyncRunner
+from ..syslog import LogDialog
 from .location_dialog import LocationDialog
 from .process_dialog import ProcessDialog
 
@@ -86,6 +87,9 @@ class DeveloperToolsTab(QWidget):
         # suppress concurrent ddi_status queries so they don't time out and get
         # mistaken for an operation failure.
         self._op_in_flight = False
+        # Live system-log windows opened from the log tile (kept so their stream
+        # threads can be stopped on app exit). The log viewer needs no DDI/tunnel.
+        self._log_dialogs: list[LogDialog] = []
         self._build_ui()
         self._wire()
 
@@ -124,7 +128,14 @@ class DeveloperToolsTab(QWidget):
         self.location_tile = self._make_tile("虚拟定位", "设定 / 清除虚拟 GPS 坐标")
         grid.addWidget(self.process_tile, 0, 0)
         grid.addWidget(self.location_tile, 0, 1)
-        grid.setRowStretch(1, 1)
+        # System log is a lockdown service: it needs neither DDI nor a tunnel, so
+        # this tile stays enabled regardless of mount state (not in _feature_buttons).
+        self.syslog_tile = QToolButton()
+        self.syslog_tile.setText("系统日志\n实时 syslog / oslog（按版本，无需 DDI）")
+        self.syslog_tile.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.syslog_tile.setMinimumSize(220, 90)
+        grid.addWidget(self.syslog_tile, 1, 0)
+        grid.setRowStretch(2, 1)
         root.addLayout(grid)
 
         self.status = QLabel("请选择一个设备")
@@ -148,6 +159,7 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_btn.clicked.connect(self._on_start_tunnel)
         self.process_tile.clicked.connect(self._open_process)
         self.location_tile.clicked.connect(self._open_location)
+        self.syslog_tile.clicked.connect(self._open_syslog)
 
     # ------------------------------------------------------------- target
 
@@ -168,7 +180,13 @@ class DeveloperToolsTab(QWidget):
             self.status.setText("未选择设备")
 
     def shutdown(self) -> None:
-        """Release any background virtual-location session on app exit."""
+        """Release background sessions / log streams on app exit."""
+        # Stop any live system-log streams so their QThreads don't outlive the app.
+        for dlg in list(self._log_dialogs):
+            try:
+                dlg.shutdown()
+            except RuntimeError:
+                pass  # already deleted
         target = self._get_target()
         if not target:
             return
@@ -528,3 +546,20 @@ class DeveloperToolsTab(QWidget):
             return
         logger.info("open virtual location: target=%s", target)
         LocationDialog(self.runner, target, self).exec()
+
+    def _open_syslog(self) -> None:
+        target = self._get_target()
+        if not target:
+            self.status.setText("未选择设备")
+            return
+        logger.info("open system log: target=%s", target)
+        dlg = LogDialog(self.runner, self._get_target, self._get_os_version, self)
+        self._log_dialogs.append(dlg)
+        dlg.destroyed.connect(lambda *_: self._forget_log_dialog(dlg))
+        dlg.show()
+
+    def _forget_log_dialog(self, dlg: LogDialog) -> None:
+        try:
+            self._log_dialogs.remove(dlg)
+        except ValueError:
+            pass

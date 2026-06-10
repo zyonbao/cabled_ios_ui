@@ -1,8 +1,5 @@
-# slide6-syslog-stream Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
-## Requirements
 ### Requirement: 系统日志独立 Tab 与来源选择
 
 桌面应用 SHALL 将系统日志由独立 sidebar tab 迁移为「开发者工具」tab 内的独立日志区块（作为可扩展 Grid 的一部分）。系统日志 MUST NOT 再作为独立 sidebar tab 注册。入口按设备主版本分流且不再提供来源下拉框：iOS 17+ 设备 SHALL 仅暴露 `oslog` 入口，iOS 17 以下设备 SHALL 仅暴露 `syslog` 入口。日志区块 MUST 响应设备切换；未选中设备时 MUST NOT 启动任何流。
@@ -21,34 +18,6 @@ TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose
 
 - **WHEN** 未选中设备
 - **THEN** 日志区块不启动任何流，并提示需先选择设备
-
-### Requirement: 实时流采集与限速渲染
-
-日志采集 MUST 在后台线程执行，并通过限速机制（批量缓冲 + 周期性刷新 + 上限行数裁剪）向视图渲染，避免高吞吐刷爆 GUI 线程。视图行数超过上限时 MUST 从最旧行裁剪。
-
-#### Scenario: 高吞吐不卡死
-
-- **WHEN** 设备产生高频日志
-- **THEN** 视图以限速方式平滑追加，超出上限的旧行被裁剪，UI 保持可响应
-
-#### Scenario: 流错误提示
-
-- **WHEN** 底层流建立失败或中断（如 `oslog` 在该设备不可用）
-- **THEN** Tab 在状态区提示错误并停止流，应用其余功能不受影响
-
-### Requirement: 关键字过滤
-
-Tab SHALL 提供关键字过滤输入；过滤为大小写不敏感子串匹配，在渲染侧应用且 MUST NOT 丢弃后台采集的数据。修改过滤条件时 MUST 对当前已缓冲的全量行重新套用。
-
-#### Scenario: 输入关键字过滤
-
-- **WHEN** 用户输入关键字
-- **THEN** 视图仅显示匹配该关键字的行（大小写不敏感）
-
-#### Scenario: 清除关键字
-
-- **WHEN** 用户清空关键字
-- **THEN** 视图恢复显示全部已缓冲行
 
 ### Requirement: 暂停 / 清空 / 另存
 
@@ -82,6 +51,8 @@ Tab SHALL 提供关键字过滤输入；过滤为大小写不敏感子串匹配�
 
 - **WHEN** 用户点击另存并选择目标文件
 - **THEN** 当前视图文本写入该本地文件
+
+## ADDED Requirements
 
 ### Requirement: 实时日志内存按字节封顶
 
@@ -150,4 +121,3 @@ syslog 与 oslog 的实时日志缓冲 SHALL 按**字节预算**（约 10MB）�
 
 - **WHEN** 在 iOS 17 以下设备的 syslog 入口
 - **THEN** 不显示列视图 / 眼睛列选择 / filter 浮窗 / 导出浮窗等 oslog 专有控件（保留 syslog 现有文本视图与关键字过滤、另存为文本）
-

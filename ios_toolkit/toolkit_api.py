@@ -949,20 +949,48 @@ def play_route_manual(
 # System log streaming (syslog / os_trace)
 # ---------------------------------------------------------------------------
 
-def open_log_stream(target: str, source: str = "syslog"):
+def open_log_stream(
+    target: str,
+    source: str = "syslog",
+    pid: int = -1,
+    message_filter: int = 65535,
+    stream_flags: int = 60,
+):
     """Open a live system-log stream and return a LogStreamHandle.
 
     Unlike other operations this returns a handle object (not a {ok, data}
     envelope) because the stream is long-lived and consumed off the GUI thread.
     ``source`` is "syslog" (raw syslog_relay) or "oslog" (structured os_trace).
-    Intended for in-process desktop callers; not exposed over the JSON CLI.
+    For ``oslog``, (pid / message_filter / stream_flags) are passed to
+    ``OsTraceService.syslog(...)`` (source-side filtering; -1 / 65535 / 60 are the
+    library defaults meaning "all"). Intended for in-process desktop callers; not
+    exposed over the JSON CLI.
     """
     if source not in ("syslog", "oslog"):
         return _err("BAD_TARGET", "source must be 'syslog' or 'oslog'")
     device, err = _prepare_device_basic(target)
     if err:
         return err
-    return device.open_log_stream(source)
+    return device.open_log_stream(
+        source, pid=pid, message_filter=message_filter, stream_flags=stream_flags,
+    )
+
+
+def collect_logarchive(target: str, out_path: str):
+    """Collect the device's system logs into a ``.logarchive`` at ``out_path``.
+
+    One-shot (own lockdown connection), independent of any live log stream.
+    Returns the standard {ok, data|error} envelope.
+    """
+    if not out_path:
+        return _err("BAD_TARGET", "out_path is required")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    try:
+        return device.collect_logarchive(out_path)
+    except Exception as exc:  # surface collection failure as a readable envelope
+        return _err("LOG_ARCHIVE_FAILED", f"收集 logarchive 失败：{exc}")
 
 
 # ---------------------------------------------------------------------------

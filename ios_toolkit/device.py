@@ -2657,9 +2657,41 @@ class iOSDevice:
     # that queue from a worker thread and renders with rate limiting. Both
     # sources are lockdown services (no WDA / tunnel required).
 
-    def open_log_stream(self, source: str) -> "LogStreamHandle":
-        """Start a syslog/oslog stream; returns a handle exposing a line queue."""
-        return LogStreamHandle(self.udid, source)
+    def open_log_stream(
+        self,
+        source: str,
+        pid: int = -1,
+        message_filter: int = 65535,
+        stream_flags: int = 60,
+    ) -> "LogStreamHandle":
+        """Start a syslog/oslog stream; returns a handle exposing a line queue.
+
+        For ``oslog`` the (pid / message_filter / stream_flags) are passed
+        straight to ``OsTraceService.syslog(...)`` so source-side filtering (at
+        least pid) happens on the device; ``syslog`` ignores them.
+        """
+        return LogStreamHandle(
+            self.udid, source, pid=pid,
+            message_filter=message_filter, stream_flags=stream_flags,
+        )
+
+    def collect_logarchive(self, out_path: str) -> dict:
+        """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
+
+        Runs on a private event loop (own lockdown connection) so it neither
+        depends on nor disturbs any live log stream on the shared loop.
+        """
+        async def _collect() -> None:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.os_trace import OsTraceService
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with OsTraceService(lockdown=lockdown) as svc:
+                    await svc.collect(out_path)
+
+        _run_isolated(_collect(), timeout=600.0)
+        return {"ok": True, "data": {"path": out_path}}
 
 
 # ---------------------------------------------------------------------------
@@ -2708,48 +2740,111 @@ class LogStreamHandle:
     ERROR = "error"
     EOF = "eof"
 
-    def __init__(self, udid: str, source: str) -> None:
+    def __init__(
+        self,
+        udid: str,
+        source: str,
+        pid: int = -1,
+        message_filter: int = 65535,
+        stream_flags: int = 60,
+    ) -> None:
         import queue as _queue
 
         self.udid = udid
         self.source = source
+        self.pid = pid
+        self.message_filter = message_filter
+        self.stream_flags = stream_flags
         self.queue: "_queue.Queue[tuple[str, object]]" = _queue.Queue(maxsize=20000)
         self._closed = False
+        self._lines = 0
+        # Set once _run() has fully unwound (including the relay-socket close in
+        # its finally). close() waits on this rather than future.result(), because
+        # cancelling the future makes result() raise immediately without waiting
+        # for the coroutine's cleanup — and we must not return until the relay is
+        # actually released.
+        self._done = threading.Event()
+        logger.debug(
+            "LogStreamHandle open: source=%s udid=%s pid=%s msg_filter=%s flags=%s",
+            source, udid, pid, message_filter, stream_flags,
+        )
         self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
 
     async def _run(self) -> None:
+        # Hold the async generator so it can be explicitly aclose()'d on stop:
+        # OsTraceService.syslog() may otherwise leave a half-open relay socket on
+        # plain cancellation, which makes a subsequent open_log_stream hang or
+        # yield nothing (the "repeated start/stop becomes unresponsive" bug).
+        gen = None
+        svc = None
         try:
             from pymobiledevice3.lockdown import create_using_usbmux
 
+            logger.debug("LogStreamHandle._run: creating lockdown (source=%s)", self.source)
             lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
             async with lockdown:
+                logger.debug("LogStreamHandle._run: lockdown ready, opening %s generator", self.source)
                 if self.source == "oslog":
-                    async for line in self._iter_oslog(lockdown):
-                        self._put(self.LINE, line)
+                    from pymobiledevice3.services.os_trace import OsTraceService
+
+                    svc = OsTraceService(lockdown=lockdown)
+                    gen = svc.syslog(
+                        pid=self.pid,
+                        message_filter=self.message_filter,
+                        stream_flags=self.stream_flags,
+                    )
+                    async for entry in gen:
+                        if self._closed:
+                            break
+                        self._put(self.LINE, _oslog_entry_to_dict(entry))
                 else:
-                    async for line in self._iter_syslog(lockdown):
+                    from pymobiledevice3.services.syslog import SyslogService
+
+                    svc = SyslogService(service_provider=lockdown)
+                    gen = svc.watch()
+                    async for line in gen:
+                        if self._closed:
+                            break
                         self._put(self.LINE, line)
+            logger.debug("LogStreamHandle._run: generator ended naturally (lines=%s)", self._lines)
             self._put(self.EOF, None)
         except asyncio.CancelledError:
-            raise
+            # Swallow: the finally below releases the generator/socket cleanly so
+            # the next stream starts from a clean slate.
+            logger.debug("LogStreamHandle._run: cancelled (lines=%s)", self._lines)
         except Exception as exc:
+            logger.warning("LogStreamHandle._run: error after %s lines: %s", self._lines, exc)
             self._put(self.ERROR, str(exc))
-
-    async def _iter_syslog(self, lockdown):
-        from pymobiledevice3.services.syslog import SyslogService
-
-        async for line in SyslogService(service_provider=lockdown).watch():
-            yield line
-
-    async def _iter_oslog(self, lockdown):
-        from pymobiledevice3.services.os_trace import OsTraceService
-
-        async for entry in OsTraceService(lockdown=lockdown).syslog():
-            yield _format_oslog_entry(entry)
+        finally:
+            # aclose() only terminates the generator coroutine; it does NOT close
+            # the LockdownService's underlying relay socket (OsTraceService /
+            # SyslogService.watch have no cleanup of their own). Without an
+            # explicit svc.close() the device-side os_trace_relay/syslog_relay
+            # StartActivity stream lingers, so the *next* stream connects but
+            # receives no data ("second start shows nothing"). Close both.
+            if gen is not None:
+                try:
+                    logger.debug("LogStreamHandle._run: aclose generator")
+                    await gen.aclose()
+                except Exception as exc:
+                    logger.debug("LogStreamHandle._run: aclose failed: %s", exc)
+            if svc is not None:
+                try:
+                    logger.debug("LogStreamHandle._run: closing relay service socket")
+                    await svc.close()
+                    logger.debug("LogStreamHandle._run: relay service socket closed")
+                except Exception as exc:
+                    logger.debug("LogStreamHandle._run: svc.close failed: %s", exc)
+            # Signal close() that the relay is fully released (cleanup complete).
+            self._done.set()
 
     def _put(self, kind: str, payload: object) -> None:
         if self._closed:
             return
+        if kind == self.LINE:
+            self._lines += 1
+            if self._lines == 1:
+                logger.debug("LogStreamHandle: first line received (source=%s)", self.source)
         try:
             self.queue.put_nowait((kind, payload))
         except Exception:
@@ -2757,10 +2852,57 @@ class LogStreamHandle:
             pass
 
     def close(self) -> None:
-        """Cancel the stream coroutine (idempotent)."""
+        """Stop the stream and release its connection (idempotent, blocking).
+
+        Cancels the coroutine and then **waits** for it to finish — its ``finally``
+        runs ``gen.aclose()`` and tears down the lockdown relay. Returning only
+        after that completes guarantees the device-side syslog/os_trace relay is
+        released before a new stream is opened, so repeated start/stop cycles keep
+        producing data (a fresh relay can't attach while a stale one lingers).
+        """
+        logger.debug(
+            "LogStreamHandle.close: source=%s lines=%s future_done=%s",
+            self.source, self._lines, self._future.done() if self._future else None,
+        )
         self._closed = True
         if self._future and not self._future.done():
             _bg_loop.call_soon_threadsafe(self._future.cancel)
+        # Wait for _run() to fully unwind (its finally closes the relay socket),
+        # bounded so a stuck device service can't hang the UI thread. Returning
+        # only after this guarantees the device relay is released before a new
+        # stream is opened — otherwise the next start receives no data.
+        if self._done.wait(timeout=3.0):
+            logger.debug("LogStreamHandle.close: relay released")
+        else:
+            logger.warning("LogStreamHandle.close: timed out waiting for relay release")
+
+
+def _oslog_entry_to_dict(entry) -> dict:
+    """Flatten an os_trace SyslogEntry into a structured dict for the UI.
+
+    Carries the discrete columns the oslog table renders plus a pre-formatted
+    one-line ``display`` string for text export. ``subsystem``/``category`` come
+    from the optional ``label`` and may be empty.
+    """
+    ts = getattr(entry, "timestamp", None)
+    if ts is not None and hasattr(ts, "isoformat"):
+        ts_str = ts.isoformat()
+    else:
+        ts_str = str(ts) if ts is not None else ""
+    label = getattr(entry, "label", None)
+    level = getattr(entry, "level", None)
+    level_str = getattr(level, "name", None) or (str(level) if level is not None else "")
+    return {
+        "pid": getattr(entry, "pid", None),
+        "timestamp": ts_str,
+        "level": level_str,
+        "image_name": getattr(entry, "image_name", "") or "",
+        "filename": getattr(entry, "filename", "") or "",
+        "message": getattr(entry, "message", "") or "",
+        "subsystem": getattr(label, "subsystem", "") if label is not None else "",
+        "category": getattr(label, "category", "") if label is not None else "",
+        "display": _format_oslog_entry(entry),
+    }
 
 
 def _format_oslog_entry(entry) -> str:

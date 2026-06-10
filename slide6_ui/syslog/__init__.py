@@ -1,5 +1,5 @@
-"""System-log streaming sidebar tab (syslog / oslog)."""
+"""System-log viewer (syslog / oslog) hosted from the Developer Tools tab."""
 
-from .syslog_tab import SyslogTab
+from .log_dialog import LogDialog
 
-__all__ = ["SyslogTab"]
+__all__ = ["LogDialog"]

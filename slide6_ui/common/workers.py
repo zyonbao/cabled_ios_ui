@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+import shiboken6
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,20 @@ class _Call(QRunnable):
         self.fn = fn
         self.signals = _CallSignals()
 
+    def _emit(self, signal: Signal, payload: Any) -> None:
+        """Emit only if the signal's C++ object is still alive.
+
+        On app exit a task may still be running in the pool when QApplication
+        tears down and deletes the ``_CallSignals`` C++ object; emitting then
+        raises ``RuntimeError: Signal source has been deleted``. Skip quietly.
+        """
+        if not shiboken6.isValid(self.signals):
+            return
+        try:
+            signal.emit(payload)
+        except RuntimeError:
+            pass  # signal source deleted between the check and the emit
+
     def run(self) -> None:  # noqa: D401 - QRunnable entry point
         try:
             result = self.fn()
@@ -40,9 +55,9 @@ class _Call(QRunnable):
             # Background exceptions are otherwise swallowed (only the string
             # reaches the UI); log the full traceback for diagnosis.
             logger.exception("background task failed: %s", exc)
-            self.signals.failed.emit(str(exc))
+            self._emit(self.signals.failed, str(exc))
             return
-        self.signals.done.emit(result)
+        self._emit(self.signals.done, result)
 
 
 class AsyncRunner:
