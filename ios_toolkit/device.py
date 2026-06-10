@@ -2159,6 +2159,53 @@ class iOSDevice:
         )
         return _err("TIMEOUT", "等待 DVT 就绪超时（设备仍在准备 DeveloperDiskImage）")
 
+    def rsd_service_available(self, service_name: str, timeout: float = 12.0) -> dict:
+        """Check whether an RSD developer service is exposed by the tunnel (iOS 17+).
+
+        Lightweight readiness probe for the symptom behind "keyboard-mouse / WDA
+        fails after a late DDI mount": a tunnel established before the DDI was
+        mounted has a stale RSD service list that lacks the just-published
+        developer services (notably ``com.apple.dt.testmanagerd.remote``). We only
+        open the RSD XPC connection and read its handshake ``peer_info["Services"]``
+        — no DVT/instruments session — so this is far cheaper than ddi_wait_ready.
+
+        Returns ``_ok({"available": bool})``. When the tunnel has no RSD entry for
+        this device (tunnel down or device absent) we report ``available=False``
+        rather than erroring; the caller checks tunnel liveness separately and maps
+        the combination to the right guidance.
+        """
+        from .toolkit_api import _ok, _err
+
+        rsd = _get_rsd_from_tunneld(self.udid)
+        if rsd is None:
+            # No tunnel (or device not in its table) → service can't be available.
+            return _ok({"available": False})
+
+        async def _op() -> bool:
+            from pymobiledevice3.remote.remote_service_discovery import (
+                RemoteServiceDiscoveryService,
+            )
+
+            async with RemoteServiceDiscoveryService(rsd) as rsd_svc:
+                services = (rsd_svc.peer_info or {}).get("Services", {}) or {}
+                return service_name in services
+
+        try:
+            available = _run_isolated(_op(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("rsd_service_available timed out (udid=%s)", self.udid)
+            return _err("TIMEOUT", "查询 RSD 服务超时（XPC tunnel 无响应）")
+        except Exception as exc:
+            logger.debug("rsd_service_available failed (udid=%s): %s", self.udid, exc)
+            # A handshake failure means the tunnel session is unusable for this
+            # service; treat as unavailable rather than a hard error.
+            return _ok({"available": False})
+        logger.debug(
+            "rsd_service_available: udid=%s service=%s available=%s",
+            self.udid, service_name, available,
+        )
+        return _ok({"available": bool(available)})
+
     def ddi_mount(
         self,
         family: str,

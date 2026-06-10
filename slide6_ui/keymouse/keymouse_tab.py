@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
-from ..common import tunnel
+from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
 from .mirror import MjpegThread, ScreenView
@@ -315,7 +315,7 @@ class KeymouseTab(QWidget):
         if need and not running:
             self._gate_tunnel(self.target, gen)
         else:
-            self._prepare_device(self.target, gen)
+            self._check_readiness(self.target, gen)
 
     def _gate_tunnel(self, target: str, gen: int) -> None:
         reply = QMessageBox.question(
@@ -354,7 +354,52 @@ class KeymouseTab(QWidget):
         if result != "ok":
             self._tunnel_failed("tunnel 未就绪")
             return
-        self._prepare_device(target, gen)
+        self._check_readiness(target, gen)
+
+    # --------------------------------------------------- readiness precheck
+
+    def _check_readiness(self, target: str, gen: int) -> None:
+        """Verify DDI (and, on iOS 17+, the RSD service) before starting WDA.
+
+        WDA needs a mounted DeveloperDiskImage on every iOS version, plus the
+        ``testmanagerd.remote`` RSD service on iOS 17+. Probing here turns the
+        otherwise cryptic WDA failure into actionable guidance (mount DDI /
+        restart tunnel). The tunnel itself is already handled by _gate_tunnel.
+        """
+        dev = self.dev or {}
+        os_version = (dev.get("metadata") or {}).get("os_version", "")
+        _dbg(f"check_readiness target={target} os={os_version} gen={gen}")
+        self._set_status("正在检查设备就绪状态…")
+        self.screen.set_overlay("正在检查设备就绪状态…")
+        self.runner.submit(
+            lambda: readiness.probe(target, os_version),
+            on_done=lambda r: self._on_readiness(r, target, gen),
+            on_error=lambda e: self._on_readiness(
+                readiness.Readiness(False, None, f"就绪检查失败：{e}"), target, gen
+            ),
+            generation=gen,
+        )
+
+    def _on_readiness(self, result: "readiness.Readiness", target: str, gen: int) -> None:
+        _dbg(f"on_readiness ready={result.ready} missing={result.missing} gen={gen}")
+        if result.ready:
+            self._prepare_device(target, gen)
+            return
+        # Not ready: surface actionable guidance and stop (user fixes it in the
+        # developer-tools tab, then reselects the device to retry).
+        self._set_status("设备未就绪")
+        if result.missing == readiness.MISSING_DDI:
+            self.screen.set_overlay(
+                "需要挂载 DeveloperDiskImage\n"
+                "请到「开发者工具」根 tab 挂载 DDI 后，重选设备重试"
+            )
+        elif result.missing == readiness.MISSING_RSD:
+            self.screen.set_overlay(
+                "开发者服务未生效\n"
+                "请到「开发者工具」重启 XPC tunnel 或重新挂载 DDI 后，重选设备重试"
+            )
+        else:
+            self.screen.set_overlay(f"设备暂不可用\n{result.message}\n可重选设备重试")
 
     def _tunnel_failed(self, detail: str) -> None:
         _dbg(f"tunnel_failed detail={detail}")

@@ -17,6 +17,7 @@ import logging
 from typing import Callable
 
 from PySide6.QtCore import Qt, QSettings
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -32,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
-from ..common import tunnel
+from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
 from .location_dialog import LocationDialog
@@ -83,6 +85,12 @@ class DeveloperToolsTab(QWidget):
         # readiness probe and keep the label showing "准备中" until it resolves.
         self._ready_probing = False
         self._ready_token = 0
+        # Whether the DVT / RSD developer-services path is usable (gates feature
+        # tiles together with mount state + tunnel; see _refresh_features).
+        self._dvt_ready = False
+        # Open sub-feature windows, keyed by feature name. At most one window per
+        # feature: re-triggering raises the existing one instead of opening a new.
+        self._subwindows: dict[str, QWidget] = {}
         # While a mount/unmount RPC is in flight the device-side mounter is busy;
         # suppress concurrent ddi_status queries so they don't time out and get
         # mistaken for an operation failure.
@@ -110,12 +118,18 @@ class DeveloperToolsTab(QWidget):
         ddi_row.addWidget(self.ddi_refresh_btn)
         root.addLayout(ddi_row)
 
-        # Tunnel hint (shown only for iOS 17+ devices whose DVT features need it).
+        # XPC tunnel status panel (iOS 17+ only). Reflects running state and
+        # offers start (when down) or stop + restart (when up). All actions reuse
+        # the native-authorization tunnel helpers via the AsyncRunner.
         tunnel_row = QHBoxLayout()
-        self.tunnel_label = QLabel("iOS 17+ 的进程 / 定位能力依赖 XPC tunnel")
-        self.tunnel_btn = QPushButton("启动 XPC tunnel")
+        self.tunnel_label = QLabel("XPC tunnel：未知")
+        self.tunnel_btn = QPushButton("启动")
+        self.tunnel_stop_btn = QPushButton("停止")
+        self.tunnel_restart_btn = QPushButton("重启")
         tunnel_row.addWidget(self.tunnel_label, 1)
         tunnel_row.addWidget(self.tunnel_btn)
+        tunnel_row.addWidget(self.tunnel_stop_btn)
+        tunnel_row.addWidget(self.tunnel_restart_btn)
         self.tunnel_widget = QWidget()
         self.tunnel_widget.setLayout(tunnel_row)
         self.tunnel_widget.setVisible(False)
@@ -138,8 +152,15 @@ class DeveloperToolsTab(QWidget):
         grid.setRowStretch(2, 1)
         root.addLayout(grid)
 
+        # Bottom status. It MUST NOT widen the window when a long error appears,
+        # so its horizontal size hint is ignored (it only consumes available
+        # width) and long text is elided to at most 3 lines (full text in
+        # tooltip). _status_text holds the untruncated string for re-eliding on
+        # resize. See _set_status / _elide_status / resizeEvent.
         self.status = QLabel("请选择一个设备")
         self.status.setWordWrap(True)
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._status_text = "请选择一个设备"
         root.addWidget(self.status)
 
     def _make_tile(self, title: str, subtitle: str) -> QToolButton:
@@ -157,6 +178,8 @@ class DeveloperToolsTab(QWidget):
         self.mount_btn.clicked.connect(self._on_mount_clicked)
         self.unmount_btn.clicked.connect(self._on_unmount_clicked)
         self.tunnel_btn.clicked.connect(self._on_start_tunnel)
+        self.tunnel_stop_btn.clicked.connect(self._on_stop_tunnel)
+        self.tunnel_restart_btn.clicked.connect(self._on_restart_tunnel)
         self.process_tile.clicked.connect(self._open_process)
         self.location_tile.clicked.connect(self._open_location)
         self.syslog_tile.clicked.connect(self._open_syslog)
@@ -166,18 +189,20 @@ class DeveloperToolsTab(QWidget):
     def set_target(self, target: str) -> None:
         """Called by the main window when the selected device changes."""
         self._mounted = False
+        self._dvt_ready = False
         # Invalidate any in-flight readiness probe from the previous device.
         self._ready_probing = False
         self._ready_token += 1
         self._ios_major = tunnel.ios_major(self._get_os_version())
         self.tunnel_widget.setVisible(tunnel.needs_tunnel(self._get_os_version()))
-        self._set_features_enabled(False)
+        self._refresh_tunnel_panel()
+        self._refresh_features()
         if target:
             self.refresh_status()
         else:
             self.ddi_label.setText("DeveloperDiskImage：未知")
             self._set_controls_enabled(False)
-            self.status.setText("未选择设备")
+            self._set_status("未选择设备")
 
     def shutdown(self) -> None:
         """Release background sessions / log streams on app exit."""
@@ -185,6 +210,12 @@ class DeveloperToolsTab(QWidget):
         for dlg in list(self._log_dialogs):
             try:
                 dlg.shutdown()
+            except RuntimeError:
+                pass  # already deleted
+        # Close any open non-modal sub-feature windows (process / location).
+        for dlg in list(self._subwindows.values()):
+            try:
+                dlg.close()
             except RuntimeError:
                 pass  # already deleted
         target = self._get_target()
@@ -201,14 +232,85 @@ class DeveloperToolsTab(QWidget):
         self.mount_btn.setEnabled(enabled)
         self.unmount_btn.setEnabled(enabled)
 
-    def _set_features_enabled(self, enabled: bool) -> None:
+    def _refresh_features(self) -> None:
+        """Drive feature-tile enabled state + tooltip from the readiness check.
+
+        Disabled-gating: tiles are enabled only when every applicable
+        precondition is met; otherwise they are disabled and their tooltip
+        explains what is missing (tunnel / DDI / RSD). Called whenever a
+        precondition changes (device switch, tunnel op, DDI/DVT state change).
+        """
+        os_version = self._get_os_version()
+        needs_tunnel = tunnel.needs_tunnel(os_version)
+        result = readiness.evaluate(
+            os_version,
+            tunnel_running=tunnel.is_tunnel_running() if needs_tunnel else False,
+            ddi_mounted=self._mounted,
+            rsd_ok=self._dvt_ready,
+        )
         for btn in self._feature_buttons:
-            btn.setEnabled(enabled)
+            btn.setEnabled(result.ready)
+            btn.setToolTip("" if result.ready else result.message)
+
+    def _refresh_tunnel_panel(self) -> None:
+        """Update the iOS 17+ tunnel panel label + buttons from running state."""
+        if not self.tunnel_widget.isVisible():
+            return
+        running = tunnel.is_tunnel_running()
+        self.tunnel_label.setText("XPC tunnel：已启动" if running else "XPC tunnel：未启动")
+        # When up: stop + restart are relevant; when down: only start.
+        self.tunnel_btn.setVisible(not running)
+        self.tunnel_btn.setEnabled(not running)
+        self.tunnel_stop_btn.setVisible(running)
+        self.tunnel_restart_btn.setVisible(running)
+        self.tunnel_stop_btn.setEnabled(running)
+        self.tunnel_restart_btn.setEnabled(running)
+
+    # ----------------------------------------------------------- status text
+
+    def _set_status(self, text: str) -> None:
+        """Set bottom status text, elided to <=3 lines so it never widens the tab."""
+        self._status_text = text or ""
+        self.status.setToolTip(self._status_text)
+        self._elide_status()
+
+    def _elide_status(self) -> None:
+        """Elide the stored status text to at most 3 lines at the current width."""
+        text = self._status_text
+        width = max(1, self.status.width())
+        fm = QFontMetrics(self.status.font())
+        # Greedily wrap into at most 3 lines; tail-elide the 3rd if it overflows.
+        words = text.split(" ")
+        lines: list[str] = []
+        cur = ""
+        for word in words:
+            trial = word if not cur else cur + " " + word
+            if fm.horizontalAdvance(trial) <= width or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+                if len(lines) == 3:
+                    break
+        if len(lines) < 3 and cur:
+            lines.append(cur)
+        if len(lines) == 3:
+            # There may be leftover content beyond 3 lines: elide the last line.
+            consumed = len(" ".join(lines))
+            if consumed < len(text):
+                lines[2] = fm.elidedText(
+                    lines[2] + " …", Qt.ElideRight, width
+                )
+        self.status.setText("\n".join(lines) if lines else "")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._elide_status()
 
     def refresh_status(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self._set_status("未选择设备")
             return
         if self._ready_probing:
             # Keep showing "已挂载（准备中…）" — a mounter query here would just
@@ -221,7 +323,7 @@ class DeveloperToolsTab(QWidget):
         if self._status_loading:
             return  # a query is already in flight; ignore the extra click
         self._status_loading = True
-        self.status.setText("正在查询 DDI 状态…")
+        self._set_status("正在查询 DDI 状态…")
         self.runner.submit(
             lambda: api.ddi_status(target),
             on_done=self._on_status,
@@ -253,15 +355,55 @@ class DeveloperToolsTab(QWidget):
             self.ddi_label.setText(f"DeveloperDiskImage：未挂载{dev_hint}")
         self.mount_btn.setEnabled(not self._mounted)
         self.unmount_btn.setEnabled(self._mounted)
-        self._set_features_enabled(self._mounted)
-        if self._mounted:
-            self.status.setText("DDI 已挂载，功能已解锁")
+        self._refresh_tunnel_panel()
+        if not self._mounted:
+            self._dvt_ready = False
+            self._refresh_features()
+            self._set_status("DDI 未挂载，请先挂载以解锁功能")
+            return
+        if tunnel.needs_tunnel(self._get_os_version()):
+            # iOS 17+: mounted is necessary but not sufficient — the RSD service
+            # must also be enumerated. Probe it (lightweight) to gate features.
+            self._dvt_ready = False
+            self._refresh_features()
+            self._set_status("DDI 已挂载，正在检测开发者服务就绪…")
+            self._probe_rsd(target=self._get_target())
         else:
-            self.status.setText("DDI 未挂载，请先挂载以解锁功能")
+            # iOS < 17: DDI mount is the only gate.
+            self._dvt_ready = True
+            self._refresh_features()
+            self._set_status("DDI 已挂载，功能已解锁")
+
+    def _probe_rsd(self, target: str) -> None:
+        """Lightweight RSD-service probe (iOS 17+) to set _dvt_ready + gate tiles."""
+        if not target:
+            return
+        self.runner.submit(
+            lambda: api.rsd_service_available(target),
+            on_done=self._on_rsd_probe,
+            on_error=lambda e: self._on_rsd_probe({"ok": False}),
+        )
+
+    def _on_rsd_probe(self, result: dict) -> None:
+        if result.get("ok"):
+            available = bool(result.get("data", {}).get("available"))
+        else:
+            # Inconclusive probe (timeout / handshake error under load): tunnel +
+            # DDI are up, so don't falsely gate features on a probe miss — assume
+            # ready. Only a definitive ok=True/available=False keeps tiles off.
+            available = True
+        self._dvt_ready = available
+        self._refresh_features()
+        if available:
+            self._set_status("开发者服务已就绪，功能已解锁")
+        else:
+            self._set_status(
+                "DDI 已挂载但开发者服务未生效：请重启 XPC tunnel 或重新挂载 DDI"
+            )
 
     def _fail(self, message: str) -> None:
         self._status_loading = False
-        self.status.setText(message)
+        self._set_status(message)
 
     # --------------------------------------------------------------- mount
 
@@ -283,15 +425,15 @@ class DeveloperToolsTab(QWidget):
             if files is None:
                 return  # cancelled
             kwargs = files
-            self.status.setText(f"正在挂载 DDI 到设备 {target}…")
+            self._set_status(f"正在挂载 DDI 到设备 {target}…")
         else:  # auto: feed the source config from Settings
             kwargs = self._read_ddi_source_config()
             if not kwargs.get("sources"):
-                self.status.setText(
+                self._set_status(
                     "没有启用的 DDI 来源：请在 Settings → DDI Mount 启用本地或下载来源。"
                 )
                 return
-            self.status.setText(
+            self._set_status(
                 f"正在挂载 DDI 到设备 {target}…（本地优先；如需联网下载镜像首次可能较久）"
             )
         self._op_in_flight = True
@@ -364,11 +506,12 @@ class DeveloperToolsTab(QWidget):
         # to a few minutes, so we instead probe DVT readiness in the background.
         target = self._get_target()
         self._mounted = True
+        self._dvt_ready = False
         self.mount_btn.setEnabled(False)
         self.unmount_btn.setEnabled(True)
-        self._set_features_enabled(False)
+        self._refresh_features()
         self.ddi_label.setText("DeveloperDiskImage：已挂载（准备中…）")
-        self.status.setText(f"已成功挂载 DDI 到设备 {target}，等待 DVT 就绪…")
+        self._set_status(f"已成功挂载 DDI 到设备 {target}，等待 DVT 就绪…")
         # iOS 17+: a tunnel established BEFORE this mount has a stale RSD service
         # list that lacks the just-published developer services (notably
         # com.apple.dt.testmanagerd.remote), so WDA / keyboard-mouse would fail.
@@ -392,14 +535,14 @@ class DeveloperToolsTab(QWidget):
             QMessageBox.Yes,
         )
         if resp != QMessageBox.Yes:
-            self.status.setText(
+            self._set_status(
                 "已挂载；未重启 XPC tunnel——键鼠 / WDA 可能不可用，"
-                "可稍后点「启动 XPC tunnel」手动重启重试"
+                "可稍后在上方 tunnel 面板点「重启」手动重启重试"
             )
             self._start_ready_probe(target)
             return
-        self.status.setText("正在重启 XPC tunnel（需管理员授权）…")
-        self.tunnel_btn.setEnabled(False)
+        self._set_status("正在重启 XPC tunnel（需管理员授权）…")
+        self._set_tunnel_busy(True)
         self.runner.submit(
             lambda: tunnel.restart_tunneld(),
             on_done=lambda ok: self._on_tunnel_restarted(bool(ok), target),
@@ -407,15 +550,21 @@ class DeveloperToolsTab(QWidget):
         )
 
     def _on_tunnel_restarted(self, ok: bool, target: str) -> None:
-        self.tunnel_btn.setEnabled(True)
+        self._set_tunnel_busy(False)
+        self._refresh_tunnel_panel()
         if ok:
-            self.status.setText("XPC tunnel 已重启，开发者服务已刷新；等待 DVT 就绪…")
+            self._set_status("XPC tunnel 已重启，开发者服务已刷新；等待 DVT 就绪…")
         else:
-            self.status.setText(
+            self._set_status(
                 "XPC tunnel 重启失败 / 已取消；键鼠 / WDA 可能不可用，"
-                "可稍后点「启动 XPC tunnel」手动重启重试"
+                "可稍后在上方 tunnel 面板点「重启」手动重试"
             )
-        self._start_ready_probe(target)
+        # Re-probe DVT readiness only when a DDI is mounted (otherwise the probe
+        # would just fail); the tunnel refresh re-enumerates RSD services.
+        if target and self._mounted:
+            self._start_ready_probe(target)
+        else:
+            self._refresh_features()
 
     def _start_ready_probe(self, target: str) -> None:
         """Probe DVT readiness in the background; gate feature tiles on success."""
@@ -439,20 +588,22 @@ class DeveloperToolsTab(QWidget):
         self._ready_probing = False
         self.ddi_refresh_btn.setEnabled(True)
         if result.get("ok"):
+            self._dvt_ready = True
             self.ddi_label.setText("DeveloperDiskImage：已挂载")
-            self._set_features_enabled(True)
-            self.status.setText("DVT 已就绪，功能已解锁")
+            self._refresh_features()
+            self._set_status("DVT 已就绪，功能已解锁")
         else:
             # The image is mounted, but its developer services never came up in
             # time. Keep mounted state; surface the timeout and leave tiles off.
+            self._dvt_ready = False
             self.ddi_label.setText("DeveloperDiskImage：已挂载（准备超时…）")
-            self._set_features_enabled(False)
-            self.status.setText("DVT 准备超时：可点「刷新状态」重试或重新挂载")
+            self._refresh_features()
+            self._set_status("DVT 准备超时：可点「刷新状态」重试或重新挂载")
 
     def _after_mount(self, message: str) -> None:
         self._op_in_flight = False
         self._set_controls_enabled(True)
-        self.status.setText(message)
+        self._set_status(message)
 
     # ------------------------------------------------------------- unmount
 
@@ -465,8 +616,9 @@ class DeveloperToolsTab(QWidget):
         self._ready_probing = False
         self._ready_token += 1
         self.ddi_refresh_btn.setEnabled(True)
-        self._set_features_enabled(False)
-        self.status.setText(f"正在卸载设备 {target} 的 DDI…")
+        self._dvt_ready = False
+        self._refresh_features()
+        self._set_status(f"正在卸载设备 {target} 的 DDI…")
         self._op_in_flight = True
         self._set_controls_enabled(False)
         self.runner.submit(
@@ -485,11 +637,12 @@ class DeveloperToolsTab(QWidget):
         # iOS 17+ the mounter stays unresponsive, so a refresh would just time out
         # and be mistaken for an unmount failure. The user can refresh later.
         self._mounted = False
-        self._set_features_enabled(False)
+        self._dvt_ready = False
+        self._refresh_features()
         self.mount_btn.setEnabled(True)
         self.unmount_btn.setEnabled(False)
         self.ddi_label.setText("DeveloperDiskImage：未挂载")
-        self.status.setText("DDI 已卸载")
+        self._set_status("DDI 已卸载")
         # On iOS 17+ with Xcode installed, macOS CoreDevice daemons auto-remount
         # the personalized DDI within seconds, so a later refresh may show it
         # mounted again — explain this once so it is not mistaken for a failure.
@@ -504,16 +657,43 @@ class DeveloperToolsTab(QWidget):
 
     # -------------------------------------------------------------- tunnel
 
+    def _set_tunnel_busy(self, busy: bool) -> None:
+        """Disable all tunnel controls while a tunnel op is in flight."""
+        for btn in (self.tunnel_btn, self.tunnel_stop_btn, self.tunnel_restart_btn):
+            btn.setEnabled(not busy)
+
     def _on_start_tunnel(self) -> None:
         if tunnel.is_tunnel_running():
-            self.status.setText("XPC tunnel 已在运行")
+            self._set_status("XPC tunnel 已在运行")
+            self._refresh_tunnel_panel()
             return
-        self.status.setText("正在启动 XPC tunnel（需管理员授权）…")
-        self.tunnel_btn.setEnabled(False)
+        self._set_status("正在启动 XPC tunnel（需管理员授权）…")
+        self._set_tunnel_busy(True)
         self.runner.submit(
             tunnel.launch_tunneld,
             on_done=self._on_tunnel_started,
             on_error=lambda e: self._after_tunnel(f"启动失败: {e}"),
+        )
+
+    def _on_stop_tunnel(self) -> None:
+        self._set_status("正在停止 XPC tunnel（需管理员授权）…")
+        self._set_tunnel_busy(True)
+        self.runner.submit(
+            tunnel.stop_tunneld,
+            on_done=lambda ok: self._after_tunnel(
+                "XPC tunnel 已停止" if ok else "XPC tunnel 停止失败 / 已取消"
+            ),
+            on_error=lambda e: self._after_tunnel(f"停止失败: {e}"),
+        )
+
+    def _on_restart_tunnel(self) -> None:
+        self._set_status("正在重启 XPC tunnel（需管理员授权，仅需一次密码）…")
+        self._set_tunnel_busy(True)
+        target = self._get_target()
+        self.runner.submit(
+            tunnel.restart_tunneld,
+            on_done=lambda ok: self._on_tunnel_restarted(bool(ok), target),
+            on_error=lambda e: self._on_tunnel_restarted(False, target),
         )
 
     def _on_tunnel_started(self, ok: bool) -> None:
@@ -524,33 +704,59 @@ class DeveloperToolsTab(QWidget):
             target = self._get_target()
             if target:
                 self.ddi_label.setText("DeveloperDiskImage：已挂载（准备中…）")
-                self.status.setText("XPC tunnel 已启动，重新检测 DVT 就绪…")
+                self._set_status("XPC tunnel 已启动，重新检测 DVT 就绪…")
                 self._start_ready_probe(target)
 
     def _after_tunnel(self, message: str) -> None:
-        self.tunnel_btn.setEnabled(True)
-        self.status.setText(message)
+        self._set_tunnel_busy(False)
+        self._refresh_tunnel_panel()
+        self._refresh_features()
+        self._set_status(message)
 
     # ------------------------------------------------------------ features
+
+    def _open_subwindow(self, name: str, factory: "Callable[[], QWidget]") -> None:
+        """Open (or raise) a non-modal sub-feature window — one per feature.
+
+        Non-modal so the main UI and other sub-windows stay usable; singleton per
+        feature so re-triggering brings the existing window to front instead of
+        opening a duplicate. The window self-deletes on close (WA_DeleteOnClose)
+        and is removed from the registry then.
+        """
+        existing = self._subwindows.get(name)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return
+        dlg = factory()
+        dlg.setModal(False)
+        dlg.setAttribute(Qt.WA_DeleteOnClose, True)
+        self._subwindows[name] = dlg
+        dlg.destroyed.connect(lambda *_: self._subwindows.pop(name, None))
+        dlg.show()
 
     def _open_process(self) -> None:
         target = self._get_target()
         if not target:
             return
         logger.info("open process manager: target=%s", target)
-        ProcessDialog(self.runner, target, self).exec()
+        self._open_subwindow(
+            "process", lambda: ProcessDialog(self.runner, target, self)
+        )
 
     def _open_location(self) -> None:
         target = self._get_target()
         if not target:
             return
         logger.info("open virtual location: target=%s", target)
-        LocationDialog(self.runner, target, self).exec()
+        self._open_subwindow(
+            "location", lambda: LocationDialog(self.runner, target, self)
+        )
 
     def _open_syslog(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self._set_status("未选择设备")
             return
         logger.info("open system log: target=%s", target)
         dlg = LogDialog(self.runner, self._get_target, self._get_os_version, self)

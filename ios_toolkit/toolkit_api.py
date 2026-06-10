@@ -768,6 +768,25 @@ def ddi_wait_ready(target: str, timeout: float = 500.0) -> dict:
     return device.ddi_wait_ready(timeout=timeout)
 
 
+def rsd_service_available(
+    target: str,
+    service_name: str = "com.apple.dt.testmanagerd.remote",
+    timeout: float = 12.0,
+) -> dict:
+    """Check whether an RSD developer service is exposed by the tunnel (iOS 17+).
+
+    Lightweight probe (RSD XPC handshake only, no DVT) for the "WDA / keyboard-
+    mouse fails after a late DDI mount" symptom, where a tunnel established before
+    the DDI was mounted lacks ``com.apple.dt.testmanagerd.remote``. Returns
+    ``{ok, data:{available: bool}}``; ``available=False`` also covers "tunnel has
+    no RSD entry for this device".
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.rsd_service_available(service_name, timeout=timeout)
+
+
 def ddi_mount(
     target: str,
     method: str = "auto",

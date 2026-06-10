@@ -139,24 +139,15 @@ def _applescript_quote(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def launch_tunneld(timeout: float = 30.0) -> bool:
-    """Launch tunneld as root via the native authorization dialog.
+def _foreground_tunneld_command() -> str:
+    """Build the shell command that runs tunneld in the FOREGROUND.
 
-    tunneld runs in the foreground under the elevated shell, so `do shell script`
-    stays blocked for the daemon's whole lifetime. To avoid hanging, the osascript
-    process is started without waiting on it: readiness is confirmed by polling the
-    port, and user cancellation is detected when osascript exits before the port
-    comes up. The osascript/daemon keep running in the background afterward (the
-    daemon is a normal background process, not a self-detached daemon); it is
-    stopped on request via stop_tunneld. The shell command is composed only of
-    fixed, validated paths.
+    The daemon runs in the foreground so the elevated ``do shell script`` stays
+    blocked for its whole lifetime — this is what keeps the root daemon alive (a
+    backgrounded ``nohup ... &`` child is reaped by the privileged helper the
+    moment ``do shell script`` returns, so it must NOT be backgrounded). All
+    tokens are fixed, internally-resolved paths — no external/UI input.
     """
-    # Validate the tunneld entry is present before prompting for a password.
-    if not _tunneld_entry_exists():
-        logger.warning("tunneld entry point not found; cannot launch tunnel")
-        return False
-
-    logger.info("launching XPC tunnel (elevated); waiting up to %.0fs", timeout)
     cmd = _tunneld_command()
     # Quote the executable path (it may contain spaces, e.g. inside an app
     # bundle); the remaining tokens are fixed literals (e.g. "-m", module name).
@@ -164,10 +155,27 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     exe_part = '"%s"' % cmd[0]
     rest_part = (" " + " ".join(cmd[1:])) if len(cmd) > 1 else ""
     prefix = "" if _is_frozen() else f'cd "{_repo_root()}" && '
-    shell_cmd = (
-        f"{prefix}{exe_part}{rest_part} "
-        f'</dev/null >"{_TUNNELD_LOG}" 2>&1'
+    return f"{prefix}{exe_part}{rest_part} " f'</dev/null >"{_TUNNELD_LOG}" 2>&1'
+
+
+def _kill_tunneld_shell() -> str:
+    """Shell snippet that kills whatever holds the tunneld port (SIGKILL fallback)."""
+    return (
+        f"PIDS=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f'if [ -n "$PIDS" ]; then kill $PIDS 2>/dev/null; sleep 1; '
+        f"PIDS2=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f'if [ -n "$PIDS2" ]; then kill -9 $PIDS2 2>/dev/null; fi; fi'
     )
+
+
+def _spawn_foreground_tunneld(shell_cmd: str, timeout: float, what: str) -> bool:
+    """Run ``shell_cmd`` under a non-waiting elevated osascript and poll the port.
+
+    Shared by launch/restart: the elevated osascript is started with Popen and
+    NOT waited on (it blocks for the foreground daemon's lifetime); readiness is
+    confirmed by polling the port, and user cancellation is detected when
+    osascript exits before the port comes up.
+    """
     applescript = (
         f'do shell script "{_applescript_quote(shell_cmd)}" '
         f"with administrator privileges"
@@ -181,41 +189,70 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
             stderr=subprocess.DEVNULL,
         )
     except OSError as exc:
-        logger.error("failed to start osascript for tunnel launch: %s", exc)
+        logger.error("failed to start osascript for tunnel %s: %s", what, exc)
         return False
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if is_tunnel_running(timeout=0.3):
-            logger.info("XPC tunnel is up")
+            logger.info("XPC tunnel %s: up", what)
             return True
         if proc.poll() is not None:
             # osascript exited before the tunnel came up: cancelled or failed.
             up = is_tunnel_running(timeout=0.3)
-            logger.warning("tunnel launch ended early (cancelled/failed); up=%s", up)
+            logger.warning("tunnel %s ended early (cancelled/failed); up=%s", what, up)
             return up
         time.sleep(0.3)
-    logger.warning("tunnel launch timed out after %.0fs", timeout)
+    logger.warning("tunnel %s timed out after %.0fs", what, timeout)
     return is_tunnel_running(timeout=0.3)
 
 
+def launch_tunneld(timeout: float = 30.0) -> bool:
+    """Launch tunneld as root via the native authorization dialog.
+
+    The daemon runs in the foreground under a non-waiting elevated osascript; the
+    osascript/daemon keep running afterward and are stopped on request via
+    stop_tunneld. The shell command is composed only of fixed, validated paths.
+    """
+    # Validate the tunneld entry is present before prompting for a password.
+    if not _tunneld_entry_exists():
+        logger.warning("tunneld entry point not found; cannot launch tunnel")
+        return False
+
+    logger.info("launching XPC tunnel (elevated); waiting up to %.0fs", timeout)
+    return _spawn_foreground_tunneld(_foreground_tunneld_command(), timeout, "launch")
+
+
 def restart_tunneld(timeout: float = 30.0) -> bool:
-    """Stop and relaunch tunneld so the RSD service list is re-enumerated.
+    """Restart tunneld with a SINGLE admin authorization so RSD re-enumerates.
 
     iOS 17+ developer services (e.g. ``com.apple.dt.testmanagerd.remote``) are
     enumerated into a tunnel session's RSD service list at tunnel-establishment
     time. A tunnel created before the DDI was mounted therefore never exposes
     them; restarting forces a fresh handshake that picks up the now-available
-    services. Both stop and relaunch run under the native admin authorization
-    (tunneld is root); a failing stop is non-fatal (the port may already be
-    free). Returns True if the tunnel is up again afterwards.
+    services.
+
+    Single password: the kill of the old root daemon and the relaunch of a fresh
+    one run inside ONE elevated osascript — ``lsof|kill`` (with -9 fallback), then
+    the tunneld command in the FOREGROUND. Crucially the relaunch is NOT
+    backgrounded: a ``nohup ... &`` child is reaped by the privileged helper as
+    soon as ``do shell script`` returns (which is why an earlier background
+    approach killed-but-never-relaunched). Running it in the foreground under a
+    non-waiting osascript keeps it alive, exactly like ``launch_tunneld``.
+
+    On failure (port never comes up / cancelled) this does NOT fall back to the
+    two-authorization path — it logs a WARNING and returns False so the UI can
+    ask the user to retry manually.
     """
-    logger.info("restarting XPC tunnel to refresh RSD developer services")
-    if not stop_tunneld():
-        # Non-fatal: nothing listening, or the user/auth declined the kill. We
-        # still attempt a relaunch and judge success by the port coming up.
-        logger.warning("restart: stop_tunneld did not confirm; attempting relaunch anyway")
-    return launch_tunneld(timeout=timeout)
+    if not _tunneld_entry_exists():
+        logger.warning("tunneld entry point not found; cannot restart tunnel")
+        return False
+
+    logger.info("restarting XPC tunnel (single auth) to refresh RSD developer services")
+    # Single elevated shell: kill the old root daemon, then run a fresh one in the
+    # foreground (so it survives after do-shell-script returns).
+    shell_cmd = f"{_kill_tunneld_shell()}; {_foreground_tunneld_command()}"
+    return _spawn_foreground_tunneld(shell_cmd, timeout, "restart")
 
 
 def stop_tunneld() -> bool:
