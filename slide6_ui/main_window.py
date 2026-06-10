@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -25,11 +26,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ios_toolkit import logsys
 from ios_toolkit import toolkit_api as api
 
 from .album import DcimAlbumTab
 from .app_manager import AppManagerTab
 from .common import tunnel
+from .common.file_dialogs import open_directory
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
 from .crash import CrashReportsTab
@@ -45,6 +48,8 @@ _SETTINGS_ORG = "ios_ui_ta_proxy"
 # Renaming it would orphan users' existing saved preferences.
 _SETTINGS_APP = "slide6_console"
 _ASK_CLEAN_TUNNEL_ON_EXIT_KEY = "settings/ask_clean_tunnel_on_exit"
+_LOGGING_ENABLED_KEY = "settings/logging_enabled"
+_LOGGING_DIR_KEY = "settings/logging_dir"
 
 
 class MainWindow(QMainWindow):
@@ -137,6 +142,21 @@ class MainWindow(QMainWindow):
     def _set_ask_clean_tunnel_on_exit(self, enabled: bool) -> None:
         self.settings.setValue(_ASK_CLEAN_TUNNEL_ON_EXIT_KEY, enabled)
 
+    # ---------------------------------------------------------- logging prefs
+
+    def _logging_enabled(self) -> bool:
+        return bool(self.settings.value(_LOGGING_ENABLED_KEY, True, type=bool))
+
+    def _logging_dir(self) -> str:
+        return self.settings.value(_LOGGING_DIR_KEY, "", type=str) or ""
+
+    def _apply_logging(self) -> None:
+        """Re-initialize logging from the current saved preferences (live)."""
+        logsys.setup_logging(
+            enabled=self._logging_enabled(),
+            log_dir=self._logging_dir() or None,
+        )
+
     def _open_preferences(self) -> None:
         dlg = QDialog(self)
         dlg.setWindowTitle("Preferences")
@@ -153,12 +173,49 @@ class MainWindow(QMainWindow):
         general.addWidget(ask_clean_checkbox)
         layout.addWidget(general_box)
 
+        # Logging section: enable toggle + log directory (browse or type).
+        logging_box = QWidget(dlg)
+        logging_layout = QVBoxLayout(logging_box)
+        logging_layout.setContentsMargins(0, 8, 0, 0)
+        logging_layout.addWidget(QLabel("日志 (Logging)"))
+
+        log_enabled_checkbox = QCheckBox("启用文件日志", logging_box)
+        log_enabled_checkbox.setChecked(self._logging_enabled())
+        logging_layout.addWidget(log_enabled_checkbox)
+
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(QLabel("目录"))
+        log_dir_edit = QLineEdit(logging_box)
+        log_dir_edit.setPlaceholderText(f"留空使用默认：{logsys.DEFAULT_LOG_DIR}")
+        log_dir_edit.setText(self._logging_dir())
+        browse_btn = QPushButton("浏览…", logging_box)
+        dir_row.addWidget(log_dir_edit, 1)
+        dir_row.addWidget(browse_btn)
+        logging_layout.addLayout(dir_row)
+        layout.addWidget(logging_box)
+
+        def _save_logging() -> None:
+            self.settings.setValue(_LOGGING_ENABLED_KEY, log_enabled_checkbox.isChecked())
+            self.settings.setValue(_LOGGING_DIR_KEY, log_dir_edit.text().strip())
+            self._apply_logging()
+
+        def _browse_dir() -> None:
+            start = log_dir_edit.text().strip() or logsys.DEFAULT_LOG_DIR
+            chosen = open_directory(dlg, "选择日志目录", start)
+            if chosen:
+                log_dir_edit.setText(chosen)
+                _save_logging()
+
+        log_enabled_checkbox.toggled.connect(lambda _=False: _save_logging())
+        log_dir_edit.editingFinished.connect(_save_logging)
+        browse_btn.clicked.connect(_browse_dir)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
         buttons.rejected.connect(dlg.reject)
         buttons.accepted.connect(dlg.accept)
         layout.addWidget(buttons)
 
-        dlg.resize(360, 140)
+        dlg.resize(420, 240)
         dlg.exec()
 
     # --------------------------------------------------------- device list

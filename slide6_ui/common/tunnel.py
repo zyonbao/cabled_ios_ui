@@ -20,11 +20,14 @@ and no credentials are ever passed to it.
 
 from __future__ import annotations
 
+import logging
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # The tunneld port currently used by ios_toolkit (see device.TUNNELD_URL).
 # Centralized here so a future change can make it configurable.
@@ -150,8 +153,10 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
     """
     # Validate the tunneld entry is present before prompting for a password.
     if not _tunneld_entry_exists():
+        logger.warning("tunneld entry point not found; cannot launch tunnel")
         return False
 
+    logger.info("launching XPC tunnel (elevated); waiting up to %.0fs", timeout)
     cmd = _tunneld_command()
     # Quote the executable path (it may contain spaces, e.g. inside an app
     # bundle); the remaining tokens are fixed literals (e.g. "-m", module name).
@@ -175,17 +180,22 @@ def launch_tunneld(timeout: float = 30.0) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except OSError:
+    except OSError as exc:
+        logger.error("failed to start osascript for tunnel launch: %s", exc)
         return False
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if is_tunnel_running(timeout=0.3):
+            logger.info("XPC tunnel is up")
             return True
         if proc.poll() is not None:
             # osascript exited before the tunnel came up: cancelled or failed.
-            return is_tunnel_running(timeout=0.3)
+            up = is_tunnel_running(timeout=0.3)
+            logger.warning("tunnel launch ended early (cancelled/failed); up=%s", up)
+            return up
         time.sleep(0.3)
+    logger.warning("tunnel launch timed out after %.0fs", timeout)
     return is_tunnel_running(timeout=0.3)
 
 

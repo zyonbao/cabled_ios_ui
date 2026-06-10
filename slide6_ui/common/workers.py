@@ -12,9 +12,12 @@ older generation are dropped instead of mutating the current UI state.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+logger = logging.getLogger(__name__)
 
 
 class _CallSignals(QObject):
@@ -34,6 +37,9 @@ class _Call(QRunnable):
         try:
             result = self.fn()
         except Exception as exc:  # surface any failure to the UI thread
+            # Background exceptions are otherwise swallowed (only the string
+            # reaches the UI); log the full traceback for diagnosis.
+            logger.exception("background task failed: %s", exc)
             self.signals.failed.emit(str(exc))
             return
         self.signals.done.emit(result)

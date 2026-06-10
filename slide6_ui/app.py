@@ -13,10 +13,18 @@ from __future__ import annotations
 import signal
 import sys
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication
 
-from .main_window import MainWindow
+from ios_toolkit import logsys
+
+from .main_window import (
+    MainWindow,
+    _LOGGING_DIR_KEY,
+    _LOGGING_ENABLED_KEY,
+    _SETTINGS_APP,
+    _SETTINGS_ORG,
+)
 
 
 def _install_sigint_handler(app: QApplication, window: MainWindow) -> QTimer:
@@ -53,16 +61,29 @@ def _install_sigint_handler(app: QApplication, window: MainWindow) -> QTimer:
     return timer
 
 
+def _init_logging() -> None:
+    """Configure logging from saved preferences before the UI starts."""
+    settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+    enabled = bool(settings.value(_LOGGING_ENABLED_KEY, True, type=bool))
+    log_dir = settings.value(_LOGGING_DIR_KEY, "", type=str) or None
+    logsys.setup_logging(enabled=enabled, log_dir=log_dir)
+
+
 def main() -> None:
     app = QApplication(sys.argv)
     # Kept as the legacy name on purpose to stay consistent with the QSettings
     # storage key (see main_window._SETTINGS_APP) and preserve saved preferences.
     app.setApplicationName("slide6_console")
+    _init_logging()
     window = MainWindow()
     window.show()
     # Keep a reference so the wake-up timer is not garbage-collected.
     _sigint_timer = _install_sigint_handler(app, window)  # noqa: F841
-    sys.exit(app.exec())
+    try:
+        exit_code = app.exec()
+    finally:
+        logsys.shutdown_logging()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -137,3 +137,20 @@ def open_existing_file(
     if dlg.exec() and dlg.selectedFiles():
         return dlg.selectedFiles()[0]
     return ""
+
+
+def open_directory(
+    parent: "Optional[QWidget]",
+    caption: str,
+    start_dir: "Optional[str]" = None,
+) -> str:
+    """Pick an existing directory; returns its path, or "" if cancelled.
+
+    Honours ``USE_NATIVE_FILE_DIALOG`` (native panel only on a signed/sandboxed
+    build); otherwise uses Qt's in-process non-native directory chooser.
+    """
+    start = start_dir or os.path.expanduser("~")
+    options = QFileDialog.Option.ShowDirsOnly
+    if not USE_NATIVE_FILE_DIALOG:
+        options |= QFileDialog.Option.DontUseNativeDialog
+    return QFileDialog.getExistingDirectory(parent, caption, start, options) or ""

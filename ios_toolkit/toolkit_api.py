@@ -13,7 +13,10 @@ in one place.
 
 from __future__ import annotations
 
+import logging
 import xml.etree.ElementTree as ET
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -25,6 +28,11 @@ def _ok(data: dict) -> dict:
 
 
 def _err(kind: str, message: str, details: dict | None = None) -> dict:
+    # Record every error in the log file for post-hoc diagnosis. Validation-style
+    # errors stay at debug (file only) to keep the console clean; genuine
+    # subprocess/timeout failures surface at warning.
+    level = logging.DEBUG if kind in ("BAD_TARGET", "NOT_IMPLEMENTED") else logging.WARNING
+    logger.log(level, "api error [%s]: %s", kind, message)
     return {"ok": False, "error": {"kind": kind, "message": message, "details": details or {}}}
 
 

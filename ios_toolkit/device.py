@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import posixpath
 import random
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Static-analysis hints for Nuitka (never executed)
@@ -289,8 +292,9 @@ def _get_rsd_from_tunneld(udid: str) -> Optional[tuple[str, int]]:
         entries = tunnels.get(udid, [])
         if entries:
             return entries[0]["tunnel-address"], int(entries[0]["tunnel-port"])
-    except Exception:
-        pass
+        logger.debug("tunneld has no RSD entry for udid=%s", udid)
+    except Exception as exc:
+        logger.debug("tunneld query failed for udid=%s: %s", udid, exc)
     return None
 
 
@@ -2029,30 +2033,62 @@ class iOSDevice:
                 MobileImageMounterService,
             )
 
+            # Step-level traces so a hang can be pinpointed to the exact call
+            # (the last "ddi_status step:" line before a timeout is the culprit).
+            logger.debug("ddi_status step: creating usbmux lockdown")
             lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
             async with lockdown:
+                logger.debug("ddi_status step: opening mounter service")
                 async with MobileImageMounterService(lockdown) as mounter:
                     images: list[dict] = []
                     mounted: Optional[bool] = None
+                    dev_mode: bool = True
+                    # Do the lightweight, reliable queries FIRST so we always get
+                    # the mounted boolean + developer-mode flag, then attempt the
+                    # detail-listing CopyDevices LAST (see below).
                     try:
-                        for d in await mounter.copy_devices() or []:
+                        logger.debug("ddi_status step: is_image_mounted")
+                        mounted = await asyncio.wait_for(
+                            mounter.is_image_mounted(image_type), timeout=10
+                        )
+                    except Exception as exc:
+                        logger.debug("ddi_status step: is_image_mounted failed: %s", exc)
+                    try:
+                        logger.debug("ddi_status step: query_developer_mode_status")
+                        dev_mode = await asyncio.wait_for(
+                            mounter.query_developer_mode_status(), timeout=5
+                        )
+                    except Exception as exc:
+                        # Pre-iOS16 devices have no developer-mode gate; also tolerate
+                        # a slow/timed-out query so status never blocks on it.
+                        logger.debug("ddi_status step: dev-mode query failed: %s", exc)
+                        dev_mode = True
+                    # CopyDevices enriches the UI with image type + mount path, but
+                    # can hang indefinitely right after a personalized mount on
+                    # iOS 17+ (the device-side mounter stops replying). Run it LAST
+                    # and bounded: a timeout only loses the detail list (mounted is
+                    # already known), and because no further command is issued on
+                    # this session afterwards a late reply cannot desync it.
+                    try:
+                        logger.debug("ddi_status step: copy_devices")
+                        devices = await asyncio.wait_for(mounter.copy_devices(), timeout=5)
+                        for d in devices or []:
                             images.append({
                                 "diskImageType": str(
                                     d.get("DiskImageType") or d.get("ImageType") or ""
                                 ),
                                 "mountPath": str(d.get("MountPath") or ""),
                             })
-                        mounted = len(images) > 0
-                    except Exception:
-                        # CopyDevices unsupported on this device: fall back below.
-                        pass
-                    if mounted is None:
-                        mounted = await mounter.is_image_mounted(image_type)
-                    try:
-                        dev_mode = await mounter.query_developer_mode_status()
-                    except Exception:
-                        # Pre-iOS16 devices have no developer-mode gate.
-                        dev_mode = True
+                        if mounted is None:
+                            mounted = len(images) > 0
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "ddi_status step: copy_devices hung (>5s); "
+                            "reporting status without image detail"
+                        )
+                    except Exception as exc:
+                        logger.debug("ddi_status step: copy_devices failed: %s", exc)
+            logger.debug("ddi_status step: done")
             return {
                 "mounted": bool(mounted),
                 "developerMode": bool(dev_mode),
@@ -2065,10 +2101,16 @@ class iOSDevice:
         try:
             data = _run_isolated(_op(), timeout=20)
         except asyncio.TimeoutError:
+            logger.warning("ddi_status timed out (udid=%s)", self.udid)
             return _err("TIMEOUT", "查询 DDI 状态超时（设备 mounter 服务无响应）")
         except Exception as exc:
+            logger.warning("ddi_status failed (udid=%s): %s", self.udid, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
         data.update({"imageType": image_type, "iosMajor": major})
+        logger.debug(
+            "ddi_status: udid=%s mounted=%s images=%s",
+            self.udid, data.get("mounted"), len(data.get("images") or []),
+        )
         return _ok(data)
 
     def ddi_mount(self, method: str = "auto", **paths: "Optional[str]") -> dict:
@@ -2085,6 +2127,10 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         major = self._ios_major_version()
+        logger.info(
+            "ddi_mount: udid=%s method=%s os_major=%s manual_keys=%s",
+            self.udid, method, major, sorted(k for k, v in paths.items() if v),
+        )
 
         async def _op() -> None:
             from pymobiledevice3.lockdown import create_using_usbmux
@@ -2132,6 +2178,7 @@ class iOSDevice:
         try:
             _run_isolated(_op(), timeout=300)
         except asyncio.TimeoutError:
+            logger.warning("ddi_mount timed out (method=%s)", method)
             return _err("TIMEOUT", "挂载 DDI 超时（下载/上传镜像耗时过长或卡住）")
         except Exception as exc:
             from pymobiledevice3.services.mobile_image_mounter import (
@@ -2140,13 +2187,17 @@ class iOSDevice:
             )
 
             if isinstance(exc, AlreadyMountedError):
+                logger.info("ddi_mount: already mounted (method=%s)", method)
                 return _ok({"mounted": True, "method": method, "already": True})
             if isinstance(exc, DeveloperModeIsNotEnabledError):
+                logger.warning("ddi_mount: developer mode not enabled")
                 return _err(
                     "SUBPROCESS",
                     "开发者模式未开启：请在设备「设置 → 隐私与安全性 → 开发者模式」开启后重试。",
                 )
+            logger.warning("ddi_mount failed (method=%s): %s", method, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
+        logger.info("ddi_mount: mounted (method=%s)", method)
         return _ok({"mounted": True, "method": method})
 
     def ddi_unmount(self) -> dict:
@@ -2173,13 +2224,23 @@ class iOSDevice:
             async with lockdown:
                 async with MobileImageMounterService(lockdown) as mounter:
                     mount_paths: list[str] = []
+                    # CopyDevices can hang right after a personalized mount on
+                    # iOS 17+; bound it and fall back to the well-known umount path.
                     try:
-                        for d in await mounter.copy_devices() or []:
+                        devices = await asyncio.wait_for(
+                            mounter.copy_devices(), timeout=5
+                        )
+                        for d in devices or []:
                             mp = d.get("MountPath")
                             if mp:
                                 mount_paths.append(str(mp))
-                    except Exception:
-                        pass
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "ddi_unmount: copy_devices hung (>5s); using fallback path"
+                        )
+                    except Exception as exc:
+                        logger.debug("ddi_unmount: copy_devices failed: %s", exc)
+                    logger.debug("ddi_unmount: copy_devices mount paths=%s", mount_paths)
                     if mount_paths:
                         for mp in mount_paths:
                             await mounter.unmount_image(mp)
@@ -2191,16 +2252,21 @@ class iOSDevice:
                     await DeveloperDiskImageMounter(lockdown=lockdown).umount()
                 return 1
 
+        logger.info("ddi_unmount: udid=%s os_major=%s", self.udid, major)
         try:
             count = _run_isolated(_op(), timeout=60)
         except asyncio.TimeoutError:
+            logger.warning("ddi_unmount timed out")
             return _err("TIMEOUT", "卸载 DDI 超时（设备 mounter 服务无响应）")
         except Exception as exc:
             from pymobiledevice3.services.mobile_image_mounter import NotMountedError
 
             if isinstance(exc, NotMountedError):
+                logger.info("ddi_unmount: nothing mounted")
                 return _ok({"unmounted": True, "already": True})
+            logger.warning("ddi_unmount failed: %s", exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
+        logger.info("ddi_unmount: unmounted %s path(s)", count)
         return _ok({"unmounted": True, "count": count})
 
     async def _with_dvt(self, op: "Callable[[object], Awaitable]"):
@@ -2258,8 +2324,11 @@ class iOSDevice:
 
         future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
         try:
-            return _ok({"processes": future.result(timeout=60)})
+            procs = future.result(timeout=60)
+            logger.debug("list_processes: udid=%s count=%s", self.udid, len(procs))
+            return _ok({"processes": procs})
         except Exception as exc:
+            logger.warning("list_processes failed (udid=%s): %s", self.udid, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
 
     def launch_app_dvt(self, bundle_id: str) -> dict:
@@ -2277,11 +2346,14 @@ class iOSDevice:
             async with ProcessControl(dvt) as pc:
                 return await pc.launch(bundle_id)
 
+        logger.info("launch_app_dvt: udid=%s bundle_id=%s", self.udid, bundle_id)
         future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
         try:
             pid = future.result(timeout=60)
+            logger.info("launch_app_dvt: launched %s pid=%s", bundle_id, pid)
             return _ok({"launched": True, "bundleId": bundle_id, "pid": pid})
         except Exception as exc:
+            logger.warning("launch_app_dvt failed (%s): %s", bundle_id, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
 
     def kill_process(self, pid: int) -> dict:
@@ -2301,11 +2373,14 @@ class iOSDevice:
             async with ProcessControl(dvt) as pc:
                 await pc.kill(pid_int)
 
+        logger.info("kill_process: udid=%s pid=%s", self.udid, pid_int)
         future = asyncio.run_coroutine_threadsafe(self._with_dvt(_op), _bg_loop)
         try:
             future.result(timeout=60)
+            logger.info("kill_process: killed pid=%s", pid_int)
             return _ok({"killed": True, "pid": pid_int})
         except Exception as exc:
+            logger.warning("kill_process failed (pid=%s): %s", pid_int, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
 
     # -- Virtual location -------------------------------------------------
@@ -2397,6 +2472,9 @@ class iOSDevice:
             return _err("BAD_TARGET", "empty trajectory")
 
         major = self._ios_major_version()
+        logger.info(
+            "start route: udid=%s os_major=%s points=%s", self.udid, major, len(steps)
+        )
         # Replace any in-flight session before starting a new one.
         self._cancel_location_task()
         ready = threading.Event()
@@ -2408,12 +2486,17 @@ class iOSDevice:
         timeout = 45 if major >= 17 else 30
         if not ready.wait(timeout=timeout):
             task.cancel()
+            logger.warning("start route timed out (udid=%s)", self.udid)
             return _err("SUBPROCESS", "启动虚拟定位超时")
         if err_holder.get("error") is not None:
             task.cancel()
+            logger.warning(
+                "start route failed (udid=%s): %s", self.udid, err_holder["error"]
+            )
             return _err("SUBPROCESS", str(err_holder["error"]))
         with self._location_lock:
             self._location_task = task
+        logger.info("route started; persistent session=%s", major >= 17)
         return _ok(ok_data)
 
     def set_location(self, latitude: float, longitude: float) -> dict:
@@ -2477,6 +2560,7 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         major = self._ios_major_version()
+        logger.info("clear_location: udid=%s os_major=%s", self.udid, major)
 
         # Stop any in-flight route/point session first (both versions may hold
         # one now that single-point set also runs as a route task).

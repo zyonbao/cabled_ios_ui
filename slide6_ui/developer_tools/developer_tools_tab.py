@@ -13,6 +13,7 @@ blocking calls go through the shared AsyncRunner.
 
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from PySide6.QtCore import Qt
@@ -35,6 +36,8 @@ from ..common import tunnel
 from ..common.workers import AsyncRunner
 from .location_dialog import LocationDialog
 from .process_dialog import ProcessDialog
+
+logger = logging.getLogger(__name__)
 
 # Mount-method picker labels mapped to the platform-layer method keys.
 _MOUNT_METHODS = [
@@ -222,6 +225,7 @@ class DeveloperToolsTab(QWidget):
         if not ok:
             return
         method = dict((lbl, m) for lbl, m in _MOUNT_METHODS)[label]
+        logger.info("user requested DDI mount: method=%s target=%s", method, target)
         kwargs: dict[str, str] = {}
         if method == "manual":
             kwargs = self._collect_manual_files()
@@ -284,6 +288,7 @@ class DeveloperToolsTab(QWidget):
         target = self._get_target()
         if not target:
             return
+        logger.info("user requested DDI unmount: target=%s", target)
         self.status.setText("正在卸载 DDI…")
         self._set_controls_enabled(False)
         self.runner.submit(
@@ -337,10 +342,12 @@ class DeveloperToolsTab(QWidget):
         target = self._get_target()
         if not target:
             return
+        logger.info("open process manager: target=%s", target)
         ProcessDialog(self.runner, target, self).exec()
 
     def _open_location(self) -> None:
         target = self._get_target()
         if not target:
             return
+        logger.info("open virtual location: target=%s", target)
         LocationDialog(self.runner, target, self).exec()
