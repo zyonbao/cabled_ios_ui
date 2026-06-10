@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import i18n
 from .log_panel import LogPanelBase, _VIEW_BLOCK_LIMIT
 
 
@@ -25,9 +26,9 @@ class SyslogPanel(LogPanelBase):
     SOURCE = "syslog"
 
     def _build_controls(self, bar: QHBoxLayout) -> None:
-        self.save_btn = QPushButton("另存…")
+        self.save_btn = QPushButton(i18n.t("syslog.save_as"))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("关键字过滤（大小写不敏感）")
+        self.filter_input.setPlaceholderText(i18n.t("syslog.keyword_filter"))
         bar.addWidget(self.save_btn)
         bar.addWidget(self.filter_input, 1)
         self.save_btn.clicked.connect(self._save)
@@ -69,13 +70,13 @@ class SyslogPanel(LogPanelBase):
 
     def _save(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "另存日志", "device.log", "日志文件 (*.log *.txt)"
+            self, i18n.t("syslog.save_title"), "device.log", i18n.t("syslog.log_filter")
         )
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.view.toPlainText())
-            self.status.setText(f"已保存到 {path}")
+            self.status.setText(i18n.t("syslog.saved_to", path=path))
         except OSError as exc:
-            self.status.setText(f"保存失败: {exc}")
+            self.status.setText(i18n.t("syslog.save_failed", error=exc))

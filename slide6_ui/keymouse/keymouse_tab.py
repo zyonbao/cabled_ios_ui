@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
@@ -55,12 +57,18 @@ _DEFAULT_FPS = 10
 _MJPEG_SCALING = 60
 _MJPEG_QUALITY = 70
 
-_ORIENT_LABEL = {
-    "PORTRAIT": "竖屏",
-    "PORTRAIT_UPSIDE_DOWN": "竖屏（倒置）",
-    "LANDSCAPE_LEFT": "横屏（左）",
-    "LANDSCAPE_RIGHT": "横屏（右）",
+_ORIENT_KEYS = {
+    "PORTRAIT": "keymouse.orient.portrait",
+    "PORTRAIT_UPSIDE_DOWN": "keymouse.orient.portrait_upside_down",
+    "LANDSCAPE_LEFT": "keymouse.orient.landscape_left",
+    "LANDSCAPE_RIGHT": "keymouse.orient.landscape_right",
 }
+
+
+def _orient_label(orientation: "str | None") -> str:
+    """Localized orientation label (lazy so i18n is ready); '—' when unknown."""
+    key = _ORIENT_KEYS.get(orientation)
+    return i18n.t(key) if key else "—"
 
 
 class KeymouseTab(QWidget):
@@ -111,8 +119,8 @@ class KeymouseTab(QWidget):
         # Non-interactive device info first (read-only): resolution / orientation.
         # Use left-aligned stacked rows (not a two-column form) so these labels
         # line up with the buttons / fields below them.
-        self.info_size = QLabel("分辨率(点)：—")
-        self.info_orient = QLabel("方向：—")
+        self.info_size = QLabel(i18n.t("keymouse.info.size_unknown"))
+        self.info_orient = QLabel(i18n.t("keymouse.info.orient_unknown"))
         for lbl in (self.info_size, self.info_orient):
             lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             sidebar.addWidget(lbl)
@@ -120,7 +128,7 @@ class KeymouseTab(QWidget):
         # Refresh (screen / orientation) sits directly under the info labels and
         # above the fps selector. It is enabled as soon as a device is selected
         # (it just re-runs the device select flow), independent of WDA/streaming.
-        self.reload_btn = QPushButton("刷新画面 / 方向")
+        self.reload_btn = QPushButton(i18n.t("keymouse.reload"))
         self.reload_btn.setEnabled(False)
         sidebar.addWidget(self.reload_btn)
 
@@ -132,14 +140,14 @@ class KeymouseTab(QWidget):
         for f in _FPS_CHOICES:
             self.fps_combo.addItem(f"{f} fps", f)
         self.fps_combo.setCurrentText(f"{_DEFAULT_FPS} fps")
-        fps_layout.addWidget(QLabel("帧率"))
+        fps_layout.addWidget(QLabel(i18n.t("keymouse.fps")))
         fps_layout.addWidget(self.fps_combo, 1)
         sidebar.addWidget(fps_row)
 
-        self.home_btn = QPushButton("主屏幕 (HOME)")
-        self.switcher_btn = QPushButton("应用切换 (后台)")
-        self.kbd_btn = QPushButton("键盘输入: 关")
-        self.shot_btn = QPushButton("截图并保存")
+        self.home_btn = QPushButton(i18n.t("keymouse.home"))
+        self.switcher_btn = QPushButton(i18n.t("keymouse.switcher"))
+        self.kbd_btn = QPushButton(i18n.t("keymouse.kbd_off"))
+        self.shot_btn = QPushButton(i18n.t("keymouse.screenshot"))
         for btn in (self.home_btn, self.switcher_btn):
             btn.setEnabled(False)
             sidebar.addWidget(btn)
@@ -153,7 +161,7 @@ class KeymouseTab(QWidget):
 
         self.kbd_capture = KeyboardCapture()
         self.kbd_close_btn = QPushButton("✕")
-        self.kbd_close_btn.setToolTip("退出键盘输入")
+        self.kbd_close_btn.setToolTip(i18n.t("keymouse.kbd_exit_tip"))
         self.kbd_close_btn.setFixedWidth(36)
         self.kbd_active_row = QWidget()
         kbd_row = QHBoxLayout(self.kbd_active_row)
@@ -169,9 +177,9 @@ class KeymouseTab(QWidget):
         # Text send row: a standalone field + send button, independent of the
         # keyboard-mirroring capture above.
         self.send_input = QLineEdit()
-        self.send_input.setPlaceholderText("输入文本后发送到设备")
+        self.send_input.setPlaceholderText(i18n.t("keymouse.send_placeholder"))
         self.send_input.setEnabled(False)
-        self.send_btn = QPushButton("发送")
+        self.send_btn = QPushButton(i18n.t("keymouse.send"))
         self.send_btn.setEnabled(False)
         send_row = QWidget()
         send_layout = QHBoxLayout(send_row)
@@ -181,8 +189,8 @@ class KeymouseTab(QWidget):
         sidebar.addWidget(send_row)
 
         # Pasteboard buttons.
-        self.set_pb_btn = QPushButton("设置剪贴板")
-        self.get_pb_btn = QPushButton("读取剪贴板")
+        self.set_pb_btn = QPushButton(i18n.t("keymouse.set_pasteboard"))
+        self.get_pb_btn = QPushButton(i18n.t("keymouse.get_pasteboard"))
         for btn in (self.set_pb_btn, self.get_pb_btn):
             btn.setEnabled(False)
             sidebar.addWidget(btn)
@@ -215,7 +223,7 @@ class KeymouseTab(QWidget):
         self.kbd_capture.text_typed.connect(self.kbd_sender.enqueue_text)
         self.kbd_capture.key_pressed.connect(self.kbd_sender.enqueue_key)
         self.kbd_capture.chord.connect(self.kbd_sender.enqueue_chord)
-        self.kbd_sender.failed.connect(lambda m: self._flash(f"输入失败: {m}"))
+        self.kbd_sender.failed.connect(lambda m: self._flash(i18n.t("keymouse.input_failed", msg=m)))
 
     # -------------------------------------------------------------- status
 
@@ -244,21 +252,21 @@ class KeymouseTab(QWidget):
         self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         self.screen.set_window_size(0, 0)
         self.screen.set_orientation(0)
-        self.info_orient.setText("方向：—")
+        self.info_orient.setText(i18n.t("keymouse.info.orient_unknown"))
         # Refresh button only needs a selected device (it re-runs this flow), so
         # enable/disable it purely on target presence.
         self.reload_btn.setEnabled(bool(self.target))
 
         if not self.target:
             self._fill_info(None)
-            self._set_status("未连接")
-            self.screen.set_overlay("请选择一个设备")
+            self._set_status(i18n.t("main_window.status.disconnected"))
+            self.screen.set_overlay(i18n.t("common.select_device_first"))
             return
 
         self._fill_info(dev)
         if not dev or dev.get("state") != "online":
-            self._set_status("该设备未安装 WDA")
-            self.screen.set_overlay("该设备未安装 WebDriverAgent (WDA)\n无法镜像或控制此设备")
+            self._set_status(i18n.t("keymouse.no_wda_status"))
+            self.screen.set_overlay(i18n.t("keymouse.no_wda_overlay"))
             return
 
         # WDA / mirror startup is costly and only this tab needs it. Defer it
@@ -266,8 +274,8 @@ class KeymouseTab(QWidget):
         if active:
             self._start_mirror_flow(gen)
         else:
-            self._set_status("已选择设备")
-            self.screen.set_overlay("切换到「键鼠操作」标签以启动镜像与控制")
+            self._set_status(i18n.t("keymouse.device_selected"))
+            self.screen.set_overlay(i18n.t("keymouse.switch_tab_hint"))
 
     def on_enter(self) -> None:
         # Entering: lazily start the WDA / mirror flow for a connected,
@@ -302,7 +310,7 @@ class KeymouseTab(QWidget):
                 lambda: api.stop_wda(target),
                 on_error=lambda e: _dbg(f"stop_wda error: {e}"),
             )
-        self.screen.set_overlay("切换到「键鼠操作」标签以启动镜像与控制")
+        self.screen.set_overlay(i18n.t("keymouse.switch_tab_hint"))
 
     def _start_mirror_flow(self, gen: int) -> None:
         dev = self.dev
@@ -320,19 +328,18 @@ class KeymouseTab(QWidget):
     def _gate_tunnel(self, target: str, gen: int) -> None:
         reply = QMessageBox.question(
             self,
-            "需要 XPC tunnel",
-            "该 iOS 17+ 设备需要 XPC tunnel 才能控制。\n"
-            "是否现在以管理员权限启动 XPC tunnel？",
+            i18n.t("keymouse.tunnel_need.title"),
+            i18n.t("keymouse.tunnel_need.body"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if reply != QMessageBox.Yes:
-            self._set_status("未启动 XPC tunnel")
-            self.screen.set_overlay("该 iOS 17+ 设备暂不可用\n（未启动 XPC tunnel，可重选设备重试）")
+            self._set_status(i18n.t("keymouse.tunnel_not_started"))
+            self.screen.set_overlay(i18n.t("keymouse.tunnel_unavailable_overlay"))
             return
 
-        self._set_status("正在启动 XPC tunnel…")
-        self.screen.set_overlay("正在请求管理员授权并启动 XPC tunnel…")
+        self._set_status(i18n.t("keymouse.tunnel_starting"))
+        self.screen.set_overlay(i18n.t("keymouse.tunnel_starting_overlay"))
 
         def work():
             # launch_tunneld already polls the port and returns True only once the
@@ -352,7 +359,7 @@ class KeymouseTab(QWidget):
     def _after_tunnel(self, result, target: str, gen: int) -> None:
         _dbg(f"after_tunnel status={result} gen={gen} cur_gen={self.runner.generation}")
         if result != "ok":
-            self._tunnel_failed("tunnel 未就绪")
+            self._tunnel_failed(i18n.t("keymouse.tunnel_not_ready"))
             return
         self._check_readiness(target, gen)
 
@@ -369,13 +376,13 @@ class KeymouseTab(QWidget):
         dev = self.dev or {}
         os_version = (dev.get("metadata") or {}).get("os_version", "")
         _dbg(f"check_readiness target={target} os={os_version} gen={gen}")
-        self._set_status("正在检查设备就绪状态…")
-        self.screen.set_overlay("正在检查设备就绪状态…")
+        self._set_status(i18n.t("keymouse.checking_ready"))
+        self.screen.set_overlay(i18n.t("keymouse.checking_ready"))
         self.runner.submit(
             lambda: readiness.probe(target, os_version),
             on_done=lambda r: self._on_readiness(r, target, gen),
             on_error=lambda e: self._on_readiness(
-                readiness.Readiness(False, None, f"就绪检查失败：{e}"), target, gen
+                readiness.Readiness(False, None, i18n.t("keymouse.ready_check_failed", error=e)), target, gen
             ),
             generation=gen,
         )
@@ -387,31 +394,25 @@ class KeymouseTab(QWidget):
             return
         # Not ready: surface actionable guidance and stop (user fixes it in the
         # developer-tools tab, then reselects the device to retry).
-        self._set_status("设备未就绪")
+        self._set_status(i18n.t("keymouse.device_not_ready"))
         if result.missing == readiness.MISSING_DDI:
-            self.screen.set_overlay(
-                "需要挂载 DeveloperDiskImage\n"
-                "请到「开发者工具」根 tab 挂载 DDI 后，重选设备重试"
-            )
+            self.screen.set_overlay(i18n.t("keymouse.overlay_need_ddi"))
         elif result.missing == readiness.MISSING_RSD:
-            self.screen.set_overlay(
-                "开发者服务未生效\n"
-                "请到「开发者工具」重启 XPC tunnel 或重新挂载 DDI 后，重选设备重试"
-            )
+            self.screen.set_overlay(i18n.t("keymouse.overlay_need_rsd"))
         else:
-            self.screen.set_overlay(f"设备暂不可用\n{result.message}\n可重选设备重试")
+            self.screen.set_overlay(i18n.t("keymouse.overlay_unavailable", message=result.message))
 
     def _tunnel_failed(self, detail: str) -> None:
         _dbg(f"tunnel_failed detail={detail}")
-        self._set_status("XPC tunnel 启动失败")
-        self.screen.set_overlay(f"无法启动 XPC tunnel\n{detail}\n该 iOS 17+ 设备暂不可用，可重试")
+        self._set_status(i18n.t("keymouse.tunnel_start_failed"))
+        self.screen.set_overlay(i18n.t("keymouse.tunnel_failed_overlay", detail=detail))
 
     # ------------------------------------------------------- prepare / WDA
 
     def _prepare_device(self, target: str, gen: int) -> None:
         _dbg(f"prepare_device target={target} gen={gen}")
-        self._set_status("正在启动 WebDriverAgent…")
-        self.screen.set_overlay("正在启动 WebDriverAgent…\n首次启动可能需要数十秒")
+        self._set_status(i18n.t("keymouse.wda_starting"))
+        self.screen.set_overlay(i18n.t("keymouse.wda_starting_overlay"))
         self.runner.submit(
             lambda: api.prepare(target),
             on_done=lambda r: self._on_prepared(r, target, gen),
@@ -422,7 +423,7 @@ class KeymouseTab(QWidget):
     def _on_prepared(self, result: dict, target: str, gen: int) -> None:
         _dbg(f"on_prepared ok={result.get('ok')} gen={gen} cur_gen={self.runner.generation}")
         if not result.get("ok"):
-            self._prepare_failed(result.get("error", {}).get("message", "prepare failed"))
+            self._prepare_failed(localize_error(result.get("error")))
             return
         self.runner.submit(
             lambda: api.window_size(target),
@@ -434,12 +435,12 @@ class KeymouseTab(QWidget):
     def _on_winsize(self, result: dict, target: str, gen: int) -> None:
         _dbg(f"on_winsize ok={result.get('ok')} data={result.get('data')} gen={gen}")
         if not result.get("ok"):
-            self._prepare_failed(result.get("error", {}).get("message", "window_size failed"))
+            self._prepare_failed(localize_error(result.get("error")))
             return
         self.win_size = result["data"]
         self.screen.set_window_size(self.win_size["width"], self.win_size["height"])
         self.info_size.setText(
-            f"分辨率(点)：{self.win_size['width']} × {self.win_size['height']}"
+            i18n.t("keymouse.info.size", width=self.win_size['width'], height=self.win_size['height'])
         )
 
         # Fetch orientation next so frames are rotated upright; non-fatal on failure.
@@ -458,7 +459,7 @@ class KeymouseTab(QWidget):
         _dbg(f"on_orientation {self.orientation} gen={gen}")
         self.screen.set_orientation(self.orientation.get("degrees", 0))
         self.info_orient.setText(
-            "方向：" + _ORIENT_LABEL.get(self.orientation.get("orientation"), "—")
+            i18n.t("keymouse.info.orient", value=_orient_label(self.orientation.get("orientation")))
         )
 
         # Apply requested framerate, then start the stream (non-fatal on failure).
@@ -471,8 +472,8 @@ class KeymouseTab(QWidget):
 
     def _prepare_failed(self, detail: str) -> None:
         _dbg(f"prepare_failed detail={detail}")
-        self._set_status("启动失败")
-        self.screen.set_overlay(f"无法启动 WebDriverAgent\n{detail}")
+        self._set_status(i18n.t("keymouse.start_failed"))
+        self.screen.set_overlay(i18n.t("keymouse.wda_failed_overlay", detail=detail))
 
     # ------------------------------------------------------------- stream
 
@@ -485,11 +486,11 @@ class KeymouseTab(QWidget):
         port = getattr(device, "mjpeg_local_port", 0) if device else 0
         _dbg(f"begin_stream target={target} mjpeg_port={port}")
         if not port:
-            self.screen.set_overlay("画面流不可用（MJPEG 端口未就绪）")
-            self._set_status("画面流不可用")
+            self.screen.set_overlay(i18n.t("keymouse.stream_unavailable_overlay"))
+            self._set_status(i18n.t("keymouse.stream_unavailable"))
             return
 
-        self._set_status("已连接")
+        self._set_status(i18n.t("keymouse.connected"))
         self.screen.set_overlay(None)
         for btn in self._connected_buttons():
             btn.setEnabled(True)
@@ -502,8 +503,8 @@ class KeymouseTab(QWidget):
         self.mirror_thread.start()
 
     def _on_stream_error(self, message: str) -> None:
-        self._set_status("画面已断开")
-        self.screen.set_overlay(f"{message}\n请重新选择设备重试")
+        self._set_status(i18n.t("keymouse.stream_disconnected"))
+        self.screen.set_overlay(i18n.t("keymouse.stream_error_overlay", message=message))
 
     def stop_stream(self) -> None:
         if self.mirror_thread is not None:
@@ -522,30 +523,30 @@ class KeymouseTab(QWidget):
     def on_tap(self, x: int, y: int) -> None:
         target = self.target
         self.runner.submit(lambda: api.tap(target, x, y),
-                           on_error=lambda e: self._flash(f"点按失败: {e}"))
+                           on_error=lambda e: self._flash(i18n.t("keymouse.tap_failed", error=e)))
 
     def on_long_press(self, x: int, y: int, dur: int) -> None:
         target = self.target
         self.runner.submit(lambda: api.long_press(target, x, y, dur),
-                           on_error=lambda e: self._flash(f"长按失败: {e}"))
+                           on_error=lambda e: self._flash(i18n.t("keymouse.long_press_failed", error=e)))
 
     def on_swipe(self, x1: int, y1: int, x2: int, y2: int, dur: int) -> None:
         target = self.target
         self.runner.submit(lambda: api.swipe(target, x1, y1, x2, y2, dur),
-                           on_error=lambda e: self._flash(f"滑动失败: {e}"))
+                           on_error=lambda e: self._flash(i18n.t("keymouse.swipe_failed", error=e)))
 
     def on_home(self) -> None:
         target = self.target
         self.runner.submit(lambda: api.key_event(target, "HOME"),
-                           on_error=lambda e: self._flash(f"HOME 失败: {e}"))
+                           on_error=lambda e: self._flash(i18n.t("keymouse.home_failed", error=e)))
 
     def on_switcher(self) -> None:
         target = self.target
-        self._set_status("正在打开应用切换…")
+        self._set_status(i18n.t("keymouse.switcher_opening"))
         self.runner.submit(
             lambda: api.app_switcher(target),
-            on_done=lambda r: self._set_status("已连接") if r.get("ok") else self._flash("应用切换失败"),
-            on_error=lambda e: self._flash(f"应用切换失败: {e}"),
+            on_done=lambda r: self._set_status(i18n.t("keymouse.connected")) if r.get("ok") else self._flash(i18n.t("keymouse.switcher_failed")),
+            on_error=lambda e: self._flash(i18n.t("keymouse.switcher_failed_detail", error=e)),
         )
         self._refocus_keyboard()
 
@@ -554,12 +555,12 @@ class KeymouseTab(QWidget):
         self.runner.submit(
             lambda: api.screenshot(target),
             on_done=self._save_screenshot,
-            on_error=lambda e: self._flash(f"截图失败: {e}"),
+            on_error=lambda e: self._flash(i18n.t("keymouse.screenshot_failed_detail", error=e)),
         )
 
     def _save_screenshot(self, result: dict) -> None:
         if not result.get("ok"):
-            self._flash("截图失败")
+            self._flash(i18n.t("keymouse.screenshot_failed"))
             return
         png = base64.b64decode(result["data"]["base64"])
         png = self._orient_screenshot(png)
@@ -573,15 +574,17 @@ class KeymouseTab(QWidget):
             QStandardPaths.StandardLocation.HomeLocation
         )
         default = os.path.join(download_dir, filename) if download_dir else filename
-        path, _ = QFileDialog.getSaveFileName(self, "保存截图", default, "PNG 图片 (*.png)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, i18n.t("keymouse.save_screenshot"), default, i18n.t("keymouse.png_filter")
+        )
         if not path:
             return
         try:
             with open(path, "wb") as fh:
                 fh.write(png)
-            self._set_status(f"截图已保存: {path}")
+            self._set_status(i18n.t("keymouse.screenshot_saved", path=path))
         except OSError as exc:
-            self._flash(f"保存失败: {exc}")
+            self._flash(i18n.t("keymouse.save_failed", error=exc))
         self._refocus_keyboard()
 
     def _orient_screenshot(self, png: bytes) -> bytes:
@@ -607,7 +610,7 @@ class KeymouseTab(QWidget):
         target = self.target
         self.runner.submit(
             lambda: api.configure_mjpeg(target, self.fps, _MJPEG_SCALING, _MJPEG_QUALITY),
-            on_error=lambda e: self._flash(f"帧率设置失败: {e}"),
+            on_error=lambda e: self._flash(i18n.t("keymouse.fps_failed", error=e)),
         )
 
     # ----------------------------------------------------------- keyboard
@@ -630,7 +633,7 @@ class KeymouseTab(QWidget):
             self.kbd_capture.clearFocus()
             self.kbd_active_row.setVisible(False)
             self.kbd_btn.setVisible(True)
-            self.kbd_btn.setText("键盘输入: 关")
+            self.kbd_btn.setText(i18n.t("keymouse.kbd_off"))
 
     def _refocus_keyboard(self) -> None:
         if self.kbd_on:
@@ -646,32 +649,32 @@ class KeymouseTab(QWidget):
         self.runner.submit(
             lambda: api.send_keys(target, text),
             on_done=self._on_send_done,
-            on_error=lambda e: self._flash(f"发送失败: {e}"),
+            on_error=lambda e: self._flash(i18n.t("keymouse.send_failed_detail", error=e)),
         )
 
     def _on_send_done(self, result: dict) -> None:
         if result.get("ok"):
             self.send_input.clear()  # clear only on success; keep on failure
         else:
-            msg = result.get("error", {}).get("message", "发送失败")
-            self._flash(f"发送失败: {msg}")
+            msg = localize_error(result.get("error"))
+            self._flash(i18n.t("keymouse.send_failed_msg", msg=msg))
         self._refocus_keyboard()
 
     def on_set_pasteboard(self) -> None:
         if not self.target:
             return
         text, ok = QInputDialog.getMultiLineText(
-            self, "设置设备剪贴板", "内容:", ""
+            self, i18n.t("keymouse.pb_set_title"), i18n.t("keymouse.pb_content_label"), ""
         )
         if not ok:
             return
         target = self.target
-        self._set_status("正在设置剪贴板…")
+        self._set_status(i18n.t("keymouse.pb_setting"))
         self.runner.submit(
             lambda: api.set_pasteboard(target, text),
-            on_done=lambda r: self._flash("已设置设备剪贴板") if r.get("ok")
-            else self._flash("设置剪贴板失败: " + r.get("error", {}).get("message", "")),
-            on_error=lambda e: self._flash(f"设置剪贴板失败: {e}"),
+            on_done=lambda r: self._flash(i18n.t("keymouse.pb_set_ok")) if r.get("ok")
+            else self._flash(i18n.t("keymouse.pb_set_failed") + ": " + localize_error(r.get("error"))),
+            on_error=lambda e: self._flash(i18n.t("keymouse.pb_set_failed_detail", error=e)),
         )
         self._refocus_keyboard()
 
@@ -679,24 +682,24 @@ class KeymouseTab(QWidget):
         if not self.target:
             return
         target = self.target
-        self._set_status("正在读取剪贴板…")
+        self._set_status(i18n.t("keymouse.pb_reading"))
         self.runner.submit(
             lambda: api.get_pasteboard(target),
             on_done=self._show_pasteboard,
-            on_error=lambda e: self._flash(f"读取剪贴板失败: {e}"),
+            on_error=lambda e: self._flash(i18n.t("keymouse.pb_read_failed_detail", error=e)),
         )
 
     def _show_pasteboard(self, result: dict) -> None:
         if not result.get("ok"):
-            msg = result.get("error", {}).get("message", "")
-            self._flash(f"读取剪贴板失败: {msg}" if msg else "读取剪贴板失败")
+            msg = localize_error(result.get("error"))
+            self._flash(i18n.t("keymouse.pb_read_failed_msg", msg=msg) if msg else i18n.t("keymouse.pb_read_failed"))
             return
         data = result.get("data", {})
         is_text = bool(data.get("isText"))
-        self._flash("已读取设备剪贴板" if is_text else "剪贴板为空或为非文本内容")
+        self._flash(i18n.t("keymouse.pb_read_ok") if is_text else i18n.t("keymouse.pb_empty"))
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("设备剪贴板")
+        dlg.setWindowTitle(i18n.t("keymouse.pb_dialog_title"))
         layout = QVBoxLayout(dlg)
         text = data.get("text", "")
         if is_text:
@@ -705,11 +708,11 @@ class KeymouseTab(QWidget):
             view.setReadOnly(True)  # read-only but still selectable / copyable
             layout.addWidget(view)
         else:
-            layout.addWidget(QLabel("剪贴板为空或为非文本内容，无法显示/复制\n（请确认设备上已复制文本）"))
+            layout.addWidget(QLabel(i18n.t("keymouse.pb_empty_detail")))
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         if is_text:
-            copy_btn = buttons.addButton("复制到本机", QDialogButtonBox.ActionRole)
+            copy_btn = buttons.addButton(i18n.t("keymouse.pb_copy_to_host"), QDialogButtonBox.ActionRole)
             copy_btn.clicked.connect(lambda: self._copy_to_host(text))
         buttons.rejected.connect(dlg.reject)
         buttons.accepted.connect(dlg.accept)
@@ -722,7 +725,7 @@ class KeymouseTab(QWidget):
         from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(text)
-        self._flash("已复制到本机剪贴板")
+        self._flash(i18n.t("keymouse.pb_copied"))
 
     # ------------------------------------------------------------- helpers
 
@@ -737,6 +740,6 @@ class KeymouseTab(QWidget):
 
     def _fill_info(self, dev: dict | None) -> None:
         self.info_size.setText(
-            f"分辨率(点)：{self.win_size['width']} × {self.win_size['height']}"
-            if self.win_size else "分辨率(点)：—"
+            i18n.t("keymouse.info.size", width=self.win_size['width'], height=self.win_size['height'])
+            if self.win_size else i18n.t("keymouse.info.size_unknown")
         )

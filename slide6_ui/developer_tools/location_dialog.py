@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common.file_dialogs import open_existing_file
 from ..common.focus import suppress_auto_focus
 from ..common.workers import AsyncRunner
@@ -45,7 +47,7 @@ class LocationDialog(QDialog):
         super().__init__(parent)
         self.runner = runner
         self._target = target
-        self.setWindowTitle("虚拟定位")
+        self.setWindowTitle(i18n.t("location.title"))
         self.resize(460, 460)
         self._build_ui()
         self._wire()
@@ -58,16 +60,16 @@ class LocationDialog(QDialog):
         root = QVBoxLayout(self)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_point_tab(), "单点定位")
-        self.tabs.addTab(self._build_gpx_tab(), "GPX 轨迹")
-        self.tabs.addTab(self._build_manual_tab(), "手动轨迹")
+        self.tabs.addTab(self._build_point_tab(), i18n.t("location.tab.point"))
+        self.tabs.addTab(self._build_gpx_tab(), i18n.t("location.tab.gpx"))
+        self.tabs.addTab(self._build_manual_tab(), i18n.t("location.tab.manual"))
         root.addWidget(self.tabs)
 
         # Shared clear control + status (clearing also stops route playback).
-        self.clear_btn = QPushButton("清除定位 / 停止轨迹")
+        self.clear_btn = QPushButton(i18n.t("location.clear"))
         root.addWidget(self.clear_btn)
 
-        self.status = QLabel("选择一种方式设定虚拟定位")
+        self.status = QLabel(i18n.t("location.status_hint"))
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
@@ -76,15 +78,15 @@ class LocationDialog(QDialog):
         layout = QVBoxLayout(w)
         form = QFormLayout()
         self.lat_input = QLineEdit()
-        self.lat_input.setPlaceholderText("-90 ~ 90，如 37.334900")
+        self.lat_input.setPlaceholderText(i18n.t("location.lat_placeholder"))
         self.lat_input.setValidator(QDoubleValidator(-90.0, 90.0, 8, self))
         self.lon_input = QLineEdit()
-        self.lon_input.setPlaceholderText("-180 ~ 180，如 -122.009020")
+        self.lon_input.setPlaceholderText(i18n.t("location.lon_placeholder"))
         self.lon_input.setValidator(QDoubleValidator(-180.0, 180.0, 8, self))
-        form.addRow("纬度 (lat)", self.lat_input)
-        form.addRow("经度 (lon)", self.lon_input)
+        form.addRow(i18n.t("location.lat"), self.lat_input)
+        form.addRow(i18n.t("location.lon"), self.lon_input)
         layout.addLayout(form)
-        self.set_btn = QPushButton("设定定位")
+        self.set_btn = QPushButton(i18n.t("location.set"))
         layout.addWidget(self.set_btn)
         layout.addStretch(1)
         return w
@@ -95,17 +97,17 @@ class LocationDialog(QDialog):
 
         pick_row = QHBoxLayout()
         self.gpx_path_input = QLineEdit()
-        self.gpx_path_input.setPlaceholderText("输入或粘贴 .gpx 绝对路径（回车回放），或点右侧浏览")
-        self.gpx_pick_btn = QPushButton("浏览…")
+        self.gpx_path_input.setPlaceholderText(i18n.t("location.gpx_placeholder"))
+        self.gpx_pick_btn = QPushButton(i18n.t("common.browse"))
         pick_row.addWidget(self.gpx_path_input, 1)
         pick_row.addWidget(self.gpx_pick_btn)
         layout.addLayout(pick_row)
 
-        self.gpx_disable_sleep = QCheckBox("忽略时间戳，立即跑完整条轨迹")
+        self.gpx_disable_sleep = QCheckBox(i18n.t("location.gpx_ignore_ts"))
         layout.addWidget(self.gpx_disable_sleep)
 
         jitter_row = QHBoxLayout()
-        jitter_row.addWidget(QLabel("时间抖动 (±ms)"))
+        jitter_row.addWidget(QLabel(i18n.t("location.jitter")))
         self.gpx_jitter = QSpinBox()
         self.gpx_jitter.setRange(0, 60000)
         self.gpx_jitter.setSingleStep(100)
@@ -113,12 +115,10 @@ class LocationDialog(QDialog):
         jitter_row.addStretch(1)
         layout.addLayout(jitter_row)
 
-        self.gpx_play_btn = QPushButton("开始回放")
+        self.gpx_play_btn = QPushButton(i18n.t("location.play"))
         layout.addWidget(self.gpx_play_btn)
 
-        hint = QLabel(
-            "带时间戳的 GPX 会按记录的真实速度移动；无时间戳时按每点 1 秒依次设定。"
-        )
+        hint = QLabel(i18n.t("location.gpx_hint"))
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(1)
@@ -129,7 +129,7 @@ class LocationDialog(QDialog):
         layout = QVBoxLayout(w)
 
         self.wp_table = QTableWidget(0, 2)
-        self.wp_table.setHorizontalHeaderLabels(["纬度 (lat)", "经度 (lon)"])
+        self.wp_table.setHorizontalHeaderLabels([i18n.t("location.lat"), i18n.t("location.lon")])
         self.wp_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -139,8 +139,8 @@ class LocationDialog(QDialog):
         layout.addWidget(self.wp_table, 1)
 
         wp_btn_row = QHBoxLayout()
-        self.wp_add_btn = QPushButton("添加途经点")
-        self.wp_del_btn = QPushButton("删除选中点")
+        self.wp_add_btn = QPushButton(i18n.t("location.add_waypoint"))
+        self.wp_del_btn = QPushButton(i18n.t("location.del_waypoint"))
         wp_btn_row.addWidget(self.wp_add_btn)
         wp_btn_row.addWidget(self.wp_del_btn)
         wp_btn_row.addStretch(1)
@@ -152,10 +152,10 @@ class LocationDialog(QDialog):
         self.speed_input.setValue(5.0)
         self.speed_input.setSuffix(" km/h")
         self.speed_input.setDecimals(1)
-        speed_form.addRow("移动速度", self.speed_input)
+        speed_form.addRow(i18n.t("location.speed"), self.speed_input)
         layout.addLayout(speed_form)
 
-        self.manual_play_btn = QPushButton("开始回放")
+        self.manual_play_btn = QPushButton(i18n.t("location.play"))
         layout.addWidget(self.manual_play_btn)
         return w
 
@@ -178,24 +178,24 @@ class LocationDialog(QDialog):
             lat = float(self.lat_input.text().strip())
             lon = float(self.lon_input.text().strip())
         except ValueError:
-            self.status.setText("请输入合法的经纬度数值")
+            self.status.setText(i18n.t("location.invalid_coord"))
             return
-        self.status.setText("正在设定虚拟定位…")
+        self.status.setText(i18n.t("location.setting"))
         self.set_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.set_location(self._target, lat, lon),
             on_done=self._on_set,
-            on_error=lambda e: self._after(self.set_btn, f"设定失败: {e}"),
+            on_error=lambda e: self._after(self.set_btn, i18n.t("location.set_failed_detail", error=e)),
         )
 
     def _on_set(self, result: dict) -> None:
         if not result.get("ok"):
-            self._after(self.set_btn, result.get("error", {}).get("message", "设定失败"))
+            self._after(self.set_btn, localize_error(result.get("error")))
             return
         data = result["data"]
         self._after(
             self.set_btn,
-            f"已设定虚拟定位：{data.get('latitude')}, {data.get('longitude')}",
+            i18n.t("location.set_ok", lat=data.get('latitude'), lon=data.get('longitude')),
         )
 
     # -- GPX trajectory ----------------------------------------------------
@@ -207,7 +207,8 @@ class LocationDialog(QDialog):
         current = self.gpx_path_input.text().strip()
         start_dir = os.path.dirname(current) if current else None
         path = open_existing_file(
-            self, "选择 GPX 文件", ["GPX 文件 (*.gpx)", "所有文件 (*)"], start_dir
+            self, i18n.t("location.pick_gpx"),
+            [i18n.t("location.gpx_filter"), i18n.t("dev_tools.mount.all_files")], start_dir
         )
         if path:
             self.gpx_path_input.setText(path)
@@ -215,19 +216,19 @@ class LocationDialog(QDialog):
     def _play_gpx(self) -> None:
         path = os.path.expanduser(self.gpx_path_input.text().strip())
         if not path:
-            self.status.setText("请先输入或选择 GPX 文件路径")
+            self.status.setText(i18n.t("location.need_gpx_path"))
             return
         if not os.path.isfile(path):
-            self.status.setText(f"路径不存在或不是文件：{path}")
+            self.status.setText(i18n.t("location.path_not_file", path=path))
             return
         disable_sleep = self.gpx_disable_sleep.isChecked()
         jitter = self.gpx_jitter.value()
-        self.status.setText("正在启动 GPX 轨迹回放…")
+        self.status.setText(i18n.t("location.gpx_starting"))
         self.gpx_play_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.play_route_gpx(self._target, path, disable_sleep, jitter),
             on_done=lambda r: self._on_play(r, self.gpx_play_btn),
-            on_error=lambda e: self._after(self.gpx_play_btn, f"回放失败: {e}"),
+            on_error=lambda e: self._after(self.gpx_play_btn, i18n.t("location.play_failed_detail", error=e)),
         )
 
     # -- Manual trajectory -------------------------------------------------
@@ -258,10 +259,10 @@ class LocationDialog(QDialog):
                 lat = float(lat_text)
                 lon = float(lon_text)
             except ValueError:
-                self.status.setText(f"第 {row + 1} 行经纬度非法")
+                self.status.setText(i18n.t("location.row_invalid", row=row + 1))
                 return None
             if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-                self.status.setText(f"第 {row + 1} 行经纬度超出范围")
+                self.status.setText(i18n.t("location.row_out_of_range", row=row + 1))
                 return None
             waypoints.append([lat, lon])
         return waypoints
@@ -271,40 +272,40 @@ class LocationDialog(QDialog):
         if waypoints is None:
             return
         if len(waypoints) < 2:
-            self.status.setText("手动轨迹至少需要 2 个途经点")
+            self.status.setText(i18n.t("location.need_two_waypoints"))
             return
         speed_mps = self.speed_input.value() / 3.6  # km/h -> m/s
-        self.status.setText("正在启动手动轨迹回放…")
+        self.status.setText(i18n.t("location.manual_starting"))
         self.manual_play_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.play_route_manual(self._target, waypoints, speed_mps),
             on_done=lambda r: self._on_play(r, self.manual_play_btn),
-            on_error=lambda e: self._after(self.manual_play_btn, f"回放失败: {e}"),
+            on_error=lambda e: self._after(self.manual_play_btn, i18n.t("location.play_failed_detail", error=e)),
         )
 
     def _on_play(self, result: dict, btn: QPushButton) -> None:
         if not result.get("ok"):
-            self._after(btn, result.get("error", {}).get("message", "回放失败"))
+            self._after(btn, localize_error(result.get("error")))
             return
         points = result["data"].get("points", 0)
-        self._after(btn, f"正在回放轨迹（{points} 个点）… 点「清除定位 / 停止轨迹」可中止")
+        self._after(btn, i18n.t("location.playing", points=points))
 
     # -- Clear / restore ---------------------------------------------------
 
     def _clear(self) -> None:
-        self.status.setText("正在清除虚拟定位…")
+        self.status.setText(i18n.t("location.clearing"))
         self.clear_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.clear_location(self._target),
             on_done=self._on_clear,
-            on_error=lambda e: self._after(self.clear_btn, f"清除失败: {e}"),
+            on_error=lambda e: self._after(self.clear_btn, i18n.t("location.clear_failed_detail", error=e)),
         )
 
     def _on_clear(self, result: dict) -> None:
         if not result.get("ok"):
-            self._after(self.clear_btn, result.get("error", {}).get("message", "清除失败"))
+            self._after(self.clear_btn, localize_error(result.get("error")))
             return
-        self._after(self.clear_btn, "已清除虚拟定位，恢复真实 GPS")
+        self._after(self.clear_btn, i18n.t("location.cleared"))
 
     # -- Helpers -----------------------------------------------------------
 

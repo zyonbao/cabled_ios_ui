@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from .. import i18n
 from ..common.afc_browser import AfcBrowserPanel
 from ..common.workers import AsyncRunner
 
@@ -21,10 +22,7 @@ class FileSystemTab(QWidget):
     def __init__(self, runner: AsyncRunner) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        caption = QLabel(
-            "设备文件系统（媒体分区，不含 App 沙盒）：支持浏览、导入/导出、"
-            "重命名、新建文件夹与删除；可多选后右键批量下载 / 删除。"
-        )
+        caption = QLabel(i18n.t("file_system.caption"))
         caption.setWordWrap(True)
         layout.addWidget(caption)
         self.panel = AfcBrowserPanel(self, runner, "", "", "media", multi_select=True)

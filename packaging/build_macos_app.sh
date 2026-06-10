@@ -158,6 +158,7 @@ run_nuitka_multidist() {
         --include-package=ios_toolkit \
         --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
+        --include-data-dir="$REPO_ROOT/slide6_ui/languages=slide6_ui/languages" \
         --include-package=pillow_heif \
         --include-package=PIL \
         "${COMMON_FLAGS[@]}" \
@@ -248,6 +249,7 @@ build_fallback() {
         --include-package=ios_toolkit \
         --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
+        --include-data-dir="$REPO_ROOT/slide6_ui/languages=slide6_ui/languages" \
         --include-package=pillow_heif \
         --include-package=PIL \
         "${COMMON_FLAGS[@]}" \

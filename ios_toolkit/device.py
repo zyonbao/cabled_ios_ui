@@ -185,6 +185,10 @@ def _interpolate_route(
     return steps
 
 
+class _GpxNoTrackpointsError(ValueError):
+    """A parsed GPX file contained no usable track/route/waypoint points."""
+
+
 def _parse_gpx_steps(
     path: str,
     disable_sleep: bool = False,
@@ -218,7 +222,7 @@ def _parse_gpx_steps(
         for p in gpx.waypoints:
             raw.append((p.latitude, p.longitude, p.time))
     if not raw:
-        raise ValueError("GPX 文件中没有可用的轨迹点")
+        raise _GpxNoTrackpointsError("GPX file has no usable track points")
 
     steps: list = []
     last_time = None
@@ -444,6 +448,35 @@ def _raise_for_wda(resp: "requests.Response") -> None:
     w3c_error = detail.get("error", "") or ""
     message = detail.get("message") or w3c_error or resp.text
     raise _WdaHTTPError(resp.status_code, w3c_error, message)
+
+
+class _TunnelRequiredError(RuntimeError):
+    """An iOS 17+ DVT/RSD operation needs the XPC tunnel, but it is not up.
+
+    Carries no localized text: it only marks the failure category so the error
+    boundary can attach the stable ``TUNNEL_REQUIRED`` code (the UI localizes).
+    """
+
+
+# English-only debug detail; the user-facing text is localized in the UI by code.
+_TUNNEL_REQUIRED_MSG = (
+    "XPC tunnel is required for this iOS 17+ operation; "
+    "start ios_tunneld (root) and retry"
+)
+
+
+def _dvt_exc_to_err(exc: Exception) -> dict:
+    """Map a DVT/RSD operation exception to an error envelope with a stable code.
+
+    Keeps the per-op error handling uniform: a missing XPC tunnel becomes the
+    stable ``TUNNEL_REQUIRED`` code, everything else stays a generic SUBPROCESS
+    with the exception text as English debug detail.
+    """
+    from .toolkit_api import _err
+
+    if isinstance(exc, _TunnelRequiredError):
+        return _err("SUBPROCESS", str(exc), code="TUNNEL_REQUIRED")
+    return _err("SUBPROCESS", str(exc))
 
 
 def _create_session_sync(local_port: int) -> str:
@@ -2100,7 +2133,11 @@ class iOSDevice:
             data = _run_isolated(_op(), timeout=20)
         except asyncio.TimeoutError:
             logger.warning("ddi_status timed out (udid=%s)", self.udid)
-            return _err("TIMEOUT", "查询 DDI 状态超时（设备 mounter 服务无响应）")
+            return _err(
+                "TIMEOUT",
+                "Querying DDI status timed out (device mounter service not responding)",
+                code="DDI_STATUS_TIMEOUT",
+            )
         except Exception as exc:
             logger.warning("ddi_status failed (udid=%s): %s", self.udid, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
@@ -2157,7 +2194,11 @@ class iOSDevice:
             "ddi_wait_ready: timed out (udid=%s, %ss, last=%s)",
             self.udid, timeout, last_err,
         )
-        return _err("TIMEOUT", "等待 DVT 就绪超时（设备仍在准备 DeveloperDiskImage）")
+        return _err(
+            "TIMEOUT",
+            "Timed out waiting for DVT readiness (device still preparing DeveloperDiskImage)",
+            code="DVT_READY_TIMEOUT",
+        )
 
     def rsd_service_available(self, service_name: str, timeout: float = 12.0) -> dict:
         """Check whether an RSD developer service is exposed by the tunnel (iOS 17+).
@@ -2194,7 +2235,11 @@ class iOSDevice:
             available = _run_isolated(_op(), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning("rsd_service_available timed out (udid=%s)", self.udid)
-            return _err("TIMEOUT", "查询 RSD 服务超时（XPC tunnel 无响应）")
+            return _err(
+                "TIMEOUT",
+                "Querying RSD service timed out (XPC tunnel not responding)",
+                code="RSD_QUERY_TIMEOUT",
+            )
         except Exception as exc:
             logger.debug("rsd_service_available failed (udid=%s): %s", self.udid, exc)
             # A handshake failure means the tunnel session is unusable for this
@@ -2228,18 +2273,28 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         if not image:
-            return _err("BAD_TARGET", "缺少镜像文件 (image)")
+            return _err("BAD_TARGET", "missing image file", code="DDI_IMAGE_MISSING")
         if family == "personalized":
             if not build_manifest or not trustcache:
                 return _err(
                     "BAD_TARGET",
-                    "personalized 挂载需要 image / build_manifest / trustcache",
+                    "personalized mount requires image / build_manifest / trustcache",
+                    code="DDI_PERSONALIZED_ARGS_MISSING",
                 )
         elif family == "developer":
             if not signature:
-                return _err("BAD_TARGET", "developer 挂载需要 image / signature")
+                return _err(
+                    "BAD_TARGET",
+                    "developer mount requires image / signature",
+                    code="DDI_DEVELOPER_ARGS_MISSING",
+                )
         else:
-            return _err("BAD_TARGET", f"未知的 DDI 类型：{family}")
+            return _err(
+                "BAD_TARGET",
+                "unknown DDI family",
+                details={"family": family},
+                code="DDI_UNKNOWN_FAMILY",
+            )
 
         logger.info(
             "ddi_mount: udid=%s family=%s image=%s", self.udid, family, image,
@@ -2267,7 +2322,11 @@ class iOSDevice:
             _run_isolated(_op(), timeout=300)
         except asyncio.TimeoutError:
             logger.warning("ddi_mount timed out (family=%s)", family)
-            return _err("TIMEOUT", "挂载 DDI 超时（上传镜像耗时过长或卡住）")
+            return _err(
+                "TIMEOUT",
+                "Mounting DDI timed out (image upload too slow or stuck)",
+                code="DDI_MOUNT_TIMEOUT",
+            )
         except Exception as exc:
             from pymobiledevice3.services.mobile_image_mounter import (
                 AlreadyMountedError,
@@ -2281,7 +2340,8 @@ class iOSDevice:
                 logger.warning("ddi_mount: developer mode not enabled")
                 return _err(
                     "SUBPROCESS",
-                    "开发者模式未开启：请在设备「设置 → 隐私与安全性 → 开发者模式」开启后重试。",
+                    "Developer Mode is off (enable it on the device, then retry)",
+                    code="DEVELOPER_MODE_OFF",
                 )
             logger.warning("ddi_mount failed (family=%s): %s", family, exc, exc_info=True)
             return _err("SUBPROCESS", str(exc))
@@ -2345,7 +2405,11 @@ class iOSDevice:
             count = _run_isolated(_op(), timeout=60)
         except asyncio.TimeoutError:
             logger.warning("ddi_unmount timed out")
-            return _err("TIMEOUT", "卸载 DDI 超时（设备 mounter 服务无响应）")
+            return _err(
+                "TIMEOUT",
+                "Unmounting DDI timed out (device mounter service not responding)",
+                code="DDI_UNMOUNT_TIMEOUT",
+            )
         except Exception as exc:
             from pymobiledevice3.services.mobile_image_mounter import NotMountedError
 
@@ -2370,10 +2434,7 @@ class iOSDevice:
         if major >= 17:
             rsd = _get_rsd_from_tunneld(self.udid)
             if rsd is None:
-                raise RuntimeError(
-                    f"iOS 17+ device {self.udid}: cannot get RSD info from tunneld. "
-                    "请先启动 XPC tunnel（ios_tunneld，需 root 授权）后重试。"
-                )
+                raise _TunnelRequiredError(_TUNNEL_REQUIRED_MSG)
             from pymobiledevice3.remote.remote_service_discovery import (
                 RemoteServiceDiscoveryService,
             )
@@ -2417,7 +2478,7 @@ class iOSDevice:
             return _ok({"processes": procs})
         except Exception as exc:
             logger.warning("list_processes failed (udid=%s): %s", self.udid, exc, exc_info=True)
-            return _err("SUBPROCESS", str(exc))
+            return _dvt_exc_to_err(exc)
 
     def launch_app_dvt(self, bundle_id: str) -> dict:
         """Launch an app by bundle id via DVT ProcessControl; return its pid."""
@@ -2442,7 +2503,7 @@ class iOSDevice:
             return _ok({"launched": True, "bundleId": bundle_id, "pid": pid})
         except Exception as exc:
             logger.warning("launch_app_dvt failed (%s): %s", bundle_id, exc, exc_info=True)
-            return _err("SUBPROCESS", str(exc))
+            return _dvt_exc_to_err(exc)
 
     def kill_process(self, pid: int) -> dict:
         """Terminate a process by pid via DVT ProcessControl."""
@@ -2469,7 +2530,7 @@ class iOSDevice:
             return _ok({"killed": True, "pid": pid_int})
         except Exception as exc:
             logger.warning("kill_process failed (pid=%s): %s", pid_int, exc, exc_info=True)
-            return _err("SUBPROCESS", str(exc))
+            return _dvt_exc_to_err(exc)
 
     # -- Virtual location -------------------------------------------------
 
@@ -2525,10 +2586,7 @@ class iOSDevice:
             else:
                 rsd = _get_rsd_from_tunneld(self.udid)
                 if rsd is None:
-                    raise RuntimeError(
-                        f"iOS 17+ device {self.udid}: cannot get RSD info from "
-                        "tunneld. 请先启动 XPC tunnel（ios_tunneld，需 root 授权）后重试。"
-                    )
+                    raise _TunnelRequiredError(_TUNNEL_REQUIRED_MSG)
                 from pymobiledevice3.remote.remote_service_discovery import (
                     RemoteServiceDiscoveryService,
                 )
@@ -2575,13 +2633,13 @@ class iOSDevice:
         if not ready.wait(timeout=timeout):
             task.cancel()
             logger.warning("start route timed out (udid=%s)", self.udid)
-            return _err("SUBPROCESS", "启动虚拟定位超时")
+            return _err("SUBPROCESS", "Starting simulated location timed out", code="LOCATION_START_TIMEOUT")
         if err_holder.get("error") is not None:
             task.cancel()
             logger.warning(
                 "start route failed (udid=%s): %s", self.udid, err_holder["error"]
             )
-            return _err("SUBPROCESS", str(err_holder["error"]))
+            return _dvt_exc_to_err(err_holder["error"])
         with self._location_lock:
             self._location_task = task
         logger.info("route started; persistent session=%s", major >= 17)
@@ -2618,11 +2676,13 @@ class iOSDevice:
                 path, bool(disable_sleep), int(timing_randomness_range or 0)
             )
         except FileNotFoundError:
-            return _err("BAD_TARGET", f"GPX 文件不存在: {path}")
+            return _err("BAD_TARGET", "GPX file not found", details={"path": path}, code="GPX_FILE_NOT_FOUND")
+        except _GpxNoTrackpointsError as exc:
+            return _err("BAD_TARGET", str(exc), code="GPX_NO_TRACKPOINTS")
         except ValueError as exc:
             return _err("BAD_TARGET", str(exc))
         except Exception as exc:
-            return _err("SUBPROCESS", f"解析 GPX 失败: {exc}")
+            return _err("SUBPROCESS", "Failed to parse GPX", details={"exc": str(exc)}, code="GPX_PARSE_FAILED")
 
         return self._start_route(
             steps, {"playing": True, "source": "gpx", "points": len(steps)}

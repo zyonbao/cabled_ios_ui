@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
 # pillow-heif is a required dependency (see requirements.txt). Import it lazily
@@ -318,11 +320,11 @@ class DcimAlbumTab(QWidget):
         bar = QHBoxLayout()
         # Unified toolbar order across all file browsers: 上一级 - 路径编辑框 - 刷新.
         # Editable path (Enter to jump to any path under the DCIM root).
-        self.up_btn = QPushButton("上一级")
+        self.up_btn = QPushButton(i18n.t("common.up"))
         self.path_edit = QLineEdit(self._display_path())
-        self.path_edit.setPlaceholderText("输入路径后回车跳转")
-        self.refresh_btn = QPushButton("刷新")
-        self.export_btn = QPushButton("导出选中")
+        self.path_edit.setPlaceholderText(i18n.t("afc.path_placeholder"))
+        self.refresh_btn = QPushButton(i18n.t("common.refresh"))
+        self.export_btn = QPushButton(i18n.t("album.export_selected"))
         bar.addWidget(self.up_btn)
         bar.addWidget(self.path_edit, 1)
         bar.addWidget(self.refresh_btn)
@@ -345,7 +347,7 @@ class DcimAlbumTab(QWidget):
         self.list.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.list, 1)
 
-        self.status = QLabel("请选择一个设备")
+        self.status = QLabel(i18n.t("common.select_device_first"))
         layout.addWidget(self.status)
 
         self.path_edit.returnPressed.connect(self._on_path_entered)
@@ -364,7 +366,7 @@ class DcimAlbumTab(QWidget):
             self.list.clear()
             self.path_edit.setText(self._display_path())
             self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
-            self.status.setText("请选择一个设备")
+            self.status.setText(i18n.t("common.select_device_first"))
 
     # -------------------------------------------------------------- listing
 
@@ -412,21 +414,21 @@ class DcimAlbumTab(QWidget):
         self.up_btn.setEnabled(self.cur_path != _DCIM_ROOT)
         self.list.clear()
         if not self.target:
-            self.status.setText("请选择一个设备")
+            self.status.setText(i18n.t("common.select_device_first"))
             return
-        self.status.setText("正在加载…")
+        self.status.setText(i18n.t("afc.loading"))
         gen = self._gen
         self.runner.submit(
             lambda: api.afc_list(self.target, "", "media", self.cur_path),
             on_done=lambda r: self._on_list(r, gen),
-            on_error=lambda e: self.status.setText(f"加载失败: {e}"),
+            on_error=lambda e: self.status.setText(i18n.t("afc.load_failed_detail", error=e)),
         )
 
     def _on_list(self, result: dict, gen: int) -> None:
         if gen != self._gen:
             return
         if not result.get("ok"):
-            self.status.setText("加载失败: " + result.get("error", {}).get("message", ""))
+            self.status.setText(i18n.t("afc.load_failed") + ": " + localize_error(result.get("error")))
             return
         # Hide dot-prefixed system entries (e.g. DCIM/.MISC). Real photos live in
         # DCF album folders (100APPLE, 101APPLE, …); keeping /DCIM as the root
@@ -459,7 +461,7 @@ class DcimAlbumTab(QWidget):
                 # Videos and other files: placeholder only (no first-frame).
                 item.setIcon(media_icon if _is_video(name) else file_icon)
             self.list.addItem(item)
-        self.status.setText(f"{len(entries)} 项")
+        self.status.setText(i18n.t("afc.item_count", count=len(entries)))
         # Queue thumbnail builds top-down (approximates visible-first).
         self._pending = [(self._gen, item, entry) for item, entry in to_build]
         self._pump()
@@ -517,23 +519,23 @@ class DcimAlbumTab(QWidget):
             return
         if not _is_image(name):
             QMessageBox.information(
-                self, "无法预览", f"{name} 不是可预览的图片（视频/其他类型仅支持导出与删除）。"
+                self, i18n.t("album.cannot_preview_title"), i18n.t("album.cannot_preview_body", name=name)
             )
             return
         remote = posixpath.join(self.cur_path, name)
-        self.status.setText(f"正在打开 {name}…")
+        self.status.setText(i18n.t("album.opening", name=name))
         gen = self._gen
         self.runner.submit(
             lambda: _read_full_qimage(self.target, remote, _ext(name)),
             on_done=lambda img: self._show_image(img, name, gen),
-            on_error=lambda e: self.status.setText(f"打开失败: {e}"),
+            on_error=lambda e: self.status.setText(i18n.t("album.open_failed", error=e)),
         )
 
     def _show_image(self, image: QImage | None, name: str, gen: int) -> None:
         if gen != self._gen:
             return
         if image is None or image.isNull():
-            QMessageBox.warning(self, "无法显示", f"无法解码 {name}。")
+            QMessageBox.warning(self, i18n.t("album.cannot_show_title"), i18n.t("album.cannot_decode", name=name))
             self.status.setText("")
             return
         self.status.setText("")
@@ -552,12 +554,12 @@ class DcimAlbumTab(QWidget):
     def _export_selected(self) -> None:
         files = self._selected_files()
         if not files:
-            self.status.setText("请先选择要导出的媒体")
+            self.status.setText(i18n.t("album.need_select_export"))
             return
-        out_dir = QFileDialog.getExistingDirectory(self, "导出选中媒体到")
+        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("album.export_to"))
         if not out_dir:
             return
-        self.status.setText(f"正在导出 {len(files)} 项…")
+        self.status.setText(i18n.t("album.exporting", count=len(files)))
         names = [f.get("name", "") for f in files]
         mtimes = {f.get("name", ""): f.get("mtime", "") for f in files}
 
@@ -582,12 +584,12 @@ class DcimAlbumTab(QWidget):
         self.runner.submit(
             _do_export,
             on_done=self._on_export_done,
-            on_error=lambda e: self.status.setText(f"导出失败: {e}"),
+            on_error=lambda e: self.status.setText(i18n.t("album.export_failed", error=e)),
         )
 
     def _on_export_done(self, result: dict) -> None:
         failed = result.get("failed", [])
         if failed:
-            self.status.setText(f"已导出 {result['ok']} 项，{len(failed)} 项失败")
+            self.status.setText(i18n.t("album.exported_partial", ok=result['ok'], failed=len(failed)))
         else:
-            self.status.setText(f"已导出 {result['ok']} 项")
+            self.status.setText(i18n.t("album.exported_ok", ok=result['ok']))

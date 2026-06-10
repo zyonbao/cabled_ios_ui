@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
 logger = logging.getLogger(__name__)
@@ -145,13 +147,13 @@ class LogPanelBase(QWidget):
         root = QVBoxLayout(self)
 
         bar = QHBoxLayout()
-        self.start_btn = QPushButton("开始")
-        self.pause_btn = QPushButton("暂停")
+        self.start_btn = QPushButton(i18n.t("syslog.start"))
+        self.pause_btn = QPushButton(i18n.t("syslog.pause"))
         self.pause_btn.setCheckable(True)
         # Pause is only meaningful while a stream is running; disabled (and reset
-        # to "暂停") whenever the start button is in its "开始" (idle) state.
+        # to the paused label) whenever the start button is in its idle state.
         self.pause_btn.setEnabled(False)
-        self.clear_btn = QPushButton("清空")
+        self.clear_btn = QPushButton(i18n.t("syslog.clear"))
         bar.addWidget(self.start_btn)
         bar.addWidget(self.pause_btn)
         bar.addWidget(self.clear_btn)
@@ -161,7 +163,7 @@ class LogPanelBase(QWidget):
         self.view = self._build_view()
         root.addWidget(self.view, 1)
 
-        self.status = QLabel("请选择设备后点击「开始」")
+        self.status = QLabel(i18n.t("syslog.hint_select"))
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
@@ -219,9 +221,9 @@ class LogPanelBase(QWidget):
         # Drop the previous device's logs (memory + view) on switch.
         self._clear()
         if target:
-            self.status.setText("点击「开始」以查看实时日志")
+            self.status.setText(i18n.t("syslog.hint_start"))
         else:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
 
     # ---------------------------------------------------------- start/stop
 
@@ -231,14 +233,14 @@ class LogPanelBase(QWidget):
     def _toggle_start(self) -> None:
         if self._is_running():
             self._stop_stream()
-            self.status.setText("已停止")
+            self.status.setText(i18n.t("syslog.stopped"))
             return
         self._start_stream()
 
     def _start_stream(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
         logger.debug("_start_stream: source=%s target=%s kwargs=%s",
                      self.SOURCE, target, self._stream_kwargs())
@@ -247,7 +249,7 @@ class LogPanelBase(QWidget):
         if isinstance(handle, dict):
             logger.warning("_start_stream: open_log_stream returned error envelope: %s", handle)
             self.status.setText(
-                "无法开始: " + handle.get("error", {}).get("message", "")
+                i18n.t("syslog.cannot_start") + ": " + localize_error(handle.get("error"))
             )
             return
         self._thread = LogStreamThread(handle)
@@ -255,10 +257,10 @@ class LogPanelBase(QWidget):
         self._thread.stream_error.connect(self._on_stream_error)
         self._thread.stream_eof.connect(self._on_stream_eof)
         self._thread.start()
-        self.start_btn.setText("停止")
-        # Running: pause toggling becomes available (starts in "暂停"/unchecked).
+        self.start_btn.setText(i18n.t("syslog.stop"))
+        # Running: pause toggling becomes available (starts paused/unchecked).
         self.pause_btn.setEnabled(True)
-        self.status.setText(f"正在实时流：{self.SOURCE}")
+        self.status.setText(i18n.t("syslog.streaming", source=self.SOURCE))
 
     def _stop_stream(self) -> None:
         if self._thread is not None:
@@ -275,8 +277,8 @@ class LogPanelBase(QWidget):
                     pass
             thread.stop()
             thread.deleteLater()
-        self.start_btn.setText("开始")
-        # Idle: pause resets to "暂停"/unchecked and is disabled (linkage rule).
+        self.start_btn.setText(i18n.t("syslog.start"))
+        # Idle: pause resets to paused/unchecked and is disabled (linkage rule).
         if self._paused or self.pause_btn.isChecked():
             self.pause_btn.setChecked(False)  # toggled handler resets _paused/text
         self._paused = False
@@ -308,7 +310,7 @@ class LogPanelBase(QWidget):
 
     def _on_pause_toggled(self, checked: bool) -> None:
         self._paused = checked
-        self.pause_btn.setText("继续" if checked else "暂停")
+        self.pause_btn.setText(i18n.t("syslog.resume") if checked else i18n.t("syslog.pause"))
 
     def _clear(self) -> None:
         self._buffer.clear()
@@ -320,11 +322,11 @@ class LogPanelBase(QWidget):
 
     def _on_stream_error(self, message: str) -> None:
         self._stop_stream()
-        self.status.setText(f"流中断: {message}")
+        self.status.setText(i18n.t("syslog.stream_interrupted", message=message))
 
     def _on_stream_eof(self) -> None:
         self._stop_stream()
-        self.status.setText("流已结束")
+        self.status.setText(i18n.t("syslog.stream_ended"))
 
     # ------------------------------------------------------------- shutdown
 

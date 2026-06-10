@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from ios_toolkit import logsys
 
+from . import i18n
 from .main_window import (
     MainWindow,
     _LOGGING_DIR_KEY,
@@ -75,6 +76,8 @@ def main() -> None:
     # storage key (see main_window._SETTINGS_APP) and preserve saved preferences.
     app.setApplicationName("slide6_console")
     _init_logging()
+    # Select the UI language before constructing any window (restart-to-apply).
+    i18n.init()
     window = MainWindow()
     window.show()
     # Keep a reference so the wake-up timer is not garbage-collected.

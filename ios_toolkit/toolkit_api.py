@@ -28,13 +28,26 @@ def _ok(data: dict) -> dict:
     return {"ok": True, "data": data}
 
 
-def _err(kind: str, message: str, details: dict | None = None) -> dict:
+def _err(
+    kind: str,
+    message: str,
+    details: dict | None = None,
+    code: str | None = None,
+) -> dict:
     # Record every error in the log file for post-hoc diagnosis. Validation-style
     # errors stay at debug (file only) to keep the console clean; genuine
     # subprocess/timeout failures surface at warning.
+    #
+    # `kind` is the coarse category (backward-compatible); `code` is an optional
+    # stable, fine-grained identifier consumers (the UI) map to localized text.
+    # `message` is an English debug detail only — never a user-facing localized
+    # string — and variable parts belong in `details`, not interpolated here.
     level = logging.DEBUG if kind in ("BAD_TARGET", "NOT_IMPLEMENTED") else logging.WARNING
-    logger.log(level, "api error [%s]: %s", kind, message)
-    return {"ok": False, "error": {"kind": kind, "message": message, "details": details or {}}}
+    logger.log(level, "api error [%s/%s]: %s", kind, code or "-", message)
+    error: dict = {"kind": kind, "message": message, "details": details or {}}
+    if code:
+        error["code"] = code
+    return {"ok": False, "error": error}
 
 
 def _not_implemented(op: str) -> dict:
@@ -853,7 +866,8 @@ def ddi_mount(
     if resolved is None:
         return _err(
             "SUBPROCESS",
-            "没有可用的 DDI 来源：请检查来源设置（本地目录/下载开关）或网络。",
+            "No usable DDI source available (check source settings / network)",
+            code="DDI_NO_SOURCE",
         )
     try:
         result = device.ddi_mount(resolved.family, **resolved.mount_kwargs())
@@ -935,7 +949,7 @@ def play_route_gpx(
     if not path:
         return _err("BAD_TARGET", "gpx path is required")
     if not os.path.isfile(path):
-        return _err("BAD_TARGET", f"GPX 文件不存在: {path}")
+        return _err("BAD_TARGET", "GPX file not found", details={"path": path}, code="GPX_FILE_NOT_FOUND")
     device, err = _prepare_device_basic(target)
     if err:
         return err
@@ -1009,7 +1023,12 @@ def collect_logarchive(target: str, out_path: str):
     try:
         return device.collect_logarchive(out_path)
     except Exception as exc:  # surface collection failure as a readable envelope
-        return _err("LOG_ARCHIVE_FAILED", f"收集 logarchive 失败：{exc}")
+        return _err(
+            "LOG_ARCHIVE_FAILED",
+            "Failed to collect logarchive",
+            details={"exc": str(exc)},
+            code="LOG_ARCHIVE_FAILED",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,9 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
+
 # Navigation keys: only the keyboardInput/typeKey channel (key_chord) moves the
 # cursor / extends selection on iOS.
 _NAV_KEYS = {
@@ -84,7 +87,7 @@ class KeyboardCapture(QLineEdit):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setPlaceholderText("键盘捕获（开启后在此聚焦）")
+        self.setPlaceholderText(i18n.t("keymouse.kbd_capture_placeholder"))
         self._composing = False
         self._busy = False
         self.textEdited.connect(self._on_text_edited)
@@ -219,5 +222,5 @@ class KeyboardSender(QThread):
     def _send(self, call) -> None:
         result = call()
         if isinstance(result, dict) and not result.get("ok"):
-            msg = result.get("error", {}).get("message", "input failed")
+            msg = localize_error(result.get("error"))
             self.failed.emit(msg)

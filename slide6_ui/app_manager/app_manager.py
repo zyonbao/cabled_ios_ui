@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
 from ..common.afc_browser import AfcBrowserDialog
+from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
 
@@ -62,11 +64,11 @@ class AppManagerTab(QWidget):
         # Toolbar: search + filters + actions.
         bar = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("搜索 App（名称 / bundleId）")
-        self.share_filter = QCheckBox("文件已共享")
-        self.sandbox_filter = QCheckBox("沙盒可访问")
-        self.refresh_btn = QPushButton("刷新列表")
-        self.install_btn = QPushButton("安装 IPA…")
+        self.search_input.setPlaceholderText(i18n.t("app_manager.search_placeholder"))
+        self.share_filter = QCheckBox(i18n.t("app_manager.filter_shared"))
+        self.sandbox_filter = QCheckBox(i18n.t("app_manager.filter_sandbox"))
+        self.refresh_btn = QPushButton(i18n.t("app_manager.refresh_list"))
+        self.install_btn = QPushButton(i18n.t("app_manager.install_ipa"))
         bar.addWidget(self.search_input, 1)
         bar.addWidget(self.share_filter)
         bar.addWidget(self.sandbox_filter)
@@ -76,7 +78,7 @@ class AppManagerTab(QWidget):
 
         # App table: name / bundle id / capability-driven action buttons.
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["名称", "Bundle ID", "操作"])
+        self.table.setHorizontalHeaderLabels([i18n.t("afc.col.name"), "Bundle ID", i18n.t("afc.col.action")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -87,7 +89,7 @@ class AppManagerTab(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         root.addWidget(self.table, 1)
 
-        self.status = QLabel("拖拽 .ipa 到此处或点击“安装 IPA…”")
+        self.status = QLabel(i18n.t("app_manager.drop_hint"))
         root.addWidget(self.status)
 
     def _wire(self) -> None:
@@ -106,29 +108,29 @@ class AppManagerTab(QWidget):
         if target:
             self.reload_apps()
         else:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
 
     def reload_apps(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
-        self.status.setText("正在加载 App 列表…")
+        self.status.setText(i18n.t("app_manager.loading"))
         self.refresh_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.list_apps(target),
             on_done=self._on_apps,
-            on_error=lambda e: self._fail(f"加载失败: {e}"),
+            on_error=lambda e: self._fail(i18n.t("afc.load_failed_detail", error=e)),
         )
 
     def _on_apps(self, result: dict) -> None:
         self.refresh_btn.setEnabled(True)
         if not result.get("ok"):
-            self._fail(result.get("error", {}).get("message", "加载失败"))
+            self._fail(localize_error(result.get("error")))
             return
         self._apps = result["data"].get("apps", [])
         self._render()
-        self.status.setText(f"共 {len(self._apps)} 个 App")
+        self.status.setText(i18n.t("app_manager.count", count=len(self._apps)))
 
     def _fail(self, message: str) -> None:
         self.refresh_btn.setEnabled(True)
@@ -177,7 +179,7 @@ class AppManagerTab(QWidget):
         # System apps cannot be uninstalled (the device rejects it), so the
         # uninstall action is offered for non-system apps only.
         if not _is_system_app(app):
-            uninstall = QPushButton("卸载")
+            uninstall = QPushButton(i18n.t("app_manager.uninstall"))
             uninstall.clicked.connect(lambda _=False, a=app: self.on_uninstall(a))
             lay.addWidget(uninstall)
         lay.addStretch(1)
@@ -186,33 +188,33 @@ class AppManagerTab(QWidget):
     # -------------------------------------------------------- install/uninstall
 
     def on_install_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 IPA", "", "iOS App (*.ipa)")
+        path, _ = QFileDialog.getOpenFileName(self, i18n.t("app_manager.select_ipa"), "", "iOS App (*.ipa)")
         if path:
             self._install(path)
 
     def _install(self, ipa_path: str) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
         if not ipa_path.lower().endswith(".ipa"):
-            self.status.setText("仅支持 .ipa 文件")
+            self.status.setText(i18n.t("app_manager.only_ipa"))
             return
-        self.status.setText(f"正在安装 {os.path.basename(ipa_path)}…")
+        self.status.setText(i18n.t("app_manager.installing", name=os.path.basename(ipa_path)))
         self.install_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.install_app(target, ipa_path),
             on_done=self._on_installed,
-            on_error=lambda e: self._after_install(f"安装失败: {e}"),
+            on_error=lambda e: self._after_install(i18n.t("app_manager.install_failed", error=e)),
         )
 
     def _on_installed(self, result: dict) -> None:
         if result.get("ok"):
-            self._after_install("安装成功")
+            self._after_install(i18n.t("app_manager.install_ok"))
             self.reload_apps()
         else:
-            msg = result.get("error", {}).get("message", "安装失败")
-            self._after_install(f"安装失败（需本设备可信任证书签名）: {msg}")
+            msg = localize_error(result.get("error"))
+            self._after_install(i18n.t("app_manager.install_failed_signed", msg=msg))
 
     def _after_install(self, message: str) -> None:
         self.install_btn.setEnabled(True)
@@ -225,23 +227,23 @@ class AppManagerTab(QWidget):
         # Guard: system apps are not uninstallable (defensive — the UI already
         # hides the button for them).
         if _is_system_app(app):
-            self.status.setText("系统应用不支持卸载")
+            self.status.setText(i18n.t("app_manager.system_no_uninstall"))
             return
         bundle_id = app.get("bundleId", "")
         reply = QMessageBox.question(
-            self, "卸载 App",
-            f"确定卸载 {app.get('name', bundle_id)}（{bundle_id}）？",
+            self, i18n.t("app_manager.uninstall_title"),
+            i18n.t("app_manager.uninstall_confirm", name=app.get('name', bundle_id), bundle_id=bundle_id),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
-        self.status.setText(f"正在卸载 {bundle_id}…")
+        self.status.setText(i18n.t("app_manager.uninstalling", bundle_id=bundle_id))
         self.runner.submit(
             lambda: api.uninstall_app(target, bundle_id),
-            on_done=lambda r: (self.status.setText("卸载成功"), self.reload_apps())
+            on_done=lambda r: (self.status.setText(i18n.t("app_manager.uninstall_ok")), self.reload_apps())
             if r.get("ok") else self.status.setText(
-                "卸载失败: " + r.get("error", {}).get("message", "")),
-            on_error=lambda e: self.status.setText(f"卸载失败: {e}"),
+                i18n.t("app_manager.uninstall_failed") + ": " + localize_error(r.get("error"))),
+            on_error=lambda e: self.status.setText(i18n.t("app_manager.uninstall_failed_detail", error=e)),
         )
 
     # -------------------------------------------------------------- browse
@@ -266,7 +268,7 @@ class AppManagerTab(QWidget):
     def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
         path = self._first_ipa(event)
         if path is None:
-            self.status.setText("仅支持拖入 .ipa 文件")
+            self.status.setText(i18n.t("app_manager.only_ipa_drop"))
             return
         event.acceptProposedAction()
         self._install(path)

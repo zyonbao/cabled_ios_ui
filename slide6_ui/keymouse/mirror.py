@@ -17,6 +17,7 @@ from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QWidget
 
+from .. import i18n
 from .gestures import (
     clamp_long_press_duration,
     clamp_swipe_duration,
@@ -54,7 +55,7 @@ class MjpegThread(QThread):
         try:
             sock = socket.create_connection((self._host, self._port), timeout=10)
         except OSError as exc:
-            self.stream_error.emit(f"无法连接画面流: {exc}")
+            self.stream_error.emit(i18n.t("keymouse.mirror.connect_failed", error=exc))
             return
 
         sock.settimeout(5.0)
@@ -68,7 +69,7 @@ class MjpegThread(QThread):
                     return
                 chunk = sock.recv(65536)
                 if not chunk:
-                    self.stream_error.emit("画面流已中断")
+                    self.stream_error.emit(i18n.t("keymouse.mirror.interrupted"))
                     return
                 buffer += chunk
             buffer = buffer.split(b"\r\n\r\n", 1)[1]
@@ -97,11 +98,11 @@ class MjpegThread(QThread):
                     continue
                 except OSError as exc:
                     if not self._stop:
-                        self.stream_error.emit(f"画面流已中断: {exc}")
+                        self.stream_error.emit(i18n.t("keymouse.mirror.interrupted_detail", error=exc))
                     return
                 if not chunk:
                     if not self._stop:
-                        self.stream_error.emit("画面流已中断")
+                        self.stream_error.emit(i18n.t("keymouse.mirror.interrupted"))
                     return
                 buffer += chunk
         finally:
@@ -131,7 +132,7 @@ class ScreenView(QWidget):
         self._last_logged: tuple | None = None
         self._press_pos: QPoint | None = None
         self._press_ms = 0
-        self._overlay_text = "请选择一个设备"
+        self._overlay_text = i18n.t("common.select_device_first")
         self.setMinimumSize(240, 320)
         self.setMouseTracking(False)
 

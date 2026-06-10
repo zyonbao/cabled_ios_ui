@@ -11,6 +11,7 @@ from typing import Callable
 
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
+from .. import i18n
 from ..common import tunnel
 from ..common.focus import suppress_auto_focus
 from .oslog_panel import OslogPanel
@@ -31,10 +32,10 @@ class LogDialog(QDialog):
         self.resize(960, 600)
         major = tunnel.ios_major(get_os_version())
         if major >= 17:
-            self.setWindowTitle("系统日志 — oslog (iOS 17+)")
+            self.setWindowTitle(i18n.t("syslog.window_title_oslog"))
             self.panel = OslogPanel(runner, get_target, get_os_version)
         else:
-            self.setWindowTitle("系统日志 — syslog (iOS <17)")
+            self.setWindowTitle(i18n.t("syslog.window_title_syslog"))
             self.panel = SyslogPanel(runner, get_target, get_os_version)
         layout = QVBoxLayout(self)
         layout.addWidget(self.panel)

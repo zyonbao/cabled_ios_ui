@@ -270,7 +270,7 @@ def _select_personalized_from_manifest(manifest: Path) -> "tuple[Path, Path]":
             if image.is_file() and trustcache.is_file():
                 return image, trustcache
     raise RuntimeError(
-        "BuildManifest.plist 未提供可用的 PersonalizedDMG / LoadableTrustCache 组件"
+        "BuildManifest.plist provides no usable PersonalizedDMG / LoadableTrustCache components"
     )
 
 
@@ -289,7 +289,7 @@ def _extract_personalized_from_dmg(dmg: Path) -> "tuple[Path, Path, Path, str]":
         root = Path(mount_point)
         build_manifest = next(iter(root.rglob("BuildManifest.plist")), None)
         if not build_manifest:
-            raise RuntimeError(f"iOS_DDI.dmg 内未找到 BuildManifest.plist（{mount_point}）")
+            raise RuntimeError(f"BuildManifest.plist not found inside iOS_DDI.dmg ({mount_point})")
         # Prefer the manifest-declared component paths (CoreDevice Restore bundle);
         # fall back to the flat Image.dmg layout used by the raw download.
         try:
@@ -300,7 +300,7 @@ def _extract_personalized_from_dmg(dmg: Path) -> "tuple[Path, Path, Path, str]":
             trustcache = next(iter(root.rglob("*.trustcache")), None)
             if not image or not trustcache:
                 raise RuntimeError(
-                    f"iOS_DDI.dmg 缺少可挂载的镜像/trustcache（{mount_point}）"
+                    f"iOS_DDI.dmg lacks a mountable image/trustcache ({mount_point})"
                 ) from exc
         tmp = Path(tempfile.mkdtemp(prefix="cabledios-ddi-"))
         out_image = tmp / "Image.dmg"

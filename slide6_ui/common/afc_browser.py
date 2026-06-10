@@ -52,6 +52,8 @@ from shiboken6 import isValid
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from .errors import localize_error
 from .focus import suppress_auto_focus
 from .workers import AsyncRunner
 
@@ -167,7 +169,7 @@ class AfcBrowserPanel(QWidget):
         if self.target:
             self._refresh()
         else:
-            self.status.setText("请选择一个设备")
+            self.status.setText(i18n.t("common.select_device_first"))
 
     def set_target(self, target: str) -> None:
         """Point the panel at a (possibly empty) device and reload from root."""
@@ -179,7 +181,7 @@ class AfcBrowserPanel(QWidget):
             self.table.setRowCount(0)
             self.path_edit.setText(self._display_path())
             self.up_btn.setEnabled(False)
-            self.status.setText("请选择一个设备")
+            self.status.setText(i18n.t("common.select_device_first"))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -188,12 +190,12 @@ class AfcBrowserPanel(QWidget):
         # + refresh / make-folder. The go-up button is the unified parent-dir
         # navigation across all browsers (album / crash / AFC).
         nav = QHBoxLayout()
-        self.up_btn = QPushButton("上一级")
+        self.up_btn = QPushButton(i18n.t("common.up"))
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("输入路径后回车跳转")
+        self.path_edit.setPlaceholderText(i18n.t("afc.path_placeholder"))
         self.path_edit.returnPressed.connect(self._on_path_entered)
-        self.refresh_btn = QPushButton("刷新")
-        self.mkdir_btn = QPushButton("添加文件夹")
+        self.refresh_btn = QPushButton(i18n.t("common.refresh"))
+        self.mkdir_btn = QPushButton(i18n.t("afc.add_folder"))
         nav.addWidget(self.up_btn)
         nav.addWidget(self.path_edit, 1)
         nav.addWidget(self.refresh_btn)
@@ -201,7 +203,9 @@ class AfcBrowserPanel(QWidget):
         layout.addLayout(nav)
 
         self.table = _FileTable(self._make_export_mime, self._import_paths)
-        self.table.setHorizontalHeaderLabels(["名称", "大小", "操作"])
+        self.table.setHorizontalHeaderLabels(
+            [i18n.t("afc.col.name"), i18n.t("afc.col.size"), i18n.t("afc.col.actions")]
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(
             QAbstractItemView.ExtendedSelection
@@ -240,7 +244,7 @@ class AfcBrowserPanel(QWidget):
                 if refresh:
                     self._refresh()
             else:
-                self.status.setText(f"{fail_prefix}: " + result.get("error", {}).get("message", ""))
+                self.status.setText(f"{fail_prefix}: " + localize_error(result.get("error")))
 
         def on_error(exc: object) -> None:
             if not isValid(self):
@@ -277,14 +281,14 @@ class AfcBrowserPanel(QWidget):
         self.up_btn.setEnabled(self.cur_path != "/")
         if not self.target:
             self.table.setRowCount(0)
-            self.status.setText("请选择一个设备")
+            self.status.setText(i18n.t("common.select_device_first"))
             return
-        self.status.setText("正在加载…")
+        self.status.setText(i18n.t("afc.loading"))
         self.table.setRowCount(0)
         self.runner.submit(
             lambda: api.afc_list(self.target, self.bundle_id, self.root, self.cur_path),
             on_done=self._on_list,
-            on_error=lambda e: self.status.setText(f"加载失败: {e}"),
+            on_error=lambda e: self.status.setText(i18n.t("afc.load_failed_detail", error=e)),
         )
 
     def _on_list(self, result: dict) -> None:
@@ -294,7 +298,7 @@ class AfcBrowserPanel(QWidget):
         if not isValid(self):
             return
         if not result.get("ok"):
-            self.status.setText("加载失败: " + result.get("error", {}).get("message", ""))
+            self.status.setText(i18n.t("afc.load_failed") + ": " + localize_error(result.get("error")))
             return
         entries = result["data"].get("entries", [])
         # Parent-dir navigation is provided by the top "上一级" button, so the
@@ -310,7 +314,7 @@ class AfcBrowserPanel(QWidget):
             size_text = "" if is_dir else _human_size(entry.get("size", 0))
             self.table.setItem(row, 1, QTableWidgetItem(size_text))
             self.table.setCellWidget(row, 2, self._row_actions(entry))
-        self.status.setText(f"{len(entries)} 项")
+        self.status.setText(i18n.t("afc.item_count", count=len(entries)))
 
     def _row_actions(self, entry: dict) -> QWidget:
         cell = QWidget()
@@ -319,16 +323,16 @@ class AfcBrowserPanel(QWidget):
         lay.setSpacing(2)
         # Import (upload) only makes sense as "upload into this folder".
         if entry.get("isDir"):
-            up = _glyph_button(cell, "导入 ↑", "导入到此文件夹")
+            up = _glyph_button(cell, i18n.t("afc.action.import"), i18n.t("afc.action.import_tip"))
             up.clicked.connect(lambda _=False, e=entry: self._import_into(e))
             lay.addWidget(up)
-        down = _glyph_button(cell, "导出 ↓", "导出到本地")
+        down = _glyph_button(cell, i18n.t("afc.action.export"), i18n.t("afc.action.export_tip"))
         down.clicked.connect(lambda _=False, e=entry: self._export(e))
         lay.addWidget(down)
-        rename = _glyph_button(cell, "重命名 ✎", "重命名")
+        rename = _glyph_button(cell, i18n.t("afc.action.rename"), i18n.t("afc.action.rename_tip"))
         rename.clicked.connect(lambda _=False, e=entry: self._rename(e))
         lay.addWidget(rename)
-        delete = _glyph_button(cell, "删除 ✕", "删除")
+        delete = _glyph_button(cell, i18n.t("afc.action.delete"), i18n.t("afc.action.delete_tip"))
         delete.clicked.connect(lambda _=False, e=entry: self._delete(e))
         lay.addWidget(delete)
         lay.addStretch(1)
@@ -350,21 +354,23 @@ class AfcBrowserPanel(QWidget):
         menu = QMenu(self)
         if self.multi_select and len(selected) > 1:
             menu.addAction(
-                f"批量下载 {len(selected)} 项到…", lambda: self._batch_export(selected)
+                i18n.t("afc.menu.batch_export", count=len(selected)),
+                lambda: self._batch_export(selected),
             )
             menu.addSeparator()
             menu.addAction(
-                f"批量删除 {len(selected)} 项…", lambda: self._batch_delete(selected)
+                i18n.t("afc.menu.batch_delete", count=len(selected)),
+                lambda: self._batch_delete(selected),
             )
             menu.exec(QCursor.pos())
             return
 
         if entry.get("isDir"):
-            menu.addAction("导入到此文件夹…", lambda: self._import_into(entry))
-        menu.addAction("导出…", lambda: self._export(entry))
-        menu.addAction("重命名…", lambda: self._rename(entry))
+            menu.addAction(i18n.t("afc.menu.import_into"), lambda: self._import_into(entry))
+        menu.addAction(i18n.t("afc.menu.export"), lambda: self._export(entry))
+        menu.addAction(i18n.t("afc.menu.rename"), lambda: self._rename(entry))
         menu.addSeparator()
-        menu.addAction("删除…", lambda: self._delete(entry))
+        menu.addAction(i18n.t("afc.menu.delete"), lambda: self._delete(entry))
         menu.exec(QCursor.pos())
 
     def _current_entry(self) -> dict | None:
@@ -404,7 +410,7 @@ class AfcBrowserPanel(QWidget):
 
     def _import_into(self, folder: dict) -> None:
         remote_dir = posixpath.join(self.cur_path, folder.get("name", ""))
-        paths, _ = QFileDialog.getOpenFileNames(self, "选择要导入的文件", "")
+        paths, _ = QFileDialog.getOpenFileNames(self, i18n.t("afc.dialog.choose_import"), "")
         for path in paths:
             self._do_push(path, remote_dir)
 
@@ -415,17 +421,17 @@ class AfcBrowserPanel(QWidget):
                 self._do_push(path, self.cur_path)
 
     def _do_push(self, local_path: str, remote_dir: str) -> None:
-        self.status.setText(f"正在导入 {os.path.basename(local_path)}…")
+        self.status.setText(i18n.t("afc.importing", name=os.path.basename(local_path)))
         self._submit(
             lambda: api.afc_push(self.target, self.bundle_id, self.root, local_path, remote_dir),
-            "导入成功", "导入失败",
+            i18n.t("afc.import_ok"), i18n.t("afc.import_failed"),
         )
 
     def _export(self, entry: dict) -> None:
         name = entry.get("name", "file")
         remote = posixpath.join(self.cur_path, name)
         if entry.get("isDir"):
-            parent = QFileDialog.getExistingDirectory(self, "导出文件夹到")
+            parent = QFileDialog.getExistingDirectory(self, i18n.t("afc.dialog.export_folder_to"))
             if not parent:
                 return
             # pull creates parent/<name> for a directory source.
@@ -436,15 +442,15 @@ class AfcBrowserPanel(QWidget):
             if not os.path.isdir(download_dir):
                 download_dir = os.path.expanduser("~")
             local_path, _ = QFileDialog.getSaveFileName(
-                self, "导出到", os.path.join(download_dir, name)
+                self, i18n.t("afc.dialog.export_to"), os.path.join(download_dir, name)
             )
             if not local_path:
                 return
             done_path = local_path
-        self.status.setText(f"正在导出 {name}…")
+        self.status.setText(i18n.t("afc.exporting", name=name))
         self._submit(
             lambda: api.afc_pull(self.target, self.bundle_id, self.root, remote, local_path),
-            f"已导出到 {done_path}", "导出失败", refresh=False,
+            i18n.t("afc.export_ok", path=done_path), i18n.t("afc.export_failed"), refresh=False,
         )
 
     def _make_export_mime(self) -> QMimeData | None:
@@ -463,7 +469,7 @@ class AfcBrowserPanel(QWidget):
         else:
             local_path = os.path.join(tmp_dir, name)
             result_path = local_path
-        self.status.setText(f"正在准备导出 {name}…")
+        self.status.setText(i18n.t("afc.preparing_export", name=name))
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             result = api.afc_pull(
@@ -473,70 +479,74 @@ class AfcBrowserPanel(QWidget):
             QApplication.restoreOverrideCursor()
         if not result.get("ok"):
             self.status.setText(
-                "导出准备失败: " + result.get("error", {}).get("message", "")
+                i18n.t("afc.export_prepare_failed") + ": " + localize_error(result.get("error"))
             )
             return None
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(result_path)])
-        self.status.setText(f"拖拽导出 {name}")
+        self.status.setText(i18n.t("afc.drag_export", name=name))
         return mime
 
     # ----------------------------------------------------------- mkdir/rename/delete
 
     def _mkdir(self) -> None:
-        name, ok = QInputDialog.getText(self, "添加文件夹", "名称:")
+        name, ok = QInputDialog.getText(
+            self, i18n.t("afc.add_folder"), i18n.t("afc.dialog.name_label")
+        )
         if not ok or not name.strip():
             return
         remote = posixpath.join(self.cur_path, name.strip())
         self._submit(
             lambda: api.afc_mkdir(self.target, self.bundle_id, self.root, remote),
-            "已创建", "创建失败",
+            i18n.t("afc.mkdir_ok"), i18n.t("afc.mkdir_failed"),
         )
 
     def _rename(self, entry: dict) -> None:
         old = entry.get("name", "")
-        new, ok = QInputDialog.getText(self, "重命名", "新名称:", text=old)
+        new, ok = QInputDialog.getText(
+            self, i18n.t("afc.dialog.rename_title"), i18n.t("afc.dialog.new_name_label"), text=old
+        )
         new = new.strip() if ok else ""
         if not ok or not new or new == old:
             return
         if "/" in new:
-            self.status.setText("名称不能包含 /")
+            self.status.setText(i18n.t("afc.name_no_slash"))
             return
         src = posixpath.join(self.cur_path, old)
         dst = posixpath.join(self.cur_path, new)
-        self.status.setText(f"正在重命名 {old} → {new}…")
+        self.status.setText(i18n.t("afc.renaming", old=old, new=new))
         self._submit(
             lambda: api.afc_rename(self.target, self.bundle_id, self.root, src, dst),
-            "已重命名", "重命名失败",
+            i18n.t("afc.rename_ok"), i18n.t("afc.rename_failed"),
         )
 
     def _delete(self, entry: dict) -> None:
         name = entry.get("name", "")
         reply = QMessageBox.question(
-            self, "删除", f"确定删除 {name}？此操作不可撤销。",
+            self, i18n.t("afc.dialog.delete_title"), i18n.t("afc.confirm_delete", name=name),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
         remote = posixpath.join(self.cur_path, name)
-        self.status.setText(f"正在删除 {name}…")
+        self.status.setText(i18n.t("afc.deleting", name=name))
         self._submit(
             lambda: api.afc_rm(self.target, self.bundle_id, self.root, remote),
-            "已删除", "删除失败",
+            i18n.t("afc.delete_ok"), i18n.t("afc.delete_failed"),
         )
 
     # ----------------------------------------------------------- batch ops
 
     def _batch_export(self, entries: list[dict]) -> None:
         """Download several selected items into one chosen directory."""
-        out_dir = QFileDialog.getExistingDirectory(self, "批量下载到")
+        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("afc.dialog.batch_export_to"))
         if not out_dir:
             return
         names = [e.get("name", "") for e in entries]
         cur_path, target, bundle_id, root = (
             self.cur_path, self.target, self.bundle_id, self.root
         )
-        self.status.setText(f"正在下载 {len(names)} 项…")
+        self.status.setText(i18n.t("afc.batch.downloading", count=len(names)))
 
         def _do() -> dict:
             ok, failed = 0, []
@@ -554,8 +564,8 @@ class AfcBrowserPanel(QWidget):
 
         self.runner.submit(
             _do,
-            on_done=lambda r: self._on_batch_done(r, "已下载", refresh=False),
-            on_error=lambda e: isValid(self) and self.status.setText(f"批量下载失败: {e}"),
+            on_done=lambda r: self._on_batch_done(r, "downloaded", refresh=False),
+            on_error=lambda e: isValid(self) and self.status.setText(i18n.t("afc.batch.download_failed", error=e)),
         )
 
     def _batch_delete(self, entries: list[dict]) -> None:
@@ -563,8 +573,8 @@ class AfcBrowserPanel(QWidget):
         names = [e.get("name", "") for e in entries]
         sample = "、".join(names[:3]) + ("…" if len(names) > 3 else "")
         reply = QMessageBox.question(
-            self, "批量删除",
-            f"确定删除 {len(names)} 项？此操作不可撤销。\n示例：{sample}",
+            self, i18n.t("afc.batch.delete_title"),
+            i18n.t("afc.batch.confirm_delete", count=len(names), sample=sample),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
@@ -572,7 +582,7 @@ class AfcBrowserPanel(QWidget):
         cur_path, target, bundle_id, root = (
             self.cur_path, self.target, self.bundle_id, self.root
         )
-        self.status.setText(f"正在删除 {len(names)} 项…")
+        self.status.setText(i18n.t("afc.batch.deleting", count=len(names)))
 
         def _do() -> dict:
             ok, failed = 0, []
@@ -587,18 +597,20 @@ class AfcBrowserPanel(QWidget):
 
         self.runner.submit(
             _do,
-            on_done=lambda r: self._on_batch_done(r, "已删除", refresh=True),
-            on_error=lambda e: isValid(self) and self.status.setText(f"批量删除失败: {e}"),
+            on_done=lambda r: self._on_batch_done(r, "deleted", refresh=True),
+            on_error=lambda e: isValid(self) and self.status.setText(i18n.t("afc.batch.delete_failed", error=e)),
         )
 
-    def _on_batch_done(self, result: dict, verb: str, *, refresh: bool) -> None:
+    def _on_batch_done(self, result: dict, action: str, *, refresh: bool) -> None:
         if not isValid(self):
             return
         failed = result.get("failed", [])
         if failed:
-            self.status.setText(f"{verb} {result['ok']} 项，{len(failed)} 项失败")
+            self.status.setText(
+                i18n.t(f"afc.batch.{action}_partial", ok=result["ok"], failed=len(failed))
+            )
         else:
-            self.status.setText(f"{verb} {result['ok']} 项")
+            self.status.setText(i18n.t(f"afc.batch.{action}_ok", ok=result["ok"]))
         if refresh:
             self._refresh()
 
@@ -616,7 +628,7 @@ class AfcBrowserDialog(QDialog):
         app_name: str,
     ) -> None:
         super().__init__(parent)
-        scope = "Documents" if root == "documents" else "沙盒"
+        scope = i18n.t("afc.scope.documents") if root == "documents" else i18n.t("afc.scope.sandbox")
         self.setWindowTitle(f"{app_name} — {scope}")
         self.resize(620, 480)
         layout = QVBoxLayout(self)

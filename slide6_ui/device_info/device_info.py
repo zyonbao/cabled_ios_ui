@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
 # Surface the most-asked-for identifiers first; everything else follows sorted.
@@ -69,14 +71,14 @@ class DeviceInfoTab(QWidget):
 
         bar = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("筛选字段 / 值")
-        self.refresh_btn = QPushButton("刷新")
+        self.search_input.setPlaceholderText(i18n.t("device_info.filter_placeholder"))
+        self.refresh_btn = QPushButton(i18n.t("common.refresh"))
         bar.addWidget(self.search_input, 1)
         bar.addWidget(self.refresh_btn)
         root.addLayout(bar)
 
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["字段", "值"])
+        self.table.setHorizontalHeaderLabels([i18n.t("device_info.col.field"), i18n.t("device_info.col.value")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -86,7 +88,7 @@ class DeviceInfoTab(QWidget):
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         root.addWidget(self.table, 1)
 
-        self.status = QLabel("选择设备后展示设备信息")
+        self.status = QLabel(i18n.t("device_info.hint"))
         root.addWidget(self.status)
 
         self.refresh_btn.clicked.connect(self.reload_info)
@@ -105,29 +107,29 @@ class DeviceInfoTab(QWidget):
         if target:
             self.reload_info()
         else:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
 
     def reload_info(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
-        self.status.setText("正在读取设备信息…")
+        self.status.setText(i18n.t("device_info.reading"))
         self.refresh_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.device_info(target),
             on_done=self._on_info,
-            on_error=lambda e: self._fail(f"读取失败: {e}"),
+            on_error=lambda e: self._fail(i18n.t("device_info.read_failed_detail", error=e)),
         )
 
     def _on_info(self, result: dict) -> None:
         self.refresh_btn.setEnabled(True)
         if not result.get("ok"):
-            self._fail(result.get("error", {}).get("message", "读取失败"))
+            self._fail(localize_error(result.get("error")))
             return
         self._info = result["data"].get("info", {})
         self._render()
-        self.status.setText(f"共 {len(self._info)} 项")
+        self.status.setText(i18n.t("device_info.count", count=len(self._info)))
 
     def _fail(self, message: str) -> None:
         self.refresh_btn.setEnabled(True)
@@ -160,7 +162,7 @@ class DeviceInfoTab(QWidget):
 
     def _to_clipboard(self, text: str) -> None:
         QApplication.clipboard().setText(text)
-        self.status.setText(f"已复制: {text[:60]}")
+        self.status.setText(i18n.t("device_info.copied", text=text[:60]))
 
     def _copy_cell(self, item: QTableWidgetItem) -> None:
         self._to_clipboard(item.text())
@@ -174,7 +176,7 @@ class DeviceInfoTab(QWidget):
         key = self.table.item(row, 0).text()
         value = self.table.item(row, 1).text()
         menu = QMenu(self)
-        menu.addAction("复制字段名", lambda: self._to_clipboard(key))
-        menu.addAction("复制值", lambda: self._to_clipboard(value))
-        menu.addAction("复制 字段=值", lambda: self._to_clipboard(f"{key} = {value}"))
+        menu.addAction(i18n.t("device_info.copy_field"), lambda: self._to_clipboard(key))
+        menu.addAction(i18n.t("device_info.copy_value"), lambda: self._to_clipboard(value))
+        menu.addAction(i18n.t("device_info.copy_pair"), lambda: self._to_clipboard(f"{key} = {value}"))
         menu.exec(QCursor.pos())

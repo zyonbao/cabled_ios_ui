@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
 from . import tunnel
 
 # Which precondition is missing (None when ready). Stable keys for callers.
@@ -32,12 +33,17 @@ MISSING_RSD = "rsd"
 # The RSD developer service WDA / keyboard-mouse needs on iOS 17+.
 TESTMANAGERD_REMOTE = "com.apple.dt.testmanagerd.remote"
 
-# Actionable guidance per missing precondition (used for tooltips / status text).
-_GUIDANCE = {
-    MISSING_TUNNEL: "请先启用 XPC tunnel（开发者工具顶部「启动」）",
-    MISSING_DDI: "请到「开发者工具」根 tab 挂载 DDI",
-    MISSING_RSD: "tunnel 与 DDI 已就绪但开发者服务未生效：请重新挂载 DDI 或重启 XPC tunnel",
+# Stable i18n keys for actionable guidance per missing precondition.
+_GUIDANCE_KEY = {
+    MISSING_TUNNEL: "readiness.missing_tunnel",
+    MISSING_DDI: "readiness.missing_ddi",
+    MISSING_RSD: "readiness.missing_rsd",
 }
+
+
+def _guidance(missing: str) -> str:
+    """Localized guidance for a missing precondition (resolved at call time)."""
+    return i18n.t(_GUIDANCE_KEY[missing])
 
 
 @dataclass(frozen=True)
@@ -46,7 +52,7 @@ class Readiness:
 
     ``ready`` is True only when every applicable precondition is satisfied.
     ``missing`` names the first failing precondition (one of the MISSING_* keys)
-    or None when ready. ``message`` is actionable Chinese guidance for the UI.
+    or None when ready. ``message`` is actionable, localized guidance for the UI.
     """
 
     ready: bool
@@ -54,7 +60,12 @@ class Readiness:
     message: str
 
 
-_READY = Readiness(ready=True, missing=None, message="已就绪")
+def _missing(key: str) -> Readiness:
+    return Readiness(False, key, _guidance(key))
+
+
+def _ready() -> Readiness:
+    return Readiness(True, None, i18n.t("readiness.ready"))
 
 
 def _needs_tunnel(os_version: str) -> bool:
@@ -76,16 +87,16 @@ def evaluate(
     """
     if _needs_tunnel(os_version):
         if not tunnel_running:
-            return Readiness(False, MISSING_TUNNEL, _GUIDANCE[MISSING_TUNNEL])
+            return _missing(MISSING_TUNNEL)
         if not ddi_mounted:
-            return Readiness(False, MISSING_DDI, _GUIDANCE[MISSING_DDI])
+            return _missing(MISSING_DDI)
         if not rsd_ok:
-            return Readiness(False, MISSING_RSD, _GUIDANCE[MISSING_RSD])
-        return _READY
+            return _missing(MISSING_RSD)
+        return _ready()
     # iOS < 17: DDI mount is the only gate.
     if not ddi_mounted:
-        return Readiness(False, MISSING_DDI, _GUIDANCE[MISSING_DDI])
-    return _READY
+        return _missing(MISSING_DDI)
+    return _ready()
 
 
 def probe(target: str, os_version: str, *, known_mounted: "bool | None" = None) -> Readiness:
@@ -100,14 +111,14 @@ def probe(target: str, os_version: str, *, known_mounted: "bool | None" = None) 
 
     # Short-circuit: on iOS 17+ a missing tunnel makes DDI/RSD moot.
     if needs_tunnel and not tunnel_running:
-        return Readiness(False, MISSING_TUNNEL, _GUIDANCE[MISSING_TUNNEL])
+        return _missing(MISSING_TUNNEL)
 
     ddi_mounted = known_mounted
     if ddi_mounted is None:
         status = api.ddi_status(target)
         ddi_mounted = bool(status.get("ok") and status.get("data", {}).get("mounted"))
     if not ddi_mounted:
-        return Readiness(False, MISSING_DDI, _GUIDANCE[MISSING_DDI])
+        return _missing(MISSING_DDI)
 
     rsd_ok = True
     if needs_tunnel:

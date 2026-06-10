@@ -37,6 +37,8 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
 
@@ -73,14 +75,14 @@ class CrashReportsTab(QWidget):
         # Unified toolbar order across all file browsers: 上一级 - 路径编辑框 - 刷新,
         # followed by crash-specific filter / export / delete. The editable path
         # shows the crash root as "/" and jumps on Enter.
-        self.up_btn = QPushButton("上一级")
+        self.up_btn = QPushButton(i18n.t("common.up"))
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("输入路径后回车跳转")
-        self.refresh_btn = QPushButton("刷新")
+        self.path_edit.setPlaceholderText(i18n.t("afc.path_placeholder"))
+        self.refresh_btn = QPushButton(i18n.t("common.refresh"))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("按文件名过滤（大小写不敏感）")
-        self.export_btn = QPushButton("导出选中")
-        self.delete_btn = QPushButton("删除选中")
+        self.filter_input.setPlaceholderText(i18n.t("crash.filter_placeholder"))
+        self.export_btn = QPushButton(i18n.t("crash.export_selected"))
+        self.delete_btn = QPushButton(i18n.t("crash.delete_selected"))
         bar.addWidget(self.up_btn)
         bar.addWidget(self.path_edit, 1)
         bar.addWidget(self.refresh_btn)
@@ -90,7 +92,9 @@ class CrashReportsTab(QWidget):
         root.addLayout(bar)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["名称", "大小", "时间"])
+        self.table.setHorizontalHeaderLabels([
+            i18n.t("afc.col.name"), i18n.t("afc.col.size"), i18n.t("crash.col.time"),
+        ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -102,7 +106,7 @@ class CrashReportsTab(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         root.addWidget(self.table, 1)
 
-        self.status = QLabel("请选择一个设备")
+        self.status = QLabel(i18n.t("common.select_device_first"))
         root.addWidget(self.status)
 
     def _wire(self) -> None:
@@ -126,7 +130,7 @@ class CrashReportsTab(QWidget):
         if target:
             self.reload()
         else:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
 
     def _update_path(self) -> None:
         self.path_edit.setText("/" + self._cur_path)
@@ -135,15 +139,15 @@ class CrashReportsTab(QWidget):
     def reload(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
-        self.status.setText("正在加载崩溃日志…")
+        self.status.setText(i18n.t("crash.loading"))
         self.refresh_btn.setEnabled(False)
         sub_path = self._cur_path or "/"
         self.runner.submit(
             lambda: api.list_crashes(target, sub_path),
             on_done=self._on_entries,
-            on_error=lambda e: self._fail(f"加载失败: {e}"),
+            on_error=lambda e: self._fail(i18n.t("afc.load_failed_detail", error=e)),
         )
 
     # ------------------------------------------------------------ navigation
@@ -181,11 +185,11 @@ class CrashReportsTab(QWidget):
     def _on_entries(self, result: dict) -> None:
         self.refresh_btn.setEnabled(True)
         if not result.get("ok"):
-            self._fail(result.get("error", {}).get("message", "加载失败"))
+            self._fail(localize_error(result.get("error")))
             return
         self._entries = result["data"].get("entries", [])
         self._render()
-        self.status.setText(f"共 {len(self._entries)} 项")
+        self.status.setText(i18n.t("afc.item_count", count=len(self._entries)))
 
     def _fail(self, message: str) -> None:
         self.refresh_btn.setEnabled(True)
@@ -219,8 +223,8 @@ class CrashReportsTab(QWidget):
         if not self._selected_entries():
             return
         menu = QMenu(self)
-        export_action = menu.addAction("导出")
-        delete_action = menu.addAction("删除")
+        export_action = menu.addAction(i18n.t("crash.export"))
+        delete_action = menu.addAction(i18n.t("crash.delete"))
         action = menu.exec(self.table.viewport().mapToGlobal(pos))
         if action is export_action:
             self._export_selected()
@@ -232,20 +236,20 @@ class CrashReportsTab(QWidget):
     def _export_selected(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
         entries = self._selected_entries()
         if not entries:
-            self.status.setText("请先选择要导出的崩溃日志")
+            self.status.setText(i18n.t("crash.need_select_export"))
             return
-        out_dir = QFileDialog.getExistingDirectory(self, "导出崩溃日志到")
+        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("crash.export_to"))
         if not out_dir:
             return
         keep = self._ask_keep_original()
         if keep is None:
             return  # cancelled
         paths = [e.get("path", "") for e in entries]
-        self.status.setText(f"正在导出 {len(paths)} 项…")
+        self.status.setText(i18n.t("crash.exporting", count=len(paths)))
         self.export_btn.setEnabled(False)
         erase = not keep
 
@@ -262,16 +266,16 @@ class CrashReportsTab(QWidget):
         self.runner.submit(
             _do_export,
             on_done=self._on_export_done,
-            on_error=lambda e: self._after_export(f"导出失败: {e}"),
+            on_error=lambda e: self._after_export(i18n.t("crash.export_failed", error=e)),
         )
 
     def _ask_keep_original(self) -> "bool | None":
         """Ask whether to keep the original on device. None = cancelled."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("导出选项")
+        dlg.setWindowTitle(i18n.t("crash.export_options_title"))
         layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel("导出崩溃日志到所选目录。"))
-        keep_box = QCheckBox("保留设备上的原文件（取消勾选则导出后从设备删除）")
+        layout.addWidget(QLabel(i18n.t("crash.export_options_body")))
+        keep_box = QCheckBox(i18n.t("crash.keep_original"))
         keep_box.setChecked(True)
         layout.addWidget(keep_box)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dlg)
@@ -284,11 +288,11 @@ class CrashReportsTab(QWidget):
 
     def _on_export_done(self, result: dict) -> None:
         failed = result.get("failed", [])
-        suffix = "（已删除设备原文件）" if result.get("erased") else ""
+        suffix = i18n.t("crash.erased_suffix") if result.get("erased") else ""
         if failed:
-            self._after_export(f"已导出 {result['ok']} 项，{len(failed)} 项失败{suffix}")
+            self._after_export(i18n.t("crash.exported_partial", ok=result['ok'], failed=len(failed), suffix=suffix))
         else:
-            self._after_export(f"已导出 {result['ok']} 项{suffix}")
+            self._after_export(i18n.t("crash.exported_ok", ok=result['ok'], suffix=suffix))
         if result.get("erased"):
             self.reload()
 
@@ -301,21 +305,21 @@ class CrashReportsTab(QWidget):
     def _delete_selected(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
         entries = self._selected_entries()
         if not entries:
-            self.status.setText("请先选择要删除的崩溃日志")
+            self.status.setText(i18n.t("crash.need_select_delete"))
             return
         reply = QMessageBox.question(
-            self, "删除崩溃日志",
-            f"确定从设备删除选中的 {len(entries)} 项崩溃日志？此操作不可恢复。",
+            self, i18n.t("crash.delete_title"),
+            i18n.t("crash.delete_confirm", count=len(entries)),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
         paths = [e.get("path", "") for e in entries]
-        self.status.setText(f"正在删除 {len(paths)} 项…")
+        self.status.setText(i18n.t("crash.deleting", count=len(paths)))
         self.delete_btn.setEnabled(False)
 
         def _do_delete() -> dict:
@@ -331,15 +335,15 @@ class CrashReportsTab(QWidget):
         self.runner.submit(
             _do_delete,
             on_done=self._on_delete_done,
-            on_error=lambda e: self._after_delete(f"删除失败: {e}"),
+            on_error=lambda e: self._after_delete(i18n.t("crash.delete_failed", error=e)),
         )
 
     def _on_delete_done(self, result: dict) -> None:
         failed = result.get("failed", [])
         if failed:
-            self._after_delete(f"已删除 {result['ok']} 项，{len(failed)} 项失败")
+            self._after_delete(i18n.t("crash.deleted_partial", ok=result['ok'], failed=len(failed)))
         else:
-            self._after_delete(f"已删除 {result['ok']} 项")
+            self._after_delete(i18n.t("crash.deleted_ok", ok=result['ok']))
         self.reload()
 
     def _after_delete(self, message: str) -> None:

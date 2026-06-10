@@ -39,23 +39,30 @@ from PySide6.QtWidgets import (
 
 from ios_toolkit import toolkit_api as api
 
+from .. import i18n
+from ..common.errors import localize_error
 from .log_panel import LogPanelBase
 
-# (field-key, column header, default-width). The key matches the dict produced by
-# the platform layer's _oslog_entry_to_dict; order is the table column order.
-# subsystem sits before the wide, stretching message column (which stays last).
+# (field-key, i18n-header-key, default-width). The field key matches the dict
+# produced by the platform layer's _oslog_entry_to_dict; order is the table
+# column order. subsystem sits before the wide, stretching message column.
 _COLUMNS: list[tuple[str, str, int]] = [
-    ("pid", "PID", 64),
-    ("timestamp", "时间", 180),
-    ("level", "级别", 72),
-    ("filename", "文件名", 150),
-    ("image_name", "镜像名", 150),
-    ("subsystem", "子系统", 170),
-    ("category", "类别", 120),
-    ("message", "消息", 320),
+    ("pid", "oslog.col.pid", 64),
+    ("timestamp", "oslog.col.timestamp", 180),
+    ("level", "oslog.col.level", 72),
+    ("filename", "oslog.col.filename", 150),
+    ("image_name", "oslog.col.image_name", 150),
+    ("subsystem", "oslog.col.subsystem", 170),
+    ("category", "oslog.col.category", 120),
+    ("message", "oslog.col.message", 320),
 ]
 # Columns shown by default; the rest start hidden (toggle via the eye button).
 _DEFAULT_VISIBLE = {"message"}
+
+
+def _col_label(header_key: str) -> str:
+    """Resolve a column header i18n key to its localized label at runtime."""
+    return i18n.t(header_key)
 
 
 class _OslogModel(QAbstractTableModel):
@@ -79,7 +86,7 @@ class _OslogModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):  # noqa: N802
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return _COLUMNS[section][1]
+            return _col_label(_COLUMNS[section][1])
         return None
 
     def append(self, entries: list[dict]) -> None:
@@ -165,11 +172,11 @@ class OslogPanel(LogPanelBase):
     # ------------------------------------------------------------ controls
 
     def _build_controls(self, bar: QHBoxLayout) -> None:
-        self.eye_btn = QPushButton("👁 列")
-        self.eye_btn.setToolTip("选择要显示的列")
+        self.eye_btn = QPushButton(i18n.t("oslog.columns"))
+        self.eye_btn.setToolTip(i18n.t("oslog.columns_tooltip"))
         # Clicking the field opens the multi-field popup (vs syslog typing inline).
-        self.filter_btn = _FilterButton("点击设置过滤（pid / 字段，子串匹配当前日志）")
-        self.export_btn = QPushButton("导出…")
+        self.filter_btn = _FilterButton(i18n.t("oslog.filter_placeholder"))
+        self.export_btn = QPushButton(i18n.t("oslog.export"))
         bar.addWidget(self.eye_btn)
         bar.addWidget(self.filter_btn, 1)
         bar.addWidget(self.export_btn)
@@ -212,12 +219,12 @@ class OslogPanel(LogPanelBase):
         lay = QVBoxLayout(holder)
         lay.setContentsMargins(8, 6, 8, 6)
         checks: dict[int, QCheckBox] = {}
-        for col, (_, header, _w) in enumerate(_COLUMNS):
-            cb = QCheckBox(header, holder)
+        for col, (_, header_key, _w) in enumerate(_COLUMNS):
+            cb = QCheckBox(_col_label(header_key), holder)
             cb.setChecked(not self.table.isColumnHidden(col))
             lay.addWidget(cb)
             checks[col] = cb
-        apply_btn = QPushButton("应用", holder)
+        apply_btn = QPushButton(i18n.t("common.apply"), holder)
         lay.addWidget(apply_btn)
         action = QWidgetAction(menu)
         action.setDefaultWidget(holder)
@@ -237,13 +244,13 @@ class OslogPanel(LogPanelBase):
 
     def _show_filter_dialog(self) -> None:
         dlg = QDialog(self)
-        dlg.setWindowTitle("oslog 过滤")
+        dlg.setWindowTitle(i18n.t("oslog.filter_title"))
         form = QFormLayout(dlg)
         edits: dict[str, QLineEdit] = {}
-        for key, header, _w in _COLUMNS:
+        for key, header_key, _w in _COLUMNS:
             edit = QLineEdit(self._conditions.get(key, ""), dlg)
-            edit.setPlaceholderText("子串匹配，留空不生效")
-            form.addRow(header, edit)
+            edit.setPlaceholderText(i18n.t("oslog.filter_field_placeholder"))
+            form.addRow(_col_label(header_key), edit)
             edits[key] = edit
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg
@@ -320,14 +327,14 @@ class OslogPanel(LogPanelBase):
         if not isinstance(entry, dict):
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle("日志详情")
+        dlg.setWindowTitle(i18n.t("oslog.detail_title"))
         dlg.resize(560, 360)
         lay = QVBoxLayout(dlg)
         text = QPlainTextEdit(dlg)
         text.setReadOnly(True)
         lines = [
-            f"{header}: {'' if entry.get(key) is None else entry.get(key)}"
-            for key, header, _w in _COLUMNS
+            f"{_col_label(header_key)}: {'' if entry.get(key) is None else entry.get(key)}"
+            for key, header_key, _w in _COLUMNS
         ]
         text.setPlainText("\n".join(lines))
         lay.addWidget(text)
@@ -341,8 +348,8 @@ class OslogPanel(LogPanelBase):
 
     def _show_export_menu(self) -> None:
         menu = QMenu(self)
-        menu.addAction("导出为文本", self._export_text)
-        menu.addAction("导出为 .logarchive", self._export_logarchive)
+        menu.addAction(i18n.t("oslog.export_text"), self._export_text)
+        menu.addAction(i18n.t("oslog.export_logarchive"), self._export_logarchive)
         menu.exec(self.export_btn.mapToGlobal(self.export_btn.rect().bottomLeft()))
 
     def _visible_rows_text(self) -> str:
@@ -355,27 +362,27 @@ class OslogPanel(LogPanelBase):
 
     def _export_text(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出为文本", "oslog.log", "日志文件 (*.log *.txt)"
+            self, i18n.t("oslog.export_text"), "oslog.log", i18n.t("syslog.log_filter")
         )
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self._visible_rows_text())
-            self.status.setText(f"已导出文本到 {path}")
+            self.status.setText(i18n.t("oslog.exported_text_to", path=path))
         except OSError as exc:
-            self.status.setText(f"导出失败: {exc}")
+            self.status.setText(i18n.t("oslog.export_failed", error=exc))
 
     def _export_logarchive(self) -> None:
         target = self._get_target()
         if not target:
-            self.status.setText("未选择设备")
+            self.status.setText(i18n.t("dev_tools.no_device"))
             return
-        path = QFileDialog.getExistingDirectory(self, "选择 .logarchive 输出目录")
+        path = QFileDialog.getExistingDirectory(self, i18n.t("oslog.select_logarchive_dir"))
         if not path:
             return
         out_path = path if path.endswith(".logarchive") else f"{path}/device.logarchive"
-        self.status.setText("正在收集 .logarchive（可能需要一些时间）…")
+        self.status.setText(i18n.t("oslog.collecting"))
         self.export_btn.setEnabled(False)
         self.runner.submit(
             lambda: api.collect_logarchive(target, out_path),
@@ -389,9 +396,9 @@ class OslogPanel(LogPanelBase):
         self.export_btn.setEnabled(True)
         if result.get("ok"):
             self.status.setText(
-                f"已导出 .logarchive 到 {result.get('data', {}).get('path', '')}"
+                i18n.t("oslog.logarchive_exported_to", path=result.get('data', {}).get('path', ''))
             )
         else:
             self.status.setText(
-                "导出 .logarchive 失败: " + result.get("error", {}).get("message", "")
+                i18n.t("oslog.logarchive_failed") + ": " + localize_error(result.get("error"))
             )

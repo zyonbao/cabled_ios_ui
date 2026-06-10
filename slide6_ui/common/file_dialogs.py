@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import i18n
+
 # Keep the native panel disabled until the app is codesigned. This is the single
 # switch to flip later; all file pickers should route through this module.
 USE_NATIVE_FILE_DIALOG = False
@@ -74,9 +76,9 @@ class _PathBarFileDialog(QFileDialog):
         row = QHBoxLayout(bar)
         row.setContentsMargins(0, 0, 0, 0)
         self._path_bar = QLineEdit(self.directory().absolutePath())
-        self._path_bar.setPlaceholderText("输入文件夹或文件的绝对路径后回车跳转")
-        go = QPushButton("跳转", bar)
-        row.addWidget(QLabel("路径", bar))
+        self._path_bar.setPlaceholderText(i18n.t("file_dialog.path_placeholder"))
+        go = QPushButton(i18n.t("file_dialog.go"), bar)
+        row.addWidget(QLabel(i18n.t("file_dialog.path_label"), bar))
         row.addWidget(self._path_bar, 1)
         row.addWidget(go)
 

@@ -14,4 +14,4 @@
 ## 3. 验证
 
 - [x] 3.1 lint 无误（仅既有 basedpyright 相对导入告警）+ 导入冒烟（`slide6_ui.main_window` OK，`_build_logging_tab` 已移除）
-- [ ] 3.2 手验：打开 Settings 仅两个标签；General 显示配置文件路径，点击 Show in Finder 能定位选中；日志开关/目录在 General 内可改且即时生效、重启沿用；持久化键不变
+- [x] 3.2 手验：打开 Settings 仅两个标签；General 显示配置文件路径，点击 Show in Finder 能定位选中；日志开关/目录在 General 内可改且即时生效、重启沿用；持久化键不变
