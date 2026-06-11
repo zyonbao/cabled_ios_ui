@@ -1921,45 +1921,9 @@ class iOSDevice:
             # Supervised / MDM-locked profiles refuse removal; surface as error.
             return _err("SUBPROCESS", str(exc))
 
-    def export_profile(self, identifier: str, local_path: str) -> dict:
-        """Export an installed profile's raw bytes to a local .mobileconfig.
-
-        The raw profile bytes are carried by get_profile_list()'s
-        'ProfileManifest' map (identifier -> {'Data': <bytes>, ...}); they are
-        written verbatim (a signed profile stays a CMS-signed blob).
-        """
-        from .toolkit_api import _ok, _err
-
-        if not identifier:
-            return _err("BAD_TARGET", "identifier is required")
-
-        async def _op() -> bytes:
-            from pymobiledevice3.lockdown import create_using_usbmux
-            from pymobiledevice3.services.mobile_config import MobileConfigService
-
-            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
-            async with lockdown:
-                async with MobileConfigService(lockdown=lockdown) as mc:
-                    raw = await mc.get_profile_list()
-            manifest = (raw or {}).get("ProfileManifest") or {}
-            entry = manifest.get(identifier)
-            if not entry or entry.get("Data") is None:
-                raise KeyError(identifier)
-            return bytes(entry["Data"])
-
-        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
-        try:
-            data = future.result(timeout=30)
-        except KeyError:
-            return _err("NOT_FOUND", f"profile not found on device: {identifier}")
-        except Exception as exc:
-            return _err("SUBPROCESS", str(exc))
-        try:
-            with open(local_path, "wb") as f:
-                f.write(data)
-        except OSError as exc:
-            return _err("SUBPROCESS", f"write failed: {exc}")
-        return _ok({"exported": True, "identifier": identifier, "path": local_path})
+    # Note: iOS does not expose the raw bytes of an installed profile via
+    # MCInstall (GetProfileList returns metadata only), so there is no
+    # export_profile capability.
 
     # ------------------------------------------------------------------
     # Crash reports (crash_reports / CrashReportsManager over AFC2)

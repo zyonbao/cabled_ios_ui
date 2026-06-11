@@ -1,9 +1,13 @@
 """profiles_tab.py — the "描述文件" sidebar tab.
 
 Lists the configuration profiles installed on the selected device and supports
-install (click or drag a .mobileconfig), multi-select removal, and export
-(single → save-as, multi → choose a directory). Profiles talk to the lockdown
-MCInstall service directly and need neither WDA nor the XPC tunnel.
+install (click or drag a .mobileconfig) and multi-select removal. Profiles talk
+to the lockdown MCInstall service directly and need neither WDA nor the XPC
+tunnel.
+
+Note: iOS does not expose the raw bytes of an already-installed profile via
+MCInstall (GetProfileList returns metadata only), so exporting installed
+profiles is intentionally not offered.
 
 Installing a profile usually still requires the user to confirm it in the device
 Settings app (system behaviour), so the UI surfaces that hint after delivery.
@@ -56,11 +60,9 @@ class ProfilesTab(QWidget):
         bar = QHBoxLayout()
         self.refresh_btn = QPushButton(i18n.t("common.refresh"))
         self.install_btn = QPushButton(i18n.t("profiles.install"))
-        self.export_btn = QPushButton(i18n.t("profiles.export_selected"))
         self.remove_btn = QPushButton(i18n.t("profiles.remove_selected"))
         bar.addWidget(self.refresh_btn)
         bar.addWidget(self.install_btn)
-        bar.addWidget(self.export_btn)
         bar.addStretch(1)
         bar.addWidget(self.remove_btn)
         root.addLayout(bar)
@@ -89,7 +91,6 @@ class ProfilesTab(QWidget):
     def _wire(self) -> None:
         self.refresh_btn.clicked.connect(self.reload)
         self.install_btn.clicked.connect(self._on_install_clicked)
-        self.export_btn.clicked.connect(self._on_export_clicked)
         self.remove_btn.clicked.connect(self._on_remove_clicked)
         install_table_copy_menu(
             self.table,
@@ -178,103 +179,11 @@ class ProfilesTab(QWidget):
         self.install_btn.setEnabled(True)
         self.status.setText(message)
 
-    # --------------------------------------------------------------- export
+    # ---------------------------------------------------------------- remove
 
     def _selected_profiles(self) -> list[dict]:
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         return [self._profiles[r] for r in rows if 0 <= r < len(self._profiles)]
-
-    def _on_export_clicked(self) -> None:
-        target = self._get_target()
-        if not target:
-            self.status.setText(i18n.t("dev_tools.no_device"))
-            return
-        profiles = self._selected_profiles()
-        if not profiles:
-            self.status.setText(i18n.t("profiles.need_select_export"))
-            return
-        if len(profiles) == 1:
-            self._export_single(target, profiles[0])
-        else:
-            self._export_many(target, profiles)
-
-    @staticmethod
-    def _safe_name(text: str) -> str:
-        """A filesystem-safe base name for an exported .mobileconfig."""
-        keep = "".join(c if c.isalnum() or c in " ._-" else "_" for c in text)
-        return keep.strip() or "profile"
-
-    def _export_single(self, target: str, profile: dict) -> None:
-        identifier = profile.get("identifier", "")
-        if not identifier:
-            self.status.setText(i18n.t("profiles.missing_identifier"))
-            return
-        default_name = self._safe_name(profile.get("name") or identifier) + ".mobileconfig"
-        download_dir = os.path.expanduser("~/Downloads")
-        if not os.path.isdir(download_dir):
-            download_dir = os.path.expanduser("~")
-        local_path, _ = QFileDialog.getSaveFileName(
-            self, i18n.t("profiles.export_title"), os.path.join(download_dir, default_name),
-            i18n.t("profiles.file_filter"),
-        )
-        if not local_path:
-            return
-        self.status.setText(i18n.t("profiles.exporting_one", name=profile.get('name') or identifier))
-        self.export_btn.setEnabled(False)
-        self.runner.submit(
-            lambda: api.export_profile(target, identifier, local_path),
-            on_done=lambda r: self._on_single_exported(r, local_path),
-            on_error=lambda e: self._after_export(i18n.t("profiles.export_failed", error=e)),
-        )
-
-    def _on_single_exported(self, result: dict, local_path: str) -> None:
-        if result.get("ok"):
-            self._after_export(i18n.t("profiles.exported_to", path=local_path))
-        else:
-            msg = localize_error(result.get("error"))
-            self._after_export(i18n.t("profiles.export_failed_msg", msg=msg))
-
-    def _export_many(self, target: str, profiles: list[dict]) -> None:
-        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("profiles.export_to"))
-        if not out_dir:
-            return
-        # Name by identifier (unique) to avoid same-name overwrites.
-        items = [
-            (p.get("identifier", ""), self._safe_name(p.get("identifier", "")) + ".mobileconfig")
-            for p in profiles
-            if p.get("identifier")
-        ]
-        self.status.setText(i18n.t("profiles.exporting_many", count=len(items)))
-        self.export_btn.setEnabled(False)
-
-        def _do_export() -> dict:
-            ok, failed = 0, []
-            for identifier, filename in items:
-                res = api.export_profile(target, identifier, os.path.join(out_dir, filename))
-                if res.get("ok"):
-                    ok += 1
-                else:
-                    failed.append(identifier)
-            return {"ok": ok, "failed": failed}
-
-        self.runner.submit(
-            _do_export,
-            on_done=self._on_many_exported,
-            on_error=lambda e: self._after_export(i18n.t("profiles.export_failed", error=e)),
-        )
-
-    def _on_many_exported(self, result: dict) -> None:
-        failed = result.get("failed", [])
-        if failed:
-            self._after_export(i18n.t("profiles.exported_partial", ok=result['ok'], failed=len(failed)))
-        else:
-            self._after_export(i18n.t("profiles.exported_ok", ok=result['ok']))
-
-    def _after_export(self, message: str) -> None:
-        self.export_btn.setEnabled(True)
-        self.status.setText(message)
-
-    # ---------------------------------------------------------------- remove
 
     def _on_remove_clicked(self) -> None:
         target = self._get_target()

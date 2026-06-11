@@ -703,18 +703,6 @@ def remove_profile(target: str, identifier: str) -> dict:
     return device.remove_profile(identifier)
 
 
-def export_profile(target: str, identifier: str, local_path: str) -> dict:
-    """Export an installed profile's raw bytes to a local .mobileconfig."""
-    if not identifier:
-        return _err("BAD_TARGET", "identifier is required")
-    if not local_path:
-        return _err("BAD_TARGET", "local_path is required")
-    device, err = _prepare_device_basic(target)
-    if err:
-        return err
-    return device.export_profile(identifier, local_path)
-
-
 # ---------------------------------------------------------------------------
 # Crash reports (crash_reports)
 # ---------------------------------------------------------------------------
