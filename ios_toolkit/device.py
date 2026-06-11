@@ -14,6 +14,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -59,6 +60,10 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     )
     from pymobiledevice3.services.syslog import SyslogService  # noqa: F401
     from pymobiledevice3.services.os_trace import OsTraceService  # noqa: F401
+    from pymobiledevice3.services.diagnostics import (  # noqa: F401
+        DiagnosticsService,
+    )
+    from pymobiledevice3.exceptions import DeprecationError  # noqa: F401
     from pymobiledevice3.remote.remote_service_discovery import (  # noqa: F401
         RemoteServiceDiscoveryService,
     )
@@ -476,6 +481,25 @@ def _dvt_exc_to_err(exc: Exception) -> dict:
 
     if isinstance(exc, _TunnelRequiredError):
         return _err("SUBPROCESS", str(exc), code="TUNNEL_REQUIRED")
+    return _err("SUBPROCESS", str(exc))
+
+
+def _diag_exc_to_err(exc: Exception) -> dict:
+    """Map a DiagnosticsService exception to an error envelope with a stable code.
+
+    Adds DiagnosticsService-specific mapping on top of the DVT mapping: a missing
+    XPC tunnel becomes ``TUNNEL_REQUIRED`` and a MobileGestalt ``DeprecationError``
+    (iOS >= 17.4) becomes ``MOBILEGESTALT_DEPRECATED``; everything else stays a
+    generic SUBPROCESS with the exception text as English debug detail.
+    """
+    from pymobiledevice3.exceptions import DeprecationError
+
+    from .toolkit_api import _err
+
+    if isinstance(exc, _TunnelRequiredError):
+        return _err("SUBPROCESS", str(exc), code="TUNNEL_REQUIRED")
+    if isinstance(exc, DeprecationError):
+        return _err("SUBPROCESS", str(exc), code="MOBILEGESTALT_DEPRECATED")
     return _err("SUBPROCESS", str(exc))
 
 
@@ -1438,6 +1462,15 @@ class iOSDevice:
     # These operate over lockdown/usbmux and do NOT require WDA or an XPC
     # tunnel, so they work regardless of WDA install state or iOS version.
 
+    @staticmethod
+    def _format_app_version(short: "Optional[str]", build: "Optional[str]") -> str:
+        """Render an app version as 'short (build)', collapsing duplicates/blanks."""
+        short = (short or "").strip()
+        build = (build or "").strip()
+        if short and build and build != short:
+            return f"{short} ({build})"
+        return short or build
+
     def list_apps(self) -> dict:
         """List installed apps with fileSharing / sandbox-access metadata."""
         from .toolkit_api import _ok, _err
@@ -1475,6 +1508,13 @@ class iOSDevice:
                 "bundleId": bundle_id,
                 "name": (info.get("CFBundleDisplayName")
                          or info.get("CFBundleName") or bundle_id),
+                # Marketing version (build in parentheses when it differs); both
+                # already come back in this same get_apps payload, so exposing
+                # them is free — no extra device round-trip.
+                "version": self._format_app_version(
+                    info.get("CFBundleShortVersionString"),
+                    info.get("CFBundleVersion"),
+                ),
                 "appType": info.get("ApplicationType", ""),
                 "fileSharing": bool(info.get("UIFileSharingEnabled", False)),
                 "sandboxAccessible": sandbox_accessible,
@@ -2531,6 +2571,140 @@ class iOSDevice:
         except Exception as exc:
             logger.warning("kill_process failed (pid=%s): %s", pid_int, exc, exc_info=True)
             return _dvt_exc_to_err(exc)
+
+    # -- Diagnostics ------------------------------------------------------
+
+    async def _with_diagnostics(self, op: "Callable[[object], Awaitable]"):
+        """Open a DiagnosticsService for one request and run ``op(ds)``.
+
+        iOS < 17 connects over usbmux lockdown; iOS 17+ connects over the
+        tunneld RSD (raising _TunnelRequiredError when the tunnel is not up).
+        Unlike DVT, this does NOT require a mounted DDI.
+        """
+        from pymobiledevice3.services.diagnostics import DiagnosticsService
+
+        major = self._ios_major_version()
+        if major >= 17:
+            rsd = _get_rsd_from_tunneld(self.udid)
+            if rsd is None:
+                raise _TunnelRequiredError(_TUNNEL_REQUIRED_MSG)
+            from pymobiledevice3.remote.remote_service_discovery import (
+                RemoteServiceDiscoveryService,
+            )
+
+            async with RemoteServiceDiscoveryService(rsd) as rsd_svc:
+                async with DiagnosticsService(rsd_svc) as ds:
+                    return await op(ds)
+        else:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                async with DiagnosticsService(lockdown) as ds:
+                    return await op(ds)
+
+    async def _diag_power(self, action_name: str) -> None:
+        """Send a power action (Restart/Shutdown/Sleep) via DiagnosticsService.
+
+        The action's Success response arrives before the device tears down, so
+        the service close that follows can fail once the device drops the
+        connection; that teardown error is suppressed because the action has
+        already succeeded.
+        """
+        from pymobiledevice3.services.diagnostics import DiagnosticsService
+
+        major = self._ios_major_version()
+        if major >= 17:
+            rsd = _get_rsd_from_tunneld(self.udid)
+            if rsd is None:
+                raise _TunnelRequiredError(_TUNNEL_REQUIRED_MSG)
+            from pymobiledevice3.remote.remote_service_discovery import (
+                RemoteServiceDiscoveryService,
+            )
+
+            async with RemoteServiceDiscoveryService(rsd) as rsd_svc:
+                ds = DiagnosticsService(rsd_svc)
+                await ds.connect()
+                try:
+                    await ds.action(action_name)
+                finally:
+                    with contextlib.suppress(Exception):
+                        await ds.close()
+        else:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                ds = DiagnosticsService(lockdown)
+                await ds.connect()
+                try:
+                    await ds.action(action_name)
+                finally:
+                    with contextlib.suppress(Exception):
+                        await ds.close()
+
+    def _run_diag_power(self, action_name: str, label: str) -> dict:
+        """Shared power-action runner: dispatch, bound by timeout, uniform errors."""
+        from .toolkit_api import _ok
+
+        logger.info("diag power: udid=%s action=%s", self.udid, action_name)
+        future = asyncio.run_coroutine_threadsafe(
+            self._diag_power(action_name), _bg_loop
+        )
+        try:
+            future.result(timeout=30)
+            logger.info("diag power: %s sent (udid=%s)", action_name, self.udid)
+            return _ok({"action": action_name})
+        except Exception as exc:
+            logger.warning("diag power %s failed (udid=%s): %s", action_name, self.udid, exc, exc_info=True)
+            return _dvt_exc_to_err(exc)
+
+    def device_restart(self) -> dict:
+        """Restart (reboot) the device via DiagnosticsService."""
+        return self._run_diag_power("Restart", "restart")
+
+    def device_shutdown(self) -> dict:
+        """Power off the device via DiagnosticsService."""
+        return self._run_diag_power("Shutdown", "shutdown")
+
+    def device_sleep(self) -> dict:
+        """Put the device to sleep via DiagnosticsService."""
+        return self._run_diag_power("Sleep", "sleep")
+
+    def _run_diag_query(self, name: str, op: "Callable[[object], Awaitable]") -> dict:
+        """Shared info-query runner: open DiagnosticsService, run op, wrap result."""
+        from .toolkit_api import _ok
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._with_diagnostics(op), _bg_loop
+        )
+        try:
+            data = future.result(timeout=30)
+            logger.debug("diag query %s ok (udid=%s)", name, self.udid)
+            return _ok({"info": data if data is not None else {}})
+        except Exception as exc:
+            logger.warning("diag query %s failed (udid=%s): %s", name, self.udid, exc, exc_info=True)
+            return _diag_exc_to_err(exc)
+
+    def diagnostics_battery(self) -> dict:
+        """Query battery (IOPMPowerSource) diagnostics."""
+        return self._run_diag_query("battery", lambda ds: ds.get_battery())
+
+    def diagnostics_wifi(self) -> dict:
+        """Query Wi-Fi interface diagnostics."""
+        return self._run_diag_query("wifi", lambda ds: ds.get_wifi())
+
+    def diagnostics_info(self) -> dict:
+        """Query the full diagnostics info bundle (diag_type='All')."""
+        return self._run_diag_query("info", lambda ds: ds.info("All"))
+
+    def diagnostics_ioregistry(self) -> dict:
+        """Query the device IORegistry (root, unfiltered)."""
+        return self._run_diag_query("ioregistry", lambda ds: ds.ioregistry())
+
+    def diagnostics_mobilegestalt(self) -> dict:
+        """Query MobileGestalt keys (deprecated by Apple on iOS >= 17.4)."""
+        return self._run_diag_query("mobilegestalt", lambda ds: ds.mobilegestalt())
 
     # -- Virtual location -------------------------------------------------
 

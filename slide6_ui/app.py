@@ -72,9 +72,11 @@ def _init_logging() -> None:
 
 def main() -> None:
     app = QApplication(sys.argv)
-    # Kept as the legacy name on purpose to stay consistent with the QSettings
-    # storage key (see main_window._SETTINGS_APP) and preserve saved preferences.
-    app.setApplicationName("slide6_console")
+    # Match the QSettings identifier (see main_window._SETTINGS_ORG/_SETTINGS_APP)
+    # so QStandardPaths and the preferences plist resolve under the same name
+    # (com.unnamed.cabled_ios on macOS).
+    app.setOrganizationName("unnamed")
+    app.setApplicationName("cabled_ios")
     _init_logging()
     # Select the UI language before constructing any window (restart-to-apply).
     i18n.init()

@@ -31,6 +31,7 @@
       "profiles": "Profiles",
       "keymouse": "Key/Mouse",
       "crash": "Crash Reports",
+      "diagnostics": "Diagnostics",
       "developer_tools": "Developer Tools"
     },
     "device_combo": {
@@ -97,6 +98,41 @@
       "move_down": "Move Down"
     }
   },
+  "diagnostics": {
+    "no_device": "No device selected",
+    "ready": "Select an action above",
+    "tunnel_required_hint": "iOS 17+ diagnostics require the XPC tunnel: start it above, then retry.",
+    "section": {
+      "power": "Power Control",
+      "info": "Diagnostics"
+    },
+    "tile": {
+      "restart": { "title": "Restart", "sub": "Reboot the device" },
+      "shutdown": { "title": "Shut Down", "sub": "Power off the device" },
+      "sleep": { "title": "Sleep", "sub": "Put the device to sleep" },
+      "battery": { "title": "Battery Status", "sub": "Power source diagnostics" },
+      "wifi": { "title": "Wi-Fi Status", "sub": "Wireless interface diagnostics" },
+      "info": { "title": "Diagnostic Info", "sub": "Full diagnostics bundle" },
+      "ioregistry": { "title": "IORegistry Info", "sub": "Device IORegistry tree" },
+      "mobilegestalt": { "title": "MobileGestalt", "sub": "MobileGestalt keys (iOS < 17.4)" }
+    },
+    "confirm": {
+      "restart": { "title": "Restart device?", "body": "The device will reboot now. Continue?" },
+      "shutdown": { "title": "Shut down device?", "body": "The device will power off now and must be turned back on manually. Continue?" },
+      "sleep": { "title": "Sleep device?", "body": "The device will go to sleep now. Continue?" }
+    },
+    "status": {
+      "querying": "Querying…",
+      "done": "Done",
+      "failed": "Failed: {error}",
+      "restart_sending": "Sending restart…",
+      "restart_sent": "Restart request sent",
+      "shutdown_sending": "Sending shutdown…",
+      "shutdown_sent": "Shutdown request sent",
+      "sleep_sending": "Sending sleep…",
+      "sleep_sent": "Sleep request sent"
+    }
+  },
   "dev_tools": {
     "no_device": "No device selected",
     "mount_method": {
@@ -128,6 +164,8 @@
       "start": "Start",
       "stop": "Stop",
       "restart": "Restart",
+      "refresh": "Refresh",
+      "refreshed": "XPC tunnel status refreshed",
       "running": "XPC tunnel: running",
       "stopped": "XPC tunnel: stopped",
       "already_running": "XPC tunnel is already running",
@@ -566,6 +604,7 @@
     "col": {
       "name": "Name",
       "size": "Size",
+      "version": "Version",
       "actions": "Actions"
     },
     "action": {
@@ -634,6 +673,7 @@
     "DVT_READY_TIMEOUT": "Timed out waiting for DVT readiness (device still preparing DeveloperDiskImage)",
     "RSD_QUERY_TIMEOUT": "Querying RSD service timed out (XPC tunnel not responding)",
     "TUNNEL_REQUIRED": "This iOS 17+ operation requires the XPC tunnel: start it (admin authorization required), then retry.",
+    "MOBILEGESTALT_DEPRECATED": "MobileGestalt is no longer available (Apple deprecated it on iOS 17.4 and later).",
     "LOCATION_START_TIMEOUT": "Starting simulated location timed out",
     "GPX_FILE_NOT_FOUND": "GPX file not found: {path}",
     "GPX_PARSE_FAILED": "Failed to parse GPX: {exc}",

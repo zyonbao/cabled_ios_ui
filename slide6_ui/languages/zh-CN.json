@@ -31,6 +31,7 @@
       "profiles": "描述文件",
       "keymouse": "键鼠操作",
       "crash": "Crash 报告",
+      "diagnostics": "诊断",
       "developer_tools": "开发者工具"
     },
     "device_combo": {
@@ -97,6 +98,41 @@
       "move_down": "下移"
     }
   },
+  "diagnostics": {
+    "no_device": "未选择设备",
+    "ready": "请选择上方的操作",
+    "tunnel_required_hint": "iOS 17+ 诊断需要 XPC tunnel：请先在上方启动，然后重试。",
+    "section": {
+      "power": "电源控制",
+      "info": "诊断信息"
+    },
+    "tile": {
+      "restart": { "title": "重启", "sub": "重新启动设备" },
+      "shutdown": { "title": "关机", "sub": "关闭设备电源" },
+      "sleep": { "title": "休眠", "sub": "让设备进入休眠" },
+      "battery": { "title": "电池状态", "sub": "电源诊断信息" },
+      "wifi": { "title": "Wi-Fi 状态", "sub": "无线网卡诊断信息" },
+      "info": { "title": "诊断信息", "sub": "完整诊断数据" },
+      "ioregistry": { "title": "IORegistry 信息", "sub": "设备 IORegistry 树" },
+      "mobilegestalt": { "title": "MobileGestalt", "sub": "MobileGestalt 键值（iOS < 17.4）" }
+    },
+    "confirm": {
+      "restart": { "title": "重启设备？", "body": "设备将立即重启，是否继续？" },
+      "shutdown": { "title": "关闭设备？", "body": "设备将立即关机，且需手动重新开机，是否继续？" },
+      "sleep": { "title": "休眠设备？", "body": "设备将立即进入休眠，是否继续？" }
+    },
+    "status": {
+      "querying": "查询中…",
+      "done": "完成",
+      "failed": "失败：{error}",
+      "restart_sending": "正在发送重启…",
+      "restart_sent": "已发送重启请求",
+      "shutdown_sending": "正在发送关机…",
+      "shutdown_sent": "已发送关机请求",
+      "sleep_sending": "正在发送休眠…",
+      "sleep_sent": "已发送休眠请求"
+    }
+  },
   "dev_tools": {
     "no_device": "未选择设备",
     "mount_method": {
@@ -128,6 +164,8 @@
       "start": "启动",
       "stop": "停止",
       "restart": "重启",
+      "refresh": "刷新",
+      "refreshed": "已刷新 XPC tunnel 状态",
       "running": "XPC tunnel：已启动",
       "stopped": "XPC tunnel：未启动",
       "already_running": "XPC tunnel 已在运行",
@@ -566,6 +604,7 @@
     "col": {
       "name": "名称",
       "size": "大小",
+      "version": "版本",
       "actions": "操作"
     },
     "action": {
@@ -634,6 +673,7 @@
     "DVT_READY_TIMEOUT": "等待 DVT 就绪超时（设备仍在准备 DeveloperDiskImage）",
     "RSD_QUERY_TIMEOUT": "查询 RSD 服务超时（XPC tunnel 无响应）",
     "TUNNEL_REQUIRED": "该 iOS 17+ 操作需要 XPC tunnel：请先启动 XPC tunnel（需管理员授权）后重试。",
+    "MOBILEGESTALT_DEPRECATED": "MobileGestalt 已不可用（Apple 自 iOS 17.4 起弃用）。",
     "LOCATION_START_TIMEOUT": "启动虚拟定位超时",
     "GPX_FILE_NOT_FOUND": "GPX 文件不存在：{path}",
     "GPX_PARSE_FAILED": "解析 GPX 失败：{exc}",

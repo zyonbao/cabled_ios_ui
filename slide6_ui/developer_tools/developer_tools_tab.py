@@ -35,6 +35,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.feature_tile import FeatureTile
 from ..common.flow_layout import FlowLayout
 from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
@@ -55,52 +56,13 @@ def _mount_method_labels() -> list[str]:
     return [i18n.t(f"dev_tools.mount_method.{k}") for k in _MOUNT_METHOD_KEYS]
 
 
-class _FeatureTile(QToolButton):
-    """A large, card-like feature button with a distinct title and subtitle.
-
-    ``QToolButton.setText`` cannot style two text parts differently, so the
-    title (prominent: bold + larger) and subtitle (secondary: smaller + muted)
-    are rendered as two child ``QLabel``s. The labels are transparent to mouse
-    events so clicks reach the button, preserving the standard
-    ``clicked`` / ``setEnabled`` / ``setToolTip`` behavior callers rely on.
-    When the tile is disabled the labels inherit the parent's disabled look.
-    """
-
-    def __init__(self, title: str, subtitle: str) -> None:
-        super().__init__()
-        self.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.setMinimumSize(220, 90)
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(4)
-
-        self._title_label = QLabel(title)
-        title_font = self._title_label.font()
-        title_font.setBold(True)
-        title_font.setPointSize(title_font.pointSize() + 2)
-        self._title_label.setFont(title_font)
-        self._title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        lay.addWidget(self._title_label)
-
-        self._subtitle_label = QLabel(subtitle)
-        if subtitle:
-            self._subtitle_label.setWordWrap(True)
-            sub_font = self._subtitle_label.font()
-            sub_font.setPointSize(max(sub_font.pointSize() - 1, 1))
-            self._subtitle_label.setFont(sub_font)
-            # Render with the muted, theme-aware "disabled" text brush to read as
-            # secondary text (independent of the tile's own enabled state).
-            self._subtitle_label.setEnabled(False)
-            self._subtitle_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            lay.addWidget(self._subtitle_label)
-        else:
-            self._subtitle_label.hide()
-        lay.addStretch(1)
+# Card-like feature button (title + muted subtitle), shared with the Diagnostics
+# tab. Aliased to the historic local name to keep existing call sites unchanged.
+_FeatureTile = FeatureTile
 
 # DDI source-config keys (mirror slide6_ui/main_window.py — keep in sync).
-_SETTINGS_ORG = "ios_ui_ta_proxy"
-_SETTINGS_APP = "slide6_console"
+_SETTINGS_ORG = "unnamed"
+_SETTINGS_APP = "cabled_ios"
 _DDI_LOCAL_ENABLED_KEY = "settings/ddi_local_enabled"
 _DDI_LEGACY_DIR_KEY = "settings/ddi_legacy_dir"
 _DDI_MODERN_DIR_KEY = "settings/ddi_modern_dir"
@@ -181,10 +143,12 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_btn = QPushButton(i18n.t("dev_tools.tunnel.start"))
         self.tunnel_stop_btn = QPushButton(i18n.t("dev_tools.tunnel.stop"))
         self.tunnel_restart_btn = QPushButton(i18n.t("dev_tools.tunnel.restart"))
+        self.tunnel_refresh_btn = QPushButton(i18n.t("dev_tools.tunnel.refresh"))
         tunnel_row.addWidget(self.tunnel_label, 1)
         tunnel_row.addWidget(self.tunnel_btn)
         tunnel_row.addWidget(self.tunnel_stop_btn)
         tunnel_row.addWidget(self.tunnel_restart_btn)
+        tunnel_row.addWidget(self.tunnel_refresh_btn)
         self.tunnel_widget = QWidget()
         self.tunnel_widget.setLayout(tunnel_row)
         self.tunnel_widget.setVisible(False)
@@ -239,6 +203,7 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_btn.clicked.connect(self._on_start_tunnel)
         self.tunnel_stop_btn.clicked.connect(self._on_stop_tunnel)
         self.tunnel_restart_btn.clicked.connect(self._on_restart_tunnel)
+        self.tunnel_refresh_btn.clicked.connect(self._on_refresh_tunnel)
         self.process_tile.clicked.connect(self._open_process)
         self.location_tile.clicked.connect(self._open_location)
         self.syslog_tile.clicked.connect(self._open_syslog)
@@ -750,6 +715,22 @@ class DeveloperToolsTab(QWidget):
                 self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted_preparing"))
                 self._set_status(i18n.t("dev_tools.tunnel.started_reprobe"))
                 self._start_ready_probe(target)
+
+    def on_tab_activated(self) -> None:
+        """Called by the main window when this tab becomes the current one.
+
+        The XPC tunnel is global state that can change while another tab is shown,
+        so re-poll it on activation instead of relying solely on device-switch
+        (set_target) or a manual refresh.
+        """
+        self._refresh_tunnel_panel()
+        self._refresh_features()
+
+    def _on_refresh_tunnel(self) -> None:
+        """Re-read the tunnel running state and update the status label + tiles."""
+        self._refresh_tunnel_panel()
+        self._refresh_features()
+        self._set_status(i18n.t("dev_tools.tunnel.refreshed"))
 
     def _after_tunnel(self, message: str) -> None:
         self._set_tunnel_busy(False)

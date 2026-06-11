@@ -13,9 +13,10 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -49,14 +50,17 @@ from .common.workers import AsyncRunner
 from .crash import CrashReportsTab
 from .developer_tools import DeveloperToolsTab
 from .device_info import DeviceInfoTab
+from .diagnostics import DiagnosticsTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
 from .profiles import ProfilesTab
 
-_SETTINGS_ORG = "ios_ui_ta_proxy"
-# Kept as the legacy package name on purpose: this is the QSettings storage key.
-# Renaming it would orphan users' existing saved preferences.
-_SETTINGS_APP = "slide6_console"
+# QSettings identifier. On macOS this maps to the preferences plist
+# com.<org>.<app>.plist (i.e. com.unnamed.cabled_ios.plist). Changing these keys
+# starts a fresh settings store; preferences saved under the previous identifier
+# are not migrated.
+_SETTINGS_ORG = "unnamed"
+_SETTINGS_APP = "cabled_ios"
 _ASK_CLEAN_TUNNEL_ON_EXIT_KEY = "settings/ask_clean_tunnel_on_exit"
 _LOGGING_ENABLED_KEY = "settings/logging_enabled"
 _LOGGING_DIR_KEY = "settings/logging_dir"
@@ -170,15 +174,20 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.app_tab, i18n.t("main_window.tab.app_list"))
         self.profiles_tab = ProfilesTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.profiles_tab, i18n.t("main_window.tab.profiles"))
-        self.keymouse_tab = KeymouseTab(self.runner, self._set_status, self.on_select_device)
-        self.tabs.addTab(self.keymouse_tab, i18n.t("main_window.tab.keymouse"))
         self.crash_tab = CrashReportsTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.crash_tab, i18n.t("main_window.tab.crash"))
+        self.diagnostics_tab = DiagnosticsTab(
+            self.runner, lambda: self.target, self._current_os_version
+        )
+        self.tabs.addTab(self.diagnostics_tab, i18n.t("main_window.tab.diagnostics"))
         # System logs moved into the Developer Tools tab (no longer a sidebar tab).
         self.developer_tools_tab = DeveloperToolsTab(
             self.runner, lambda: self.target, self._current_os_version
         )
         self.tabs.addTab(self.developer_tools_tab, i18n.t("main_window.tab.developer_tools"))
+        # Key/Mouse owns the costly WDA/mirror flow; kept last in the sidebar.
+        self.keymouse_tab = KeymouseTab(self.runner, self._set_status, self.on_select_device)
+        self.tabs.addTab(self.keymouse_tab, i18n.t("main_window.tab.keymouse"))
         root.addWidget(self.tabs, stretch=1)
 
         # Don't let filter / path / search fields steal focus when a tab is
@@ -629,6 +638,7 @@ class MainWindow(QMainWindow):
         self.album_tab.set_target(self.target)
         self.profiles_tab.set_target(self.target)
         self.crash_tab.set_target(self.target)
+        self.diagnostics_tab.set_target(self.target)
         self.developer_tools_tab.set_target(self.target)
         # The key/mouse tab owns the costly WDA/mirror flow; only start it when
         # that tab is the current one (otherwise it is deferred until entered).
@@ -645,8 +655,42 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         if self._on_keymouse_tab():
             self.keymouse_tab.on_enter()
-        else:
-            self.keymouse_tab.on_leave()
+            return
+        self.keymouse_tab.on_leave()
+        # Let a tab refresh transient/global state (e.g. XPC tunnel status) when
+        # it becomes visible — tab switches do not trigger set_target.
+        current = self.tabs.currentWidget()
+        on_activated = getattr(current, "on_tab_activated", None)
+        if callable(on_activated):
+            on_activated()
+        # Qt grabs keyboard focus for the first focusable child of the page that
+        # just became visible (a Refresh button, a checkbox, …), which is
+        # intrusive. Clear it after Qt finishes its focus assignment so a freshly
+        # shown tab starts with nothing focused; Tab / a mouse click still focus
+        # interactive widgets normally. Key/Mouse is exempt (it self-focuses its
+        # capture field on demand).
+        QTimer.singleShot(0, self._clear_tab_focus)
+
+    def _clear_tab_focus(self) -> None:
+        """Drop the auto-assigned focus inside the current (non-keymouse) tab.
+
+        Only clears when the focused widget lives inside the current tab page, so
+        focus held by a dialog or the key/mouse capture field is never disturbed.
+        """
+        if self._on_keymouse_tab():
+            return
+        focused = QApplication.focusWidget()
+        page = self.tabs.currentWidget()
+        if focused is not None and page is not None and page.isAncestorOf(focused):
+            focused.clearFocus()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # On the very first show Qt also auto-focuses the initial tab's first
+        # focusable child; clear it once so the app opens with nothing focused.
+        super().showEvent(event)
+        if not getattr(self, "_initial_focus_cleared", False):
+            self._initial_focus_cleared = True
+            QTimer.singleShot(0, self._clear_tab_focus)
 
     # ------------------------------------------------------------- closing
 
@@ -655,6 +699,7 @@ class MainWindow(QMainWindow):
         # Release background sessions and live log-stream threads on exit (the
         # system-log windows now live under the Developer Tools tab).
         self.developer_tools_tab.shutdown()
+        self.diagnostics_tab.shutdown()
 
         if self._ask_clean_tunnel_on_exit() and tunnel.is_tunnel_running():
             reply = QMessageBox.question(

@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Kept in sync with main_window._SETTINGS_ORG / _SETTINGS_APP. Duplicated here on
 # purpose so i18n stays free of slide6_ui imports (main_window imports i18n).
-_SETTINGS_ORG = "ios_ui_ta_proxy"
-_SETTINGS_APP = "slide6_console"
+_SETTINGS_ORG = "unnamed"
+_SETTINGS_APP = "cabled_ios"
 LANGUAGE_KEY = "settings/language"
 
 DEFAULT_LANGUAGE = "zh-CN"

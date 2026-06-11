@@ -77,9 +77,12 @@ class AppManagerTab(QWidget):
         bar.addWidget(self.install_btn)
         root.addLayout(bar)
 
-        # App table: name / bundle id / capability-driven action buttons.
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels([i18n.t("afc.col.name"), "Bundle ID", i18n.t("afc.col.actions")])
+        # App table: name / bundle id / version / capability-driven action buttons.
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([
+            i18n.t("afc.col.name"), "Bundle ID",
+            i18n.t("afc.col.version"), i18n.t("afc.col.actions"),
+        ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -88,6 +91,7 @@ class AppManagerTab(QWidget):
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         root.addWidget(self.table, 1)
 
         self.status = QLabel(i18n.t("app_manager.drop_hint"))
@@ -164,7 +168,8 @@ class AppManagerTab(QWidget):
         for row, app in enumerate(apps):
             self.table.setItem(row, 0, QTableWidgetItem(app.get("name", "")))
             self.table.setItem(row, 1, QTableWidgetItem(app.get("bundleId", "")))
-            self.table.setCellWidget(row, 2, self._action_cell(app))
+            self.table.setItem(row, 2, QTableWidgetItem(app.get("version", "")))
+            self.table.setCellWidget(row, 3, self._action_cell(app))
 
     def _action_cell(self, app: dict) -> QWidget:
         """Build the per-row action column: Documents / Sandbox / 卸载,

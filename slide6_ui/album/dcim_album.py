@@ -302,11 +302,11 @@ class DcimAlbumTab(QWidget):
             return None
         from PySide6.QtCore import QStandardPaths
 
-        # Fallback cache dir kept as the legacy name on purpose so any existing
-        # thumbnail cache is reused after the package rename.
+        # Fallback cache dir used only when AppDataLocation is unavailable; named
+        # after the app identifier (the cache is regenerated on demand).
         base = QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.AppDataLocation
-        ) or os.path.expanduser("~/.slide6_console")
+        ) or os.path.expanduser("~/.cabled_ios")
         safe_udid = re.sub(r"[^0-9A-Za-z._-]", "_", self.target)
         path = os.path.join(base, "dcim_thumbs", safe_udid)
         os.makedirs(path, exist_ok=True)

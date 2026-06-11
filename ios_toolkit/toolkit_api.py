@@ -524,7 +524,7 @@ def kill_app(target: str, package: str) -> dict:
 def list_apps(target: str) -> dict:
     """List installed apps with fileSharing / sandbox-access metadata.
 
-    data = {"apps": [{"bundleId", "name", "appType", "fileSharing",
+    data = {"apps": [{"bundleId", "name", "version", "appType", "fileSharing",
             "sandboxAccessible"}, ...]}
     """
     device, err = _prepare_device_basic(target)
@@ -916,6 +916,74 @@ def kill_process(target: str, pid: int) -> dict:
     if err:
         return err
     return device.kill_process(pid)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics (power control + device info via DiagnosticsService)
+# ---------------------------------------------------------------------------
+
+def device_restart(target: str) -> dict:
+    """Restart (reboot) the device via DiagnosticsService."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.device_restart()
+
+
+def device_shutdown(target: str) -> dict:
+    """Power off the device via DiagnosticsService."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.device_shutdown()
+
+
+def device_sleep(target: str) -> dict:
+    """Put the device to sleep via DiagnosticsService."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.device_sleep()
+
+
+def diagnostics_battery(target: str) -> dict:
+    """Query battery (IOPMPowerSource) diagnostics; data = {"info": {...}}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.diagnostics_battery()
+
+
+def diagnostics_wifi(target: str) -> dict:
+    """Query Wi-Fi interface diagnostics; data = {"info": {...}}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.diagnostics_wifi()
+
+
+def diagnostics_info(target: str) -> dict:
+    """Query the full diagnostics info bundle; data = {"info": {...}}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.diagnostics_info()
+
+
+def diagnostics_ioregistry(target: str) -> dict:
+    """Query the device IORegistry (root); data = {"info": {...}}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.diagnostics_ioregistry()
+
+
+def diagnostics_mobilegestalt(target: str) -> dict:
+    """Query MobileGestalt keys (deprecated on iOS >= 17.4); data = {"info": {...}}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.diagnostics_mobilegestalt()
 
 
 def set_location(target: str, latitude: float, longitude: float) -> dict:
