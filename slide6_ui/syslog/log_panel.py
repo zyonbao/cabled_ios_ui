@@ -19,6 +19,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from ..common.context_copy import install_plaintext_copy_menu, install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
@@ -166,6 +168,16 @@ class LogPanelBase(QWidget):
         self.status = QLabel(i18n.t("syslog.hint_select"))
         self.status.setWordWrap(True)
         root.addWidget(self.status)
+
+        # Uniform right-click "copy value/line" affordance across log views:
+        # the structured oslog table copies the cell, the syslog text view the line.
+        def _on_copied(text: str) -> None:
+            self.status.setText(i18n.t("common.copied", text=text[:60]))
+
+        if isinstance(self.view, QPlainTextEdit):
+            install_plaintext_copy_menu(self.view, _on_copied)
+        else:
+            install_table_copy_menu(self.view, _on_copied)
 
         self.start_btn.clicked.connect(self._toggle_start)
         self.pause_btn.toggled.connect(self._on_pause_toggled)

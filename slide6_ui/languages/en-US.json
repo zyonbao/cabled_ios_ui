@@ -12,7 +12,10 @@
     "no": "No",
     "apply": "Apply",
     "select_device_first": "Please select a device first",
-    "default_prefix": "Default: {path}"
+    "default_prefix": "Default: {path}",
+    "copy_value": "Copy value",
+    "copy_line": "Copy line",
+    "copied": "Copied: {text}"
   },
   "main_window": {
     "device": "Device",

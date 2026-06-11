@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
@@ -90,6 +91,10 @@ class ProfilesTab(QWidget):
         self.install_btn.clicked.connect(self._on_install_clicked)
         self.export_btn.clicked.connect(self._on_export_clicked)
         self.remove_btn.clicked.connect(self._on_remove_clicked)
+        install_table_copy_menu(
+            self.table,
+            on_copied=lambda t: self.status.setText(i18n.t("common.copied", text=t[:60])),
+        )
 
     # ------------------------------------------------------------- loading
 

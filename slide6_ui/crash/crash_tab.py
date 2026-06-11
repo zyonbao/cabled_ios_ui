@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from ..common.context_copy import add_copy_value_action
 from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
@@ -220,15 +221,20 @@ class CrashReportsTab(QWidget):
         return [self._view[r] for r in rows if 0 <= r < len(self._view)]
 
     def _on_context_menu(self, pos) -> None:
-        if not self._selected_entries():
-            return
         menu = QMenu(self)
-        export_action = menu.addAction(i18n.t("crash.export"))
-        delete_action = menu.addAction(i18n.t("crash.delete"))
+        add_copy_value_action(
+            menu, self.table, pos,
+            on_copied=lambda t: self.status.setText(i18n.t("common.copied", text=t[:60])),
+        )
+        export_action = delete_action = None
+        if self._selected_entries():
+            menu.addSeparator()
+            export_action = menu.addAction(i18n.t("crash.export"))
+            delete_action = menu.addAction(i18n.t("crash.delete"))
         action = menu.exec(self.table.viewport().mapToGlobal(pos))
-        if action is export_action:
+        if export_action is not None and action is export_action:
             self._export_selected()
-        elif action is delete_action:
+        elif delete_action is not None and action is delete_action:
             self._delete_selected()
 
     # -------------------------------------------------------------- export

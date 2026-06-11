@@ -35,6 +35,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.afc_browser import AfcBrowserDialog
+from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
@@ -78,7 +79,7 @@ class AppManagerTab(QWidget):
 
         # App table: name / bundle id / capability-driven action buttons.
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels([i18n.t("afc.col.name"), "Bundle ID", i18n.t("afc.col.action")])
+        self.table.setHorizontalHeaderLabels([i18n.t("afc.col.name"), "Bundle ID", i18n.t("afc.col.actions")])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -98,6 +99,10 @@ class AppManagerTab(QWidget):
         self.search_input.textChanged.connect(self._render)
         self.share_filter.toggled.connect(self._render)
         self.sandbox_filter.toggled.connect(self._render)
+        install_table_copy_menu(
+            self.table,
+            on_copied=lambda t: self.status.setText(i18n.t("common.copied", text=t[:60])),
+        )
 
     # ------------------------------------------------------------- loading
 

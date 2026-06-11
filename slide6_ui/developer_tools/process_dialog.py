@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.focus import suppress_auto_focus
 from ..common.workers import AsyncRunner
@@ -107,6 +108,10 @@ class ProcessDialog(QDialog):
         self.info_btn.clicked.connect(self._show_info)
         self.kill_btn.clicked.connect(self._kill)
         self.table.itemDoubleClicked.connect(lambda *_: self._show_info())
+        install_table_copy_menu(
+            self.table,
+            on_copied=lambda t: self.status.setText(i18n.t("common.copied", text=t[:60])),
+        )
 
     # ------------------------------------------------------------- loading
 

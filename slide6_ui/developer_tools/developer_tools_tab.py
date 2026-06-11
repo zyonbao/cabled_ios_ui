@@ -20,7 +20,6 @@ from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -36,6 +35,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.flow_layout import FlowLayout
 from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
@@ -53,6 +53,50 @@ _MOUNT_METHOD_KEYS = ["auto", "manual"]
 
 def _mount_method_labels() -> list[str]:
     return [i18n.t(f"dev_tools.mount_method.{k}") for k in _MOUNT_METHOD_KEYS]
+
+
+class _FeatureTile(QToolButton):
+    """A large, card-like feature button with a distinct title and subtitle.
+
+    ``QToolButton.setText`` cannot style two text parts differently, so the
+    title (prominent: bold + larger) and subtitle (secondary: smaller + muted)
+    are rendered as two child ``QLabel``s. The labels are transparent to mouse
+    events so clicks reach the button, preserving the standard
+    ``clicked`` / ``setEnabled`` / ``setToolTip`` behavior callers rely on.
+    When the tile is disabled the labels inherit the parent's disabled look.
+    """
+
+    def __init__(self, title: str, subtitle: str) -> None:
+        super().__init__()
+        self.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.setMinimumSize(220, 90)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(4)
+
+        self._title_label = QLabel(title)
+        title_font = self._title_label.font()
+        title_font.setBold(True)
+        title_font.setPointSize(title_font.pointSize() + 2)
+        self._title_label.setFont(title_font)
+        self._title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        lay.addWidget(self._title_label)
+
+        self._subtitle_label = QLabel(subtitle)
+        if subtitle:
+            self._subtitle_label.setWordWrap(True)
+            sub_font = self._subtitle_label.font()
+            sub_font.setPointSize(max(sub_font.pointSize() - 1, 1))
+            self._subtitle_label.setFont(sub_font)
+            # Render with the muted, theme-aware "disabled" text brush to read as
+            # secondary text (independent of the tile's own enabled state).
+            self._subtitle_label.setEnabled(False)
+            self._subtitle_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            lay.addWidget(self._subtitle_label)
+        else:
+            self._subtitle_label.hide()
+        lay.addStretch(1)
 
 # DDI source-config keys (mirror slide6_ui/main_window.py — keep in sync).
 _SETTINGS_ORG = "ios_ui_ta_proxy"
@@ -109,6 +153,10 @@ class DeveloperToolsTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        # Unified, tight row spacing so the DDI and tunnel status rows sit close
+        # and natural; the tunnel row's wrapper margins are zeroed below so it
+        # does not add an extra gap on top of this spacing.
+        root.setSpacing(6)
 
         # DDI status bar.
         ddi_row = QHBoxLayout()
@@ -126,6 +174,9 @@ class DeveloperToolsTab(QWidget):
         # offers start (when down) or stop + restart (when up). All actions reuse
         # the native-authorization tunnel helpers via the AsyncRunner.
         tunnel_row = QHBoxLayout()
+        # Zero the wrapper's margins so the tunnel row aligns with the DDI row
+        # and inherits only the unified root spacing (no extra vertical gap).
+        tunnel_row.setContentsMargins(0, 0, 0, 0)
         self.tunnel_label = QLabel(i18n.t("dev_tools.tunnel.unknown"))
         self.tunnel_btn = QPushButton(i18n.t("dev_tools.tunnel.start"))
         self.tunnel_stop_btn = QPushButton(i18n.t("dev_tools.tunnel.stop"))
@@ -139,8 +190,10 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_widget.setVisible(False)
         root.addWidget(self.tunnel_widget)
 
-        # Feature-tile grid (kept extensible for Phase 2 tools).
-        grid = QGridLayout()
+        # Feature-tile flow grid: evenly spaced cards that wrap responsively
+        # (more per row when wide, fewer when narrow) with identical horizontal
+        # and vertical gaps. Extensible for future tools — just add more tiles.
+        flow = FlowLayout(spacing=12)
         self._feature_buttons: list[QToolButton] = []
         self.process_tile = self._make_tile(
             i18n.t("dev_tools.tile.process_title"), i18n.t("dev_tools.tile.process_sub")
@@ -148,17 +201,18 @@ class DeveloperToolsTab(QWidget):
         self.location_tile = self._make_tile(
             i18n.t("dev_tools.tile.location_title"), i18n.t("dev_tools.tile.location_sub")
         )
-        grid.addWidget(self.process_tile, 0, 0)
-        grid.addWidget(self.location_tile, 0, 1)
+        flow.addWidget(self.process_tile)
+        flow.addWidget(self.location_tile)
         # System log is a lockdown service: it needs neither DDI nor a tunnel, so
         # this tile stays enabled regardless of mount state (not in _feature_buttons).
-        self.syslog_tile = QToolButton()
-        self.syslog_tile.setText(i18n.t("dev_tools.tile.syslog"))
-        self.syslog_tile.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.syslog_tile.setMinimumSize(220, 90)
-        grid.addWidget(self.syslog_tile, 1, 0)
-        grid.setRowStretch(2, 1)
-        root.addLayout(grid)
+        # The catalog value packs title + description on two lines; split it so the
+        # tile renders the same layered title/subtitle as the other cards.
+        _syslog_title, _, _syslog_sub = i18n.t("dev_tools.tile.syslog").partition("\n")
+        self.syslog_tile = _FeatureTile(_syslog_title, _syslog_sub)
+        flow.addWidget(self.syslog_tile)
+        root.addLayout(flow)
+        # Keep tiles packed at the top; absorb extra vertical space below them.
+        root.addStretch(1)
 
         # Bottom status. It MUST NOT widen the window when a long error appears,
         # so its horizontal size hint is ignored (it only consumes available
@@ -172,11 +226,8 @@ class DeveloperToolsTab(QWidget):
         root.addWidget(self.status)
 
     def _make_tile(self, title: str, subtitle: str) -> QToolButton:
-        """Create a large, card-like feature tile button."""
-        btn = QToolButton()
-        btn.setText(f"{title}\n{subtitle}")
-        btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        btn.setMinimumSize(220, 90)
+        """Create a large, card-like feature tile with a layered title/subtitle."""
+        btn = _FeatureTile(title, subtitle)
         btn.setEnabled(False)
         self._feature_buttons.append(btn)
         return btn
