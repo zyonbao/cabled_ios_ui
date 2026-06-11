@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -51,6 +54,11 @@ class LocationDialog(QDialog):
         self.resize(460, 460)
         self._build_ui()
         self._wire()
+        # Poll route playback progress while a trajectory is running so the
+        # status line shows a live "current/total points" counter.
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(500)
+        self._progress_timer.timeout.connect(self._poll_progress)
         # Don't auto-focus the coordinate / path fields when the dialog opens.
         suppress_auto_focus(self)
 
@@ -103,14 +111,50 @@ class LocationDialog(QDialog):
         pick_row.addWidget(self.gpx_pick_btn)
         layout.addLayout(pick_row)
 
-        self.gpx_disable_sleep = QCheckBox(i18n.t("location.gpx_ignore_ts"))
-        layout.addWidget(self.gpx_disable_sleep)
+        # Ignore-timestamps toggle: when on, time jitter is disabled and the
+        # cadence controls (fixed interval / speed) below take over.
+        self.gpx_ignore_ts = QCheckBox(i18n.t("location.gpx_ignore_ts"))
+        layout.addWidget(self.gpx_ignore_ts)
 
+        # Cadence mode (only usable when timestamps are ignored): pick one of
+        # fixed interval (seconds) or speed (m/s).
+        self.gpx_mode_group = QButtonGroup(self)
+        self.gpx_mode_interval = QRadioButton(i18n.t("location.gpx_mode_interval"))
+        self.gpx_mode_speed = QRadioButton(i18n.t("location.gpx_mode_speed"))
+        self.gpx_mode_interval.setChecked(True)
+        self.gpx_mode_group.addButton(self.gpx_mode_interval)
+        self.gpx_mode_group.addButton(self.gpx_mode_speed)
+
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(self.gpx_mode_interval)
+        self.gpx_interval = QDoubleSpinBox()
+        self.gpx_interval.setRange(0.0, 3600.0)
+        self.gpx_interval.setDecimals(2)
+        self.gpx_interval.setValue(1.0)
+        self.gpx_interval.setSuffix(" s")
+        interval_row.addWidget(self.gpx_interval)
+        interval_row.addStretch(1)
+        layout.addLayout(interval_row)
+
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(self.gpx_mode_speed)
+        self.gpx_speed = QDoubleSpinBox()
+        self.gpx_speed.setRange(0.1, 1000.0)
+        self.gpx_speed.setDecimals(1)
+        self.gpx_speed.setValue(5.0)
+        self.gpx_speed.setSuffix(" m/s")
+        speed_row.addWidget(self.gpx_speed)
+        speed_row.addStretch(1)
+        layout.addLayout(speed_row)
+
+        # Time jitter toggle + amount (only usable when NOT ignoring timestamps).
         jitter_row = QHBoxLayout()
-        jitter_row.addWidget(QLabel(i18n.t("location.jitter")))
+        self.gpx_jitter_enabled = QCheckBox(i18n.t("location.jitter"))
+        jitter_row.addWidget(self.gpx_jitter_enabled)
         self.gpx_jitter = QSpinBox()
         self.gpx_jitter.setRange(0, 60000)
         self.gpx_jitter.setSingleStep(100)
+        self.gpx_jitter.setSuffix(" ms")
         jitter_row.addWidget(self.gpx_jitter)
         jitter_row.addStretch(1)
         layout.addLayout(jitter_row)
@@ -122,7 +166,25 @@ class LocationDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch(1)
+
+        # Reflect the initial enable/disable state (signals wired in _wire()).
+        self._sync_gpx_controls()
         return w
+
+    def _sync_gpx_controls(self) -> None:
+        """Enable/disable GPX timing controls per the mutually-exclusive modes.
+
+        Ignoring timestamps disables time jitter and enables the cadence
+        controls (only the selected mode's value box); reproducing recorded
+        timing does the opposite.
+        """
+        ignore = self.gpx_ignore_ts.isChecked()
+        self.gpx_mode_interval.setEnabled(ignore)
+        self.gpx_mode_speed.setEnabled(ignore)
+        self.gpx_interval.setEnabled(ignore and self.gpx_mode_interval.isChecked())
+        self.gpx_speed.setEnabled(ignore and self.gpx_mode_speed.isChecked())
+        self.gpx_jitter_enabled.setEnabled(not ignore)
+        self.gpx_jitter.setEnabled(not ignore and self.gpx_jitter_enabled.isChecked())
 
     def _build_manual_tab(self) -> QWidget:
         w = QWidget()
@@ -167,6 +229,9 @@ class LocationDialog(QDialog):
         self.gpx_pick_btn.clicked.connect(self._pick_gpx)
         self.gpx_play_btn.clicked.connect(self._play_gpx)
         self.gpx_path_input.returnPressed.connect(self._play_gpx)
+        self.gpx_ignore_ts.toggled.connect(self._sync_gpx_controls)
+        self.gpx_mode_interval.toggled.connect(self._sync_gpx_controls)
+        self.gpx_jitter_enabled.toggled.connect(self._sync_gpx_controls)
         self.wp_add_btn.clicked.connect(self._add_waypoint)
         self.wp_del_btn.clicked.connect(self._del_waypoint)
         self.manual_play_btn.clicked.connect(self._play_manual)
@@ -221,12 +286,25 @@ class LocationDialog(QDialog):
         if not os.path.isfile(path):
             self.status.setText(i18n.t("location.path_not_file", path=path))
             return
-        disable_sleep = self.gpx_disable_sleep.isChecked()
-        jitter = self.gpx_jitter.value()
+        ignore_ts = self.gpx_ignore_ts.isChecked()
+        if ignore_ts:
+            # Ignoring timestamps: no jitter; pace by the selected cadence mode.
+            jitter = 0
+            mode = "speed" if self.gpx_mode_speed.isChecked() else "interval"
+            interval_s = self.gpx_interval.value()
+            speed_mps = self.gpx_speed.value()
+        else:
+            # Reproduce recorded timing; jitter only when its toggle is on.
+            mode = "interval"
+            interval_s = 1.0
+            speed_mps = 5.0
+            jitter = self.gpx_jitter.value() if self.gpx_jitter_enabled.isChecked() else 0
         self.status.setText(i18n.t("location.gpx_starting"))
         self.gpx_play_btn.setEnabled(False)
         self.runner.submit(
-            lambda: api.play_route_gpx(self._target, path, disable_sleep, jitter),
+            lambda: api.play_route_gpx(
+                self._target, path, ignore_ts, jitter, mode, interval_s, speed_mps
+            ),
             on_done=lambda r: self._on_play(r, self.gpx_play_btn),
             on_error=lambda e: self._after(self.gpx_play_btn, i18n.t("location.play_failed_detail", error=e)),
         )
@@ -289,10 +367,44 @@ class LocationDialog(QDialog):
             return
         points = result["data"].get("points", 0)
         self._after(btn, i18n.t("location.playing", points=points))
+        # Begin live progress polling now that playback has started.
+        self._progress_timer.start()
+        self._poll_progress()
+
+    # -- Progress polling --------------------------------------------------
+
+    def _poll_progress(self) -> None:
+        """Submit a non-blocking progress query; result handled in _on_progress."""
+        self.runner.submit(
+            lambda: api.get_route_progress(self._target),
+            on_done=self._on_progress,
+            on_error=lambda e: None,
+        )
+
+    def _on_progress(self, result: dict) -> None:
+        if not result.get("ok"):
+            # Device gone / unavailable: stop polling rather than spin forever.
+            self._progress_timer.stop()
+            return
+        data = result.get("data", {})
+        total = int(data.get("total", 0))
+        current = int(data.get("current", 0))
+        if total <= 0:
+            return
+        if current >= total:
+            # Motion finished: show completion and stop polling. The simulated
+            # location persists until the user clears it.
+            self.status.setText(i18n.t("location.play_done", total=total))
+            self._progress_timer.stop()
+        else:
+            self.status.setText(
+                i18n.t("location.playing_progress", current=current, total=total)
+            )
 
     # -- Clear / restore ---------------------------------------------------
 
     def _clear(self) -> None:
+        self._progress_timer.stop()
         self.status.setText(i18n.t("location.clearing"))
         self.clear_btn.setEnabled(False)
         self.runner.submit(
@@ -306,6 +418,11 @@ class LocationDialog(QDialog):
             self._after(self.clear_btn, localize_error(result.get("error")))
             return
         self._after(self.clear_btn, i18n.t("location.cleared"))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Stop progress polling when the dialog closes."""
+        self._progress_timer.stop()
+        super().closeEvent(event)
 
     # -- Helpers -----------------------------------------------------------
 

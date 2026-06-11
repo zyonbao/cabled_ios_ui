@@ -194,21 +194,46 @@ class _GpxNoTrackpointsError(ValueError):
     """A parsed GPX file contained no usable track/route/waypoint points."""
 
 
+_GPX_IGNORE_MODES = ("interval", "speed")
+
+
 def _parse_gpx_steps(
     path: str,
-    disable_sleep: bool = False,
+    ignore_timestamps: bool = False,
     timing_randomness_range: int = 0,
+    ignore_mode: str = "interval",
+    interval_s: float = 1.0,
+    speed_mps: float = 5.0,
     default_interval_s: float = 1.0,
 ) -> "list":
-    """Parse a GPX file into route steps.
+    """Parse a GPX file into route steps ``[(lat, lon, delay), ...]``.
 
-    Timestamped points reproduce the recorded speed via inter-point sleeps;
-    ``disable_sleep`` collapses all delays to zero (run as fast as possible);
-    ``timing_randomness_range`` (milliseconds) jitters each delay. Points without
-    timestamps fall back to a fixed ``default_interval_s`` cadence. Raises
-    ``ValueError`` if the file yields no usable points.
+    The first point always carries a zero delay. Each subsequent point's delay
+    is derived per the playback timing mode:
+
+    - ``ignore_timestamps`` false (reproduce recorded timing): timestamped
+      points use the inter-point time difference (negative clamped to 0), and
+      ``timing_randomness_range`` (milliseconds) jitters each delay by ``±N ms``
+      (never below 0); points without timestamps fall back to
+      ``default_interval_s``.
+    - ``ignore_timestamps`` true: timestamps are not used and no jitter is
+      applied. ``ignore_mode`` selects the cadence — ``"interval"`` waits a
+      fixed ``interval_s`` per point; ``"speed"`` waits the haversine distance
+      between consecutive points divided by ``speed_mps``.
+
+    Raises ``_GpxNoTrackpointsError`` if the file yields no usable points, and
+    ``ValueError`` on invalid timing parameters.
     """
     import gpxpy
+
+    # Validate timing parameters before parsing so bad input fails fast.
+    if ignore_timestamps:
+        if ignore_mode not in _GPX_IGNORE_MODES:
+            raise ValueError(f"invalid ignore_mode: {ignore_mode}")
+        if ignore_mode == "speed" and speed_mps <= 0:
+            raise ValueError("speed must be positive")
+        if ignore_mode == "interval" and interval_s < 0:
+            raise ValueError("interval must be non-negative")
 
     with open(path) as f:
         gpx = gpxpy.parse(f)
@@ -231,11 +256,18 @@ def _parse_gpx_steps(
 
     steps: list = []
     last_time = None
+    prev_lat = None
+    prev_lon = None
     for idx, (lat, lon, t) in enumerate(raw):
         if idx == 0:
             delay = 0.0
-        elif disable_sleep:
-            delay = 0.0
+        elif ignore_timestamps:
+            if ignore_mode == "speed":
+                # speed_mps > 0 is guaranteed by validation above.
+                dist = _haversine_m(prev_lat, prev_lon, lat, lon)
+                delay = dist / speed_mps
+            else:
+                delay = interval_s
         elif t is not None and last_time is not None:
             delay = (t - last_time).total_seconds()
             if delay < 0:
@@ -248,6 +280,7 @@ def _parse_gpx_steps(
         else:
             delay = default_interval_s
         last_time = t
+        prev_lat, prev_lon = lat, lon
         steps.append((float(lat), float(lon), float(delay)))
         if len(steps) >= _MAX_ROUTE_STEPS:
             break
@@ -559,6 +592,9 @@ class iOSDevice:
         # connection is open, so it is kept alive by a long-lived background task.
         self._location_task: Optional["Future[None]"] = None
         self._location_lock = threading.Lock()
+        # Live route playback progress (polled by the UI). Guarded by
+        # _location_lock; "current" counts points applied so far of "total".
+        self._route_progress: dict = {"current": 0, "total": 0, "playing": False}
 
     # ------------------------------------------------------------------
     # WDA lifecycle
@@ -2677,8 +2713,18 @@ class iOSDevice:
         with self._location_lock:
             task = self._location_task
             self._location_task = None
+            self._route_progress["playing"] = False
         if task is not None and not task.done():
             task.cancel()
+
+    def get_route_progress(self) -> dict:
+        """Return a snapshot of route playback progress for UI polling.
+
+        ``{"current": <points applied>, "total": <points>, "playing": <bool>}``.
+        ``playing`` is False once all points are applied (or the session ends).
+        """
+        with self._location_lock:
+            return dict(self._route_progress)
 
     async def _drive_route(
         self, loc, steps: "list", ready: "threading.Event"
@@ -2691,13 +2737,21 @@ class iOSDevice:
         without waiting for the whole route to finish.
         """
         first = True
+        applied = 0
         for lat, lon, delay in steps:
             if delay and delay > 0:
                 await asyncio.sleep(delay)
             await loc.set(lat, lon)
+            applied += 1
+            with self._location_lock:
+                self._route_progress["current"] = applied
             if first:
                 ready.set()
                 first = False
+        # All points applied: motion is done even though an iOS 17+ session
+        # keeps its connection open afterward to persist the final location.
+        with self._location_lock:
+            self._route_progress["playing"] = False
 
     async def _run_route_async(
         self, major: int, steps: "list", ready: "threading.Event", err_holder: dict
@@ -2761,6 +2815,8 @@ class iOSDevice:
         )
         # Replace any in-flight session before starting a new one.
         self._cancel_location_task()
+        with self._location_lock:
+            self._route_progress = {"current": 0, "total": len(steps), "playing": True}
         ready = threading.Event()
         err_holder: dict = {}
         task = asyncio.run_coroutine_threadsafe(
@@ -2770,10 +2826,14 @@ class iOSDevice:
         timeout = 45 if major >= 17 else 30
         if not ready.wait(timeout=timeout):
             task.cancel()
+            with self._location_lock:
+                self._route_progress["playing"] = False
             logger.warning("start route timed out (udid=%s)", self.udid)
             return _err("SUBPROCESS", "Starting simulated location timed out", code="LOCATION_START_TIMEOUT")
         if err_holder.get("error") is not None:
             task.cancel()
+            with self._location_lock:
+                self._route_progress["playing"] = False
             logger.warning(
                 "start route failed (udid=%s): %s", self.udid, err_holder["error"]
             )
@@ -2803,15 +2863,23 @@ class iOSDevice:
     def play_route_gpx(
         self,
         path: str,
-        disable_sleep: bool = False,
+        ignore_timestamps: bool = False,
         timing_randomness_range: int = 0,
+        ignore_mode: str = "interval",
+        interval_s: float = 1.0,
+        speed_mps: float = 5.0,
     ) -> dict:
         """Play back a GPX trajectory as a moving simulated location."""
         from .toolkit_api import _err
 
         try:
             steps = _parse_gpx_steps(
-                path, bool(disable_sleep), int(timing_randomness_range or 0)
+                path,
+                bool(ignore_timestamps),
+                int(timing_randomness_range or 0),
+                str(ignore_mode),
+                float(interval_s),
+                float(speed_mps),
             )
         except FileNotFoundError:
             return _err("BAD_TARGET", "GPX file not found", details={"path": path}, code="GPX_FILE_NOT_FOUND")

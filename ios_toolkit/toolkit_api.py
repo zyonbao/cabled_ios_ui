@@ -990,13 +990,33 @@ def clear_location(target: str) -> dict:
     return device.clear_location()
 
 
+def get_route_progress(target: str) -> dict:
+    """Snapshot of route playback progress for UI polling.
+
+    data = {"current": <points applied>, "total": <points>, "playing": <bool>}
+    """
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return _ok(device.get_route_progress())
+
+
 def play_route_gpx(
     target: str,
     path: str,
-    disable_sleep: bool = False,
+    ignore_timestamps: bool = False,
     timing_randomness_range: int = 0,
+    ignore_mode: str = "interval",
+    interval_s: float = 1.0,
+    speed_mps: float = 5.0,
 ) -> dict:
     """Play back a GPX trajectory as a moving simulated location.
+
+    Timing modes (see device._parse_gpx_steps):
+    - ignore_timestamps=False: reproduce recorded timing; timing_randomness_range
+      (ms) jitters each delay.
+    - ignore_timestamps=True: ignore timestamps and pace by ignore_mode —
+      "interval" (interval_s seconds per point) or "speed" (speed_mps m/s).
 
     data = {"playing": True, "source": "gpx", "points": <int>}
     """
@@ -1006,10 +1026,19 @@ def play_route_gpx(
         return _err("BAD_TARGET", "gpx path is required")
     if not os.path.isfile(path):
         return _err("BAD_TARGET", "GPX file not found", details={"path": path}, code="GPX_FILE_NOT_FOUND")
+    if ignore_timestamps:
+        if ignore_mode not in ("interval", "speed"):
+            return _err("BAD_TARGET", "invalid ignore_mode", details={"ignore_mode": ignore_mode})
+        if ignore_mode == "speed" and speed_mps <= 0:
+            return _err("BAD_TARGET", "speed must be positive")
+        if ignore_mode == "interval" and interval_s < 0:
+            return _err("BAD_TARGET", "interval must be non-negative")
     device, err = _prepare_device_basic(target)
     if err:
         return err
-    return device.play_route_gpx(path, disable_sleep, timing_randomness_range)
+    return device.play_route_gpx(
+        path, ignore_timestamps, timing_randomness_range, ignore_mode, interval_s, speed_mps
+    )
 
 
 def play_route_manual(
