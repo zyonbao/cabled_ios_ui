@@ -15,7 +15,7 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, Qt
+from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, Qt, Signal
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,10 +25,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -69,6 +69,57 @@ def _orient_label(orientation: "str | None") -> str:
     """Localized orientation label (lazy so i18n is ready); '—' when unknown."""
     key = _ORIENT_KEYS.get(orientation)
     return i18n.t(key) if key else "—"
+
+
+class SendTextEdit(QTextEdit):
+    """Multi-line text-send box for the device.
+
+    Enter sends (emits ``send_requested``); Shift+Enter inserts a newline so
+    multi-line text can be composed. The widget auto-grows with its content up
+    to ``_MAX_LINES`` visible lines, after which it keeps that height and shows
+    a vertical scrollbar. Pasted multi-line content therefore renders across
+    lines instead of being flattened onto one row.
+    """
+
+    send_requested = Signal()
+
+    _MAX_LINES = 5
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAcceptRichText(False)  # plain text only; device input is text
+        self.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setTabChangesFocus(True)
+        self.textChanged.connect(self._adjust_height)
+        self._adjust_height()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Plain Enter sends; Shift+Enter falls through to insert a newline.
+        # During IME composition Enter is consumed by the input method (it
+        # commits the candidate) and never reaches here, so composing is safe.
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not (
+            event.modifiers() & Qt.ShiftModifier
+        ):
+            self.send_requested.emit()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        # Width changes alter wrapping, so recompute the clamped height.
+        self._adjust_height()
+
+    def _adjust_height(self) -> None:
+        doc = self.document()
+        doc.setTextWidth(self.viewport().width())
+        line_h = self.fontMetrics().lineSpacing()
+        chrome = 2 * doc.documentMargin() + 2 * self.frameWidth()
+        content = doc.size().height() + 2 * self.frameWidth()
+        one_line = line_h + chrome
+        max_h = line_h * self._MAX_LINES + chrome
+        self.setFixedHeight(int(min(max(content, one_line), max_h)))
 
 
 class KeymouseTab(QWidget):
@@ -175,9 +226,11 @@ class KeymouseTab(QWidget):
         sidebar.addWidget(self.shot_btn)
 
         # Text send row: a standalone field + send button, independent of the
-        # keyboard-mirroring capture above.
-        self.send_input = QLineEdit()
+        # keyboard-mirroring capture above. The field is multi-line and grows
+        # with its content (Enter sends, Shift+Enter inserts a newline).
+        self.send_input = SendTextEdit()
         self.send_input.setPlaceholderText(i18n.t("keymouse.send_placeholder"))
+        self.send_input.setToolTip(i18n.t("keymouse.send_tip"))
         self.send_input.setEnabled(False)
         self.send_btn = QPushButton(i18n.t("keymouse.send"))
         self.send_btn.setEnabled(False)
@@ -185,7 +238,8 @@ class KeymouseTab(QWidget):
         send_layout = QHBoxLayout(send_row)
         send_layout.setContentsMargins(0, 0, 0, 0)
         send_layout.addWidget(self.send_input, 1)
-        send_layout.addWidget(self.send_btn)
+        # Keep the button pinned to the first line as the field grows taller.
+        send_layout.addWidget(self.send_btn, 0, Qt.AlignTop)
         sidebar.addWidget(send_row)
 
         # Pasteboard buttons.
@@ -211,7 +265,7 @@ class KeymouseTab(QWidget):
         self.kbd_close_btn.clicked.connect(lambda: self._set_keyboard(False))
         self.shot_btn.clicked.connect(self.on_screenshot)
         self.send_btn.clicked.connect(self.on_send_text)
-        self.send_input.returnPressed.connect(self.on_send_text)
+        self.send_input.send_requested.connect(self.on_send_text)
         self.set_pb_btn.clicked.connect(self.on_set_pasteboard)
         self.get_pb_btn.clicked.connect(self.on_get_pasteboard)
 
@@ -642,7 +696,7 @@ class KeymouseTab(QWidget):
     # ----------------------------------------------------- text & pasteboard
 
     def on_send_text(self) -> None:
-        text = self.send_input.text()
+        text = self.send_input.toPlainText()
         if not text or not self.target:
             return
         target = self.target

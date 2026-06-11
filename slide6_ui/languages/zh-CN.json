@@ -409,6 +409,7 @@
     "screenshot": "截图并保存",
     "kbd_exit_tip": "退出键盘输入",
     "send_placeholder": "输入文本后发送到设备",
+    "send_tip": "Enter 发送，Shift+Enter 换行",
     "send": "发送",
     "set_pasteboard": "设置剪贴板",
     "get_pasteboard": "读取剪贴板",

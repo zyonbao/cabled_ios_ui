@@ -409,6 +409,7 @@
     "screenshot": "Capture & Save",
     "kbd_exit_tip": "Exit keyboard input",
     "send_placeholder": "Enter text to send to the device",
+    "send_tip": "Enter to send, Shift+Enter for newline",
     "send": "Send",
     "set_pasteboard": "Set Clipboard",
     "get_pasteboard": "Read Clipboard",
