@@ -173,6 +173,7 @@
       "stop": "Stop",
       "restart": "Restart",
       "refresh": "Refresh",
+      "manage": "Tunnel management",
       "refreshed": "XPC tunnel status refreshed",
       "running": "XPC tunnel: running",
       "stopped": "XPC tunnel: stopped",
@@ -314,10 +315,6 @@
     "export_to": "Export crash logs to",
     "exporting": "Exporting {count} items…",
     "export_failed": "Export failed: {error}",
-    "export_options_title": "Export options",
-    "export_options_body": "Export crash logs to the selected directory.",
-    "keep_original": "Keep the original on device (uncheck to delete from device after export)",
-    "erased_suffix": " (original deleted from device)",
     "exported_partial": "Exported {ok} items, {failed} failed{suffix}",
     "exported_ok": "Exported {ok} items{suffix}",
     "need_select_delete": "Select crash logs to delete first",
@@ -562,6 +559,28 @@
     "missing_tunnel_ddi": "Enable the XPC tunnel and mount the DDI first (Developer Tools: “Start” then mount DDI).",
     "missing_ddi": "Mount the DDI on the Developer Tools root tab.",
     "missing_rsd": "Tunnel and DDI are ready but the current tunnel session hasn't picked up the developer service: restart the XPC tunnel."
+  },
+  "tunnel_manager": {
+    "title": "Active XPC tunnel manager",
+    "hint": "Only XPC tunnels started by this app can be listed; tunnels started elsewhere are not detected.",
+    "loading": "Scanning for active tunnel processes…",
+    "empty": "No active tunnel processes found",
+    "count": "Found {count} active tunnel process(es)",
+    "port_unknown": "unknown",
+    "mode_python": "Python",
+    "mode_macho": "MachO",
+    "kill_selected": "Kill selected ({count})",
+    "killing": "Killing {count} process(es) (admin auth required, one password)…",
+    "kill_done": "Selected tunnel processes terminated",
+    "kill_failed": "Termination failed / cancelled",
+    "detail_title": "Tunnel process detail (PID {pid})",
+    "col": {
+      "pid": "PID",
+      "user": "User",
+      "port": "Port",
+      "mode": "Mode",
+      "command": "Command"
+    }
   },
   "file_dialog": {
     "path_placeholder": "Enter an absolute folder or file path, then press Enter",

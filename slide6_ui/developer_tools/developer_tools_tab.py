@@ -42,6 +42,7 @@ from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
 from .location_dialog import LocationDialog
 from .process_dialog import ProcessDialog
+from .tunnel_manager_dialog import TunnelManagerDialog
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +145,15 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_stop_btn = QPushButton(i18n.t("dev_tools.tunnel.stop"))
         self.tunnel_restart_btn = QPushButton(i18n.t("dev_tools.tunnel.restart"))
         self.tunnel_refresh_btn = QPushButton(i18n.t("dev_tools.tunnel.refresh"))
+        # Manage ALL active tunneld processes (any port), not just the current
+        # one — discovery needs no elevation; batch-kill uses a single auth.
+        self.tunnel_manage_btn = QPushButton(i18n.t("dev_tools.tunnel.manage"))
         tunnel_row.addWidget(self.tunnel_label, 1)
         tunnel_row.addWidget(self.tunnel_btn)
         tunnel_row.addWidget(self.tunnel_stop_btn)
         tunnel_row.addWidget(self.tunnel_restart_btn)
         tunnel_row.addWidget(self.tunnel_refresh_btn)
+        tunnel_row.addWidget(self.tunnel_manage_btn)
         self.tunnel_widget = QWidget()
         self.tunnel_widget.setLayout(tunnel_row)
         self.tunnel_widget.setVisible(False)
@@ -204,6 +209,7 @@ class DeveloperToolsTab(QWidget):
         self.tunnel_stop_btn.clicked.connect(self._on_stop_tunnel)
         self.tunnel_restart_btn.clicked.connect(self._on_restart_tunnel)
         self.tunnel_refresh_btn.clicked.connect(self._on_refresh_tunnel)
+        self.tunnel_manage_btn.clicked.connect(self._open_tunnel_manager)
         self.process_tile.clicked.connect(self._open_process)
         self.location_tile.clicked.connect(self._open_location)
         self.syslog_tile.clicked.connect(self._open_syslog)
@@ -749,6 +755,14 @@ class DeveloperToolsTab(QWidget):
         self._refresh_tunnel_panel()
         self._refresh_features()
         self._set_status(message)
+
+    def _open_tunnel_manager(self) -> None:
+        """Open the active-tunnel manager (list/batch-kill all tunneld procs)."""
+        dlg = TunnelManagerDialog(self.runner, self)
+        dlg.exec()
+        # A batch kill may have stopped the current-port tunnel too; resync panel.
+        self._refresh_tunnel_panel()
+        self._refresh_features()
 
     # ------------------------------------------------------------ features
 

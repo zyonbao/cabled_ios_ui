@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -307,6 +308,166 @@ def restart_tunneld(timeout: float = 30.0) -> bool:
     # foreground (so it survives after do-shell-script returns).
     shell_cmd = f"{_kill_tunneld_shell()}; {_foreground_tunneld_command()}"
     return _spawn_foreground_tunneld(shell_cmd, timeout, "restart")
+
+
+# --------------------------------------------------------------------------
+# Active-tunnel discovery & batch cleanup
+#
+# The configurable port means a user who changes it and relaunches can leave
+# several tunneld processes running on different ports. The helpers below find
+# ALL of them (any port) and let the UI batch-kill a selection under a single
+# authorization. Discovery reads process command lines via `ps` (no elevation);
+# only killing root-owned processes needs admin rights.
+# --------------------------------------------------------------------------
+
+# Stable command-line markers identifying a tunneld process by launch form.
+_TUNNELD_PY_MARKERS = ("ios_toolkit.tunneld_main", "tunneld_main.py")
+_TUNNELD_MACHO_MARKER = "cabled_ios_tunnel"
+# Extract the port from `--port 49151` or `--port=49151` for display.
+_PORT_RE = re.compile(r"--port(?:=|\s+)(\d{1,5})")
+
+TUNNEL_MODE_PYTHON = "python"
+TUNNEL_MODE_MACHO = "macho"
+
+def _classify_tunnel_command(command: str) -> "str | None":
+    """Return the tunneld launch form for a command line, or None if not one.
+
+    MachO is checked first: a frozen ``cabled_ios_tunnel`` never also carries the
+    Python module markers, while the dev form always mentions the module/file.
+    """
+    if _TUNNELD_MACHO_MARKER in command:
+        return TUNNEL_MODE_MACHO
+    if any(marker in command for marker in _TUNNELD_PY_MARKERS):
+        return TUNNEL_MODE_PYTHON
+    return None
+
+
+# Executables that merely *wrap* a tunneld launch (`/bin/sh -c "...python -m
+# ios_toolkit.tunneld_main..."` and the elevated `osascript -e do shell script
+# "..."`). They carry the tunneld markers inside a quoted argument, so even a
+# token-aware check is fooled — but the program actually being executed
+# (argv[0]) gives them away. The real listener's argv[0] is a Python
+# interpreter or the cabled_ios_tunnel binary, never one of these.
+_WRAPPER_BASENAMES = ("osascript", "sh", "bash", "zsh", "dash")
+
+
+def _is_real_tunnel_process(command: str, mode: str) -> bool:
+    """True only for the actual tunneld listener, not a wrapper that spawned it.
+
+    Only one process actually binds the port; the launch chain
+    (osascript → /bin/sh → python) puts wrappers in front of it whose command
+    lines also contain the tunneld markers. We key off argv[0] (the executable
+    actually running): the leaf is a Python interpreter (`-m
+    ios_toolkit.tunneld_main` / ``tunneld_main.py``) or the ``cabled_ios_tunnel``
+    binary; any wrapper executable is rejected.
+    """
+    tokens = command.split()
+    if not tokens:
+        return False
+    exe = tokens[0].rsplit("/", 1)[-1]
+    if exe in _WRAPPER_BASENAMES:
+        return False
+    if mode == TUNNEL_MODE_MACHO:
+        return exe == _TUNNELD_MACHO_MARKER
+    # python leaf: the interpreter runs the module/file as real argv tokens.
+    if "-m" in tokens and "ios_toolkit.tunneld_main" in tokens:
+        return True
+    return any(tok.endswith("tunneld_main.py") for tok in tokens)
+
+
+def list_tunnel_processes() -> list[dict]:
+    """List every running tunneld process (any port) without elevation.
+
+    Each entry is ``{pid:int, user:str, port:int|None, mode:str, command:str}``.
+    On macOS a non-root user can read other users' (including root) process
+    command lines, so this needs no authorization; only killing them does.
+    """
+    try:
+        proc = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,user=,command="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    self_pid = os.getpid()
+    results: list[dict] = []
+    for raw in proc.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # "<pid> <user> <command...>" — keep the command's own spaces intact.
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid_s, user, command = parts
+        if not pid_s.isdigit():
+            continue
+        pid = int(pid_s)
+        if pid == self_pid:
+            continue  # never list ourselves
+        mode = _classify_tunnel_command(command)
+        if mode is None:
+            continue
+        if not _is_real_tunnel_process(command, mode):
+            continue  # drop sh/osascript wrappers; only the real listener stays
+        match = _PORT_RE.search(command)
+        port: "int | None" = None
+        if match:
+            value = int(match.group(1))
+            if 1 <= value <= 65535:
+                port = value
+        results.append(
+            {"pid": pid, "user": user, "port": port, "mode": mode, "command": command}
+        )
+    return results
+
+
+def kill_tunnel_processes(pids: "list[int]") -> bool:
+    """Kill the given tunneld PIDs under a SINGLE elevated authorization.
+
+    Every PID is validated as a positive integer before being placed into the
+    shell command; the command otherwise contains only fixed literals, so no UI
+    or external free-form text is ever interpolated. Sends SIGTERM first, then
+    SIGKILL to any survivor. Returns True if the elevated command was authorized
+    and run (one password covers the whole batch). An empty/invalid list is a
+    no-op returning False.
+    """
+    safe: list[int] = []
+    for raw in pids:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid > 0:
+            safe.append(pid)
+    if not safe:
+        return False
+
+    pid_list = " ".join(str(p) for p in safe)
+    kill_cmd = (
+        f"kill {pid_list} 2>/dev/null; sleep 1; "
+        f"for p in {pid_list}; do kill -0 $p 2>/dev/null && kill -9 $p 2>/dev/null; done; "
+        "true"
+    )
+    applescript = (
+        f'do shell script "{_applescript_quote(kill_cmd)}" '
+        f"with administrator privileges"
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", applescript],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def stop_tunneld() -> bool:

@@ -173,6 +173,7 @@
       "stop": "停止",
       "restart": "重启",
       "refresh": "刷新",
+      "manage": "tunnel 管理",
       "refreshed": "已刷新 XPC tunnel 状态",
       "running": "XPC tunnel：已启动",
       "stopped": "XPC tunnel：未启动",
@@ -314,10 +315,6 @@
     "export_to": "导出崩溃日志到",
     "exporting": "正在导出 {count} 项…",
     "export_failed": "导出失败: {error}",
-    "export_options_title": "导出选项",
-    "export_options_body": "导出崩溃日志到所选目录。",
-    "keep_original": "保留设备上的原文件（取消勾选则导出后从设备删除）",
-    "erased_suffix": "（已删除设备原文件）",
     "exported_partial": "已导出 {ok} 项，{failed} 项失败{suffix}",
     "exported_ok": "已导出 {ok} 项{suffix}",
     "need_select_delete": "请先选择要删除的崩溃日志",
@@ -562,6 +559,28 @@
     "missing_tunnel_ddi": "请先启用 XPC tunnel 并挂载 DDI（开发者工具顶部「启动」并挂载 DDI）",
     "missing_ddi": "请到「开发者工具」根 tab 挂载 DDI",
     "missing_rsd": "tunnel 与 DDI 已就绪但当前 tunnel 会话未识别到开发者服务：请重启 XPC tunnel"
+  },
+  "tunnel_manager": {
+    "title": "活动 XPC tunnel 管理",
+    "hint": "仅能列出由本应用启动的 XPC tunnel；其它方式启动的 tunnel 无法检测。",
+    "loading": "正在扫描活动 tunnel 进程…",
+    "empty": "未发现活动 tunnel 进程",
+    "count": "发现 {count} 个活动 tunnel 进程",
+    "port_unknown": "未知",
+    "mode_python": "Python",
+    "mode_macho": "MachO",
+    "kill_selected": "批量结束（{count}）",
+    "killing": "正在结束 {count} 个进程（需管理员授权，仅需一次密码）…",
+    "kill_done": "已结束所选 tunnel 进程",
+    "kill_failed": "结束失败 / 已取消",
+    "detail_title": "tunnel 进程详情（PID {pid}）",
+    "col": {
+      "pid": "PID",
+      "user": "用户",
+      "port": "端口",
+      "mode": "形态",
+      "command": "命令行"
+    }
   },
   "file_dialog": {
     "path_placeholder": "输入文件夹或文件的绝对路径后回车跳转",

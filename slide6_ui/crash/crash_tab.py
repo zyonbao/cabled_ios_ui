@@ -1,9 +1,8 @@
 """crash_tab.py — the "Crash 报告" tab.
 
 Lists the device's crash logs and supports multi-select / right-click export and
-delete. Export offers a "keep original on device" choice; when unchecked, each
-crash log is removed from the device after a successful export (handled
-atomically by the toolkit via CrashReportsManager.pull(erase=True)).
+delete. Export always copies the logs out and keeps the originals on the device;
+removing a log from the device is a separate, explicit delete action.
 
 Crash logs are read over lockdown + AFC2 and need neither WDA nor the XPC tunnel.
 All blocking calls go through the shared AsyncRunner.
@@ -18,9 +17,6 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -251,23 +247,20 @@ class CrashReportsTab(QWidget):
         out_dir = QFileDialog.getExistingDirectory(self, i18n.t("crash.export_to"))
         if not out_dir:
             return
-        keep = self._ask_keep_original()
-        if keep is None:
-            return  # cancelled
         paths = [e.get("path", "") for e in entries]
         self.status.setText(i18n.t("crash.exporting", count=len(paths)))
         self.export_btn.setEnabled(False)
-        erase = not keep
 
         def _do_export() -> dict:
+            # Always keep the original on the device (export = copy out only).
             ok, failed = 0, []
             for path in paths:
-                res = api.pull_crash(target, path, out_dir, erase=erase)
+                res = api.pull_crash(target, path, out_dir, erase=False)
                 if res.get("ok"):
                     ok += 1
                 else:
                     failed.append(path)
-            return {"ok": ok, "failed": failed, "erased": erase}
+            return {"ok": ok, "failed": failed}
 
         self.runner.submit(
             _do_export,
@@ -275,32 +268,12 @@ class CrashReportsTab(QWidget):
             on_error=lambda e: self._after_export(i18n.t("crash.export_failed", error=e)),
         )
 
-    def _ask_keep_original(self) -> "bool | None":
-        """Ask whether to keep the original on device. None = cancelled."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle(i18n.t("crash.export_options_title"))
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel(i18n.t("crash.export_options_body")))
-        keep_box = QCheckBox(i18n.t("crash.keep_original"))
-        keep_box.setChecked(True)
-        layout.addWidget(keep_box)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dlg)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        layout.addWidget(buttons)
-        if dlg.exec() != QDialog.Accepted:
-            return None
-        return keep_box.isChecked()
-
     def _on_export_done(self, result: dict) -> None:
         failed = result.get("failed", [])
-        suffix = i18n.t("crash.erased_suffix") if result.get("erased") else ""
         if failed:
-            self._after_export(i18n.t("crash.exported_partial", ok=result['ok'], failed=len(failed), suffix=suffix))
+            self._after_export(i18n.t("crash.exported_partial", ok=result['ok'], failed=len(failed), suffix=""))
         else:
-            self._after_export(i18n.t("crash.exported_ok", ok=result['ok'], suffix=suffix))
-        if result.get("erased"):
-            self.reload()
+            self._after_export(i18n.t("crash.exported_ok", ok=result['ok'], suffix=""))
 
     def _after_export(self, message: str) -> None:
         self.export_btn.setEnabled(True)
