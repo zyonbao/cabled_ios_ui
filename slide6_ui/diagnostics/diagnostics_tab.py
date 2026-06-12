@@ -40,6 +40,7 @@ from ..common.context_copy import install_plaintext_copy_menu
 from ..common.errors import localize_error
 from ..common.feature_tile import FeatureTile
 from ..common.flow_layout import FlowLayout
+from ..common.gate_overlay import GatedTabMixin
 from ..common.workers import AsyncRunner
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ def _below_mobilegestalt_cutoff(os_version: str) -> bool:
     return parsed < _MOBILEGESTALT_MAX
 
 
-class DiagnosticsTab(QWidget):
+class DiagnosticsTab(GatedTabMixin, QWidget):
     """The "诊断" tab: power control + read-only device diagnostics."""
 
     def __init__(
@@ -74,6 +75,7 @@ class DiagnosticsTab(QWidget):
         self._result_dialogs: list[QDialog] = []
         self._build_ui()
         self._wire()
+        self.init_gate(max_width=420)
 
     # ------------------------------------------------------------------ UI
 
@@ -132,43 +134,14 @@ class DiagnosticsTab(QWidget):
             self.mobilegestalt_tile,
         ]
 
-        # Full-tab gate overlay: shown (covering everything and intercepting
-        # clicks) when the XPC tunnel is required but not running, so the user
-        # can't miss why the tiles are inert. The hint is centered, not buried in
-        # the bottom status bar. Parented to self so it floats above the layout.
-        self._overlay = QWidget(self)
-        self._overlay.setObjectName("diagGateOverlay")
-        self._overlay.setStyleSheet(
-            "#diagGateOverlay { background-color: rgba(20, 20, 20, 150); }"
-        )
-        overlay_layout = QVBoxLayout(self._overlay)
-        overlay_layout.setAlignment(Qt.AlignCenter)
-        self._overlay_label = QLabel("", self._overlay)
-        self._overlay_label.setAlignment(Qt.AlignCenter)
-        self._overlay_label.setWordWrap(True)
-        self._overlay_label.setMaximumWidth(420)
-        self._overlay_label.setStyleSheet(
-            "color: #ffffff; font-size: 14px; background-color: rgba(0, 0, 0, 160);"
-            " padding: 18px 24px; border-radius: 10px;"
-        )
-        overlay_layout.addWidget(self._overlay_label)
-        self._overlay.hide()
-
     def _set_gate_overlay(self, text: str | None) -> None:
-        """Show the centered gate overlay with ``text``, or hide it when falsy."""
-        if text:
-            self._overlay_label.setText(text)
-            self._overlay.setGeometry(self.rect())
-            self._overlay.show()
-            self._overlay.raise_()
-        else:
-            self._overlay.hide()
+        """Show the centered gate overlay with ``text``, or hide it when falsy.
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        super().resizeEvent(event)
-        # Keep the floating overlay matched to the tab size.
-        if self._overlay.isVisible():
-            self._overlay.setGeometry(self.rect())
+        Routed through the shared GatedTabMixin overlay so this tab keeps a single
+        gate layer: the pairing gate (driven by the main window) takes priority,
+        and this XPC-tunnel gate shows through the same overlay once paired.
+        """
+        self.set_external_gate(text)
 
     @staticmethod
     def _section_header(text: str) -> QLabel:

@@ -37,10 +37,11 @@ from .. import i18n
 from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_existing_file
+from ..common.gate_overlay import GatedTabMixin
 from ..common.workers import AsyncRunner
 
 
-class ProfilesTab(QWidget):
+class ProfilesTab(GatedTabMixin, QWidget):
     """The "描述文件" tab: list / install / multi-remove / export profiles."""
 
     def __init__(self, runner: AsyncRunner, get_target: Callable[[], str]) -> None:
@@ -51,6 +52,7 @@ class ProfilesTab(QWidget):
         self.setAcceptDrops(True)
         self._build_ui()
         self._wire()
+        self.init_gate()
 
     # ------------------------------------------------------------------ UI
 

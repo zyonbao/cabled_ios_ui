@@ -74,25 +74,35 @@
 
 ### Requirement: 键鼠操作接入设备就绪前置检查
 
-「键鼠操作」在启动 WDA / DVT 相关流程前 MUST 应用统一的设备就绪前置检查（见 `slide6-device-readiness`）。当前置条件不满足时，MUST 以**非模态**方式（画面区 overlay / 状态文案）给出可操作引导而非直接失败，且 MUST NOT 弹出任何模态对话框、MUST NOT 从键鼠操作侧自动拉起 tunnel：
+「键鼠操作」在启动 WDA / DVT 相关流程前 MUST 应用统一的设备就绪前置检查（见 `slide6-device-readiness`）。该检查 MUST 在以下时机重新执行：用户切换到「键鼠操作」Tab、当前设备被刷新/重选且「键鼠操作」为活动页、以及配对状态刚从未配对变为已配对且当前停留在「键鼠操作」页。当前置条件不满足时，MUST 以**非模态**方式（全页 gate overlay / 状态文案）给出可操作引导而非直接失败，且 MUST NOT 弹出任何模态对话框、MUST NOT 从键鼠操作侧自动拉起 tunnel：
 
 - iOS 17+ 缺 tunnel 时：提示这些功能需要先启用 XPC tunnel，请前往「开发者工具」启动 XPC tunnel 并挂载 DeveloperDiskImage（不提供启动入口、不弹模态、不自动拉起）。
 - 缺 DDI 时：提示前往「开发者工具」根 tab 挂载 DDI。
 - tunnel 与 DDI 均就绪但 RSD 服务不工作时：提示重新挂载 DDI 或重启 tunnel（均在「开发者工具」操作）。
 
+当 readiness 未通过时，`ScreenView` MUST 保持静默：MUST NOT 启动 `prepare` / WDA / `window_size` / `orientation` / MJPEG / frame render 流程，MUST NOT 做渲染检测，MUST NOT 显示内部画面提示文案。只有 readiness 全通过后，才允许进入后续渲染链路。
+
 #### Scenario: iOS 17+ 缺 tunnel 进入键鼠操作
 
 - **WHEN** iOS 17+ 设备 tunnel 未启用，用户选中设备 / 进入键鼠操作
 - **THEN** 不弹出模态对话框、不自动拉起 tunnel
-- **AND** 以非模态 overlay / 状态提示引导用户前往「开发者工具」启动 XPC tunnel 并挂载 DeveloperDiskImage
+- **AND** 以全页 gate overlay / 状态提示引导用户前往「开发者工具」启动 XPC tunnel 并挂载 DeveloperDiskImage
+- **AND** `ScreenView` 不启动任何 WDA / 渲染相关流程
 
 #### Scenario: iOS 17+ 缺 DDI 进入键鼠操作
 
 - **WHEN** iOS 17+ 设备 tunnel 已就绪但 DDI 未挂载，用户进入键鼠操作
-- **THEN** 以非模态提示引导前往「开发者工具」根 tab 挂载 DDI，而非直接 WDA 失败
+- **THEN** 以全页 gate overlay / 状态提示引导前往「开发者工具」根 tab 挂载 DDI，而非直接 WDA 失败
+- **AND** `ScreenView` 不启动任何 WDA / 渲染相关流程
 
 #### Scenario: tunnel 与 DDI 就绪但 RSD 不工作
 
 - **WHEN** iOS 17+ 设备 tunnel 与 DDI 均就绪，但目标 RSD 开发者服务不可用
-- **THEN** 以非模态提示引导用户重新挂载 DDI 或在「开发者工具」重启 XPC tunnel
+- **THEN** 以全页 gate overlay / 状态提示引导用户重新挂载 DDI 或在「开发者工具」重启 XPC tunnel
+- **AND** `ScreenView` 不启动任何 WDA / 渲染相关流程
 
+#### Scenario: 配对后切到键鼠操作触发复检
+
+- **WHEN** 设备刚完成配对且用户切换到「键鼠操作」Tab
+- **THEN** 重新执行 readiness 检查，而不是复用旧的渲染态
+- **AND** 若 tunnel / DDI / RSD 任一未就绪，则显示对应 gate overlay 并保持 `ScreenView` 静默

@@ -15,9 +15,10 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, Qt, Signal
+from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -36,6 +37,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.errors import localize_error
 from ..common.file_dialogs import save_file
+from ..common.gate_overlay import GatedTabMixin
 from ..common import readiness
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
@@ -121,7 +123,7 @@ class SendTextEdit(QTextEdit):
         self.setFixedHeight(int(min(max(content, one_line), max_h)))
 
 
-class KeymouseTab(QWidget):
+class KeymouseTab(GatedTabMixin, QWidget):
     """Live mirror + gesture/keyboard/action controls for the selected device.
 
     `runner` is the shared AsyncRunner owned by MainWindow; `set_status` updates
@@ -151,6 +153,7 @@ class KeymouseTab(QWidget):
 
         self._build_ui()
         self._wire()
+        self.init_gate()
 
     # ------------------------------------------------------------------ UI
 
@@ -289,6 +292,11 @@ class KeymouseTab(QWidget):
     def set_overlay(self, text: str | None) -> None:
         self.screen.set_overlay(text)
 
+    def _on_gate_visibility_changed(self, visible: bool) -> None:
+        self.screen.set_gate_blocked(visible)
+        if visible:
+            self.screen.set_overlay(None)
+
     # ------------------------------------------------- MainWindow delegation
 
     def select_device(self, target: str, dev: dict | None, active: bool) -> None:
@@ -305,6 +313,10 @@ class KeymouseTab(QWidget):
         self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         self.screen.set_window_size(0, 0)
         self.screen.set_orientation(0)
+        self.screen.set_overlay(None)
+        # Reset the full-tab external gate; only the tunnel/DDI readiness phase
+        # (re)raises it. Internal/render hints below live on the ScreenView.
+        self.set_external_gate(None)
         self.info_orient.setText(i18n.t("keymouse.info.orient_unknown"))
         # Refresh button only needs a selected device (it re-runs this flow), so
         # enable/disable it purely on target presence.
@@ -314,6 +326,7 @@ class KeymouseTab(QWidget):
             self._fill_info(None)
             self._set_status(i18n.t("main_window.status.disconnected"))
             self.screen.set_overlay(i18n.t("common.select_device_first"))
+            self._schedule_focus_clear()
             return
 
         self._fill_info(dev)
@@ -324,6 +337,7 @@ class KeymouseTab(QWidget):
             self.screen.set_overlay(i18n.t("keymouse.no_wda_overlay"))
             if active:
                 self._set_status(i18n.t("keymouse.no_wda_status"))
+            self._schedule_focus_clear()
             return
 
         # WDA / mirror startup is costly and only this tab needs it. Defer it
@@ -331,11 +345,13 @@ class KeymouseTab(QWidget):
         if active:
             self._start_mirror_flow(gen)
         else:
-            self.screen.set_overlay(i18n.t("keymouse.switch_tab_hint"))
+            self.screen.set_overlay(None)
+        self._schedule_focus_clear()
 
     def on_enter(self) -> None:
         # Entering: lazily start the WDA / mirror flow for a connected,
         # not-yet-streaming device.
+        self._schedule_focus_clear()
         if not self.target or self.mirror_thread is not None:
             return
         if not self.dev or self.dev.get("state") != "online":
@@ -366,7 +382,8 @@ class KeymouseTab(QWidget):
                 lambda: api.stop_wda(target),
                 on_error=lambda e: _dbg(f"stop_wda error: {e}"),
             )
-        self.screen.set_overlay(i18n.t("keymouse.switch_tab_hint"))
+        self.set_external_gate(None)
+        self.screen.set_overlay(None)
 
     def _start_mirror_flow(self, gen: int) -> None:
         dev = self.dev
@@ -395,7 +412,11 @@ class KeymouseTab(QWidget):
         os_version = (dev.get("metadata") or {}).get("os_version", "")
         _dbg(f"check_readiness target={target} os={os_version} gen={gen}")
         self._set_status(i18n.t("keymouse.checking_ready"))
-        self.screen.set_overlay(i18n.t("keymouse.checking_ready"))
+        self.stop_stream()
+        # Tunnel/DDI readiness is an external precondition: surface it on the
+        # full-tab gate overlay, not the ScreenView (which is only used for the
+        # mirror render flow once the device is ready).
+        self.set_external_gate(i18n.t("keymouse.checking_ready"))
         self.runner.submit(
             lambda: readiness.probe(target, os_version),
             on_done=lambda r: self._on_readiness(r, target, gen),
@@ -413,22 +434,27 @@ class KeymouseTab(QWidget):
         # Not ready: surface actionable guidance and stop (user fixes it in the
         # developer-tools tab, then reselects the device to retry).
         self._set_status(i18n.t("keymouse.device_not_ready"))
+        # Missing tunnel / DDI / RSD are external preconditions the user fixes in
+        # the Developer Tools tab — show them on the full-tab gate overlay.
         if result.missing == readiness.MISSING_TUNNEL_AND_DDI:
-            self.screen.set_overlay(i18n.t("keymouse.overlay_need_tunnel_ddi"))
+            self.set_external_gate(i18n.t("keymouse.overlay_need_tunnel_ddi"))
         elif result.missing == readiness.MISSING_TUNNEL:
-            self.screen.set_overlay(i18n.t("keymouse.overlay_need_tunnel"))
+            self.set_external_gate(i18n.t("keymouse.overlay_need_tunnel"))
         elif result.missing == readiness.MISSING_DDI:
-            self.screen.set_overlay(i18n.t("keymouse.overlay_need_ddi"))
+            self.set_external_gate(i18n.t("keymouse.overlay_need_ddi"))
         elif result.missing == readiness.MISSING_RSD:
-            self.screen.set_overlay(i18n.t("keymouse.overlay_need_rsd"))
+            self.set_external_gate(i18n.t("keymouse.overlay_need_rsd"))
         else:
-            self.screen.set_overlay(i18n.t("keymouse.overlay_unavailable", message=result.message))
+            self.set_external_gate(i18n.t("keymouse.overlay_unavailable", message=result.message))
 
     # ------------------------------------------------------- prepare / WDA
 
     def _prepare_device(self, target: str, gen: int) -> None:
         _dbg(f"prepare_device target={target} gen={gen}")
         self._set_status(i18n.t("keymouse.wda_starting"))
+        # Readiness passed: drop the external gate so the mirror render flow's
+        # hints (WDA starting / failures / stream) show on the ScreenView.
+        self.set_external_gate(None)
         self.screen.set_overlay(i18n.t("keymouse.wda_starting_overlay"))
         self.runner.submit(
             lambda: api.prepare(target),
@@ -655,6 +681,19 @@ class KeymouseTab(QWidget):
     def _refocus_keyboard(self) -> None:
         if self.kbd_on:
             self.kbd_capture.setFocus()
+
+    def should_preserve_focus(self) -> bool:
+        return self.kbd_on
+
+    def _schedule_focus_clear(self) -> None:
+        QTimer.singleShot(0, self._clear_focus_if_idle)
+
+    def _clear_focus_if_idle(self) -> None:
+        if self.should_preserve_focus():
+            return
+        focused = QApplication.focusWidget()
+        if focused is not None and self.isAncestorOf(focused):
+            focused.clearFocus()
 
     # ----------------------------------------------------- text & pasteboard
 

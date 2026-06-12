@@ -132,7 +132,11 @@ class ScreenView(QWidget):
         self._last_logged: tuple | None = None
         self._press_pos: QPoint | None = None
         self._press_ms = 0
+        # Internal mirror-render hints (selecting / WDA starting / stream errors)
+        # are painted directly on the black canvas. External preconditions
+        # (pairing / tunnel / DDI) use the tab's full-tab gate overlay instead.
         self._overlay_text = i18n.t("common.select_device_first")
+        self._gate_blocked = False
         self.setMinimumSize(240, 320)
         self.setMouseTracking(False)
 
@@ -150,6 +154,10 @@ class ScreenView(QWidget):
 
     def set_overlay(self, text: str | None) -> None:
         self._overlay_text = text or ""
+        self.update()
+
+    def set_gate_blocked(self, blocked: bool) -> None:
+        self._gate_blocked = bool(blocked)
         self.update()
 
     def clear_frame(self) -> None:
@@ -221,7 +229,7 @@ class ScreenView(QWidget):
         if self._pixmap is not None and not self._pixmap.isNull():
             target = self.image_rect()
             painter.drawPixmap(target, self._pixmap)
-        if self._overlay_text:
+        if self._overlay_text and not self._gate_blocked:
             painter.setPen(Qt.white)
             painter.drawText(self.rect(), Qt.AlignCenter, self._overlay_text)
 

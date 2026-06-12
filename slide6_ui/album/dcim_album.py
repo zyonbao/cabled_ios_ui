@@ -47,6 +47,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_directory
+from ..common.gate_overlay import GatedTabMixin
 from ..common.workers import AsyncRunner
 
 # pillow-heif is a required dependency (see requirements.txt). Import it lazily
@@ -279,7 +280,7 @@ class _ImageViewerDialog(QDialog):
         self.resize(min(pix.width() + 24, max_w), min(pix.height() + 24, max_h))
 
 
-class DcimAlbumTab(QWidget):
+class DcimAlbumTab(GatedTabMixin, QWidget):
     """Thumbnail-grid browser for the device DCIM folder."""
 
     def __init__(self, runner: AsyncRunner) -> None:
@@ -293,6 +294,7 @@ class DcimAlbumTab(QWidget):
         self._pending: list[tuple[int, QListWidgetItem, dict]] = []
         self._inflight = 0
         self._build_ui()
+        self.init_gate()
 
     # --------------------------------------------------------------- cache dir
 

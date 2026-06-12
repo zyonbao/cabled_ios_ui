@@ -228,26 +228,10 @@ class MainWindow(QMainWindow):
             self.diagnostics_tab,
         }
 
-        # A single shared gate overlay floats above whichever pair-gated tab is
-        # current when the selected device is not paired. Centralizing it here
-        # (one overlay, reparented to the current page) avoids per-tab plumbing.
-        self._pair_overlay = QWidget(central)
-        self._pair_overlay.setObjectName("pairGateOverlay")
-        self._pair_overlay.setStyleSheet(
-            "#pairGateOverlay { background-color: rgba(20, 20, 20, 150); }"
-        )
-        _pov = QVBoxLayout(self._pair_overlay)
-        _pov.setAlignment(Qt.AlignCenter)
-        self._pair_overlay_label = QLabel("", self._pair_overlay)
-        self._pair_overlay_label.setAlignment(Qt.AlignCenter)
-        self._pair_overlay_label.setWordWrap(True)
-        self._pair_overlay_label.setMaximumWidth(460)
-        self._pair_overlay_label.setStyleSheet(
-            "color: #ffffff; font-size: 14px; background-color: rgba(0, 0, 0, 160);"
-            " padding: 18px 24px; border-radius: 10px;"
-        )
-        _pov.addWidget(self._pair_overlay_label)
-        self._pair_overlay.hide()
+        # Each pair-gated tab owns its own full-tab gate overlay (via
+        # GatedTabMixin). When the selected device is unpaired we tell every gated
+        # tab to show its pairing hint; each tab keeps a single gate layer that
+        # also serves its own external precondition gate (tunnel / DDI).
 
         self.setCentralWidget(central)
 
@@ -268,20 +252,6 @@ class MainWindow(QMainWindow):
         self.pair_btn.clicked.connect(self._on_pair_clicked)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.preferences_action.triggered.connect(self._open_preferences)
-        # Keep the gate overlay matched to its host page as that page resizes.
-        for tab in self._pair_gated_tabs:
-            tab.installEventFilter(self)
-
-    def eventFilter(self, obj, event):  # noqa: N802 - Qt override
-        from PySide6.QtCore import QEvent
-
-        if (
-            event.type() == QEvent.Resize
-            and self._pair_overlay.isVisible()
-            and self._pair_overlay.parent() is obj
-        ):
-            self._pair_overlay.setGeometry(obj.rect())
-        return super().eventFilter(obj, event)
 
     # -------------------------------------------------------------- status
 
@@ -849,7 +819,6 @@ class MainWindow(QMainWindow):
     def _set_pair_state(self, paired: "bool | None") -> None:
         self._paired = paired
         self._update_pair_button()
-        self._apply_pair_overlay()
         self._apply_gated_targets()
         if paired is False:
             # Make sure no WDA/mirror keeps running against an untrusted device.
@@ -857,6 +826,9 @@ class MainWindow(QMainWindow):
         elif paired and self._on_keymouse_tab():
             # Trust confirmed while sitting on the key/mouse tab — start now.
             self.keymouse_tab.on_enter()
+        # Apply the shared pair overlay last so it has the final say on the single
+        # visible gate layer (e.g. suppressing the key/mouse tab's own gate).
+        self._apply_pair_overlay()
 
     def _apply_gated_targets(self) -> None:
         """Load pair-gated tabs only when trust is confirmed; clear them otherwise.
@@ -888,16 +860,14 @@ class MainWindow(QMainWindow):
             self.pair_btn.setEnabled(True)
 
     def _apply_pair_overlay(self) -> None:
-        """Cover the current pair-gated tab with the overlay when unpaired."""
-        current = self.tabs.currentWidget()
-        if self.target and self._paired is False and current in self._pair_gated_tabs:
-            self._pair_overlay.setParent(current)
-            self._pair_overlay_label.setText(i18n.t("main_window.pair.overlay"))
-            self._pair_overlay.setGeometry(current.rect())
-            self._pair_overlay.show()
-            self._pair_overlay.raise_()
-        else:
-            self._pair_overlay.hide()
+        """Show the pairing gate on every pair-gated tab's own overlay when unpaired."""
+        text = (
+            i18n.t("main_window.pair.overlay")
+            if (self.target and self._paired is False)
+            else None
+        )
+        for tab in self._pair_gated_tabs:
+            tab.set_pair_gate(text)
 
     def _on_pair_clicked(self) -> None:
         if not self.target:
@@ -965,6 +935,7 @@ class MainWindow(QMainWindow):
             else:
                 self.keymouse_tab.on_enter()
             self._apply_pair_overlay()
+            QTimer.singleShot(0, self._clear_tab_focus)
             return
         self.keymouse_tab.on_leave()
         # Let a tab refresh transient/global state (e.g. XPC tunnel status) when
@@ -988,10 +959,11 @@ class MainWindow(QMainWindow):
         Only clears when the focused widget lives inside the current tab page, so
         focus held by a dialog or the key/mouse capture field is never disturbed.
         """
-        if self._on_keymouse_tab():
+        current = self.tabs.currentWidget()
+        if current is self.keymouse_tab and self.keymouse_tab.should_preserve_focus():
             return
         focused = QApplication.focusWidget()
-        page = self.tabs.currentWidget()
+        page = current
         if focused is not None and page is not None and page.isAncestorOf(focused):
             focused.clearFocus()
 

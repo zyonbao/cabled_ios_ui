@@ -231,11 +231,6 @@
       "pick_trustcache": "Select Image.trustcache",
       "pick_signature": "Select signature file (.signature)"
     },
-    "restart_prompt": {
-      "title": "Restart XPC tunnel",
-      "body": "DDI mounted successfully.\n\nOn iOS 17+, an XPC tunnel established before this mount does not include the developer services that only appear after mounting (such as testmanagerd), which prevents Key/Mouse / WDA from starting.\n\nThe XPC tunnel must be restarted to enable these services (administrator authorization will be requested). Restart now?",
-      "declined": "Mounted; XPC tunnel not restarted — Key/Mouse / WDA may be unavailable. You can retry from the “Restart” button in the tunnel panel above."
-    },
     "ready": {
       "unlocked": "DVT ready; features unlocked",
       "timeout": "DVT readiness timed out: click “Refresh” to retry or re-mount"

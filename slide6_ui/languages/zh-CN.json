@@ -231,11 +231,6 @@
       "pick_trustcache": "选择 Image.trustcache",
       "pick_signature": "选择签名文件 (.signature)"
     },
-    "restart_prompt": {
-      "title": "重启 XPC tunnel",
-      "body": "DDI 挂载成功。\n\niOS 17+ 上，挂载前已建立的 XPC tunnel 不包含本次挂载后才出现的开发者服务（如 testmanagerd），会导致键鼠 / WDA 无法启动。\n\n需要重启 XPC tunnel 以启用这些服务（将请求管理员授权）。是否现在重启？",
-      "declined": "已挂载；未重启 XPC tunnel——键鼠 / WDA 可能不可用，可稍后在上方 tunnel 面板点「重启」手动重启重试"
-    },
     "ready": {
       "unlocked": "DVT 已就绪，功能已解锁",
       "timeout": "DVT 准备超时：可点「刷新状态」重试或重新挂载"

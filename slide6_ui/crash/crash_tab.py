@@ -36,6 +36,7 @@ from .. import i18n
 from ..common.context_copy import add_copy_value_action
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_directory
+from ..common.gate_overlay import GatedTabMixin
 from ..common.workers import AsyncRunner
 
 
@@ -48,7 +49,7 @@ def _human_size(num: int) -> str:
     return f"{size:.1f} GB"
 
 
-class CrashReportsTab(QWidget):
+class CrashReportsTab(GatedTabMixin, QWidget):
     """The "Crash 报告" tab: list / export / delete device crash logs."""
 
     def __init__(self, runner: AsyncRunner, get_target: Callable[[], str]) -> None:
@@ -62,6 +63,7 @@ class CrashReportsTab(QWidget):
         self._cur_path = ""
         self._build_ui()
         self._wire()
+        self.init_gate()
 
     # ------------------------------------------------------------------ UI
 

@@ -37,6 +37,7 @@ from ..common.errors import localize_error
 from ..common.file_dialogs import open_existing_file
 from ..common.feature_tile import FeatureTile
 from ..common.flow_layout import FlowLayout
+from ..common.gate_overlay import GatedTabMixin
 from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
@@ -74,7 +75,7 @@ _DDI_SOURCE_PRIORITY_KEY = "settings/ddi_source_priority"
 _DDI_DEFAULT_PRIORITY = "local,github"
 
 
-class DeveloperToolsTab(QWidget):
+class DeveloperToolsTab(GatedTabMixin, QWidget):
     """The "开发者工具" tab: DDI mount state + DVT feature tiles."""
 
     def __init__(
@@ -111,6 +112,7 @@ class DeveloperToolsTab(QWidget):
         self._log_dialogs: list[LogDialog] = []
         self._build_ui()
         self._wire()
+        self.init_gate()
 
     # ------------------------------------------------------------------ UI
 
@@ -547,14 +549,13 @@ class DeveloperToolsTab(QWidget):
         self._refresh_features()
         self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted_preparing"))
         self._set_status(i18n.t("dev_tools.mount.mount_ok", target=target))
-        # iOS 17+: a tunnel established BEFORE this mount has a stale RSD service
-        # list that lacks the just-published developer services (notably
-        # com.apple.dt.testmanagerd.remote), so WDA / keyboard-mouse would fail.
-        # Offer to restart the tunnel so RSD re-enumerates them. If no tunnel is
-        # running, a later fresh launch already includes them — nothing to do.
+        # iOS 17+: when a tunnel is already running, probe DVT readiness directly —
+        # restarting the tunnel after a mount is not required for the developer
+        # services to become usable. If no tunnel is running yet, ask the user to
+        # start one (a fresh launch enumerates the just-mounted services).
         if tunnel.needs_tunnel(self._get_os_version()):
             if tunnel.is_tunnel_running():
-                self._prompt_restart_tunnel(target)
+                self._start_ready_probe(target)
                 return
             # No tunnel yet: probing DVT readiness here would just block on the
             # long ddi_wait_ready timeout. Tell the user to start the tunnel
@@ -563,27 +564,6 @@ class DeveloperToolsTab(QWidget):
             self._set_status(i18n.t("dev_tools.ddi.mounted_need_tunnel"))
             return
         self._start_ready_probe(target)
-
-    def _prompt_restart_tunnel(self, target: str) -> None:
-        """Ask the user to restart the tunnel (admin auth) after an iOS 17+ mount."""
-        resp = QMessageBox.question(
-            self,
-            i18n.t("dev_tools.restart_prompt.title"),
-            i18n.t("dev_tools.restart_prompt.body"),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if resp != QMessageBox.Yes:
-            self._set_status(i18n.t("dev_tools.restart_prompt.declined"))
-            self._start_ready_probe(target)
-            return
-        self._set_status(i18n.t("dev_tools.tunnel.restarting"))
-        self._set_tunnel_busy(True)
-        self.runner.submit(
-            lambda: tunnel.restart_tunneld(),
-            on_done=lambda ok: self._on_tunnel_restarted(bool(ok), target),
-            on_error=lambda e: self._on_tunnel_restarted(False, target),
-        )
 
     def _on_tunnel_restarted(self, ok: bool, target: str) -> None:
         self._set_tunnel_busy(False)
