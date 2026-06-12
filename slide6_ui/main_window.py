@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -291,14 +292,77 @@ class MainWindow(QMainWindow):
         col.addWidget(self._build_language_group(page))
         col.addWidget(self._build_config_file_group(page))
         col.addWidget(self._build_logging_group(page))
+        col.addWidget(self._build_tunnel_group(page))
 
-        ask_clean_checkbox = QCheckBox(i18n.t("settings.general.ask_clean_tunnel"), page)
+        col.addStretch(1)
+        return page
+
+    def _build_tunnel_group(self, parent: QWidget) -> QWidget:
+        """XPC tunnel controls: port, exit-prompt toggle, and daemon log path."""
+        group = QGroupBox(i18n.t("settings.tunnel.group"), parent)
+        col = QVBoxLayout(group)
+
+        # --- port ---------------------------------------------------------
+        port_row = QHBoxLayout()
+        port_row.addWidget(QLabel(i18n.t("settings.tunnel.port"), group))
+        port_spin = QSpinBox(group)
+        port_spin.setRange(1, 65535)
+        port_spin.setValue(tunnel.get_tunnel_port())
+        # The port is a raw number; no thousands separators.
+        port_spin.setGroupSeparatorShown(False)
+        port_row.addWidget(port_spin)
+        port_row.addStretch(1)
+        col.addLayout(port_row)
+
+        def _save_port(value: int) -> None:
+            self.settings.setValue(tunnel.TUNNEL_PORT_KEY, int(value))
+            # Re-publish to ios_toolkit so subsequent device work uses it.
+            tunnel.apply_tunnel_env()
+
+        port_spin.valueChanged.connect(_save_port)
+
+        # --- ask-on-exit toggle ------------------------------------------
+        ask_clean_checkbox = QCheckBox(i18n.t("settings.general.ask_clean_tunnel"), group)
         ask_clean_checkbox.setChecked(self._ask_clean_tunnel_on_exit())
         ask_clean_checkbox.toggled.connect(self._set_ask_clean_tunnel_on_exit)
         col.addWidget(ask_clean_checkbox)
 
-        col.addStretch(1)
-        return page
+        # --- daemon log file ---------------------------------------------
+        log_row = QHBoxLayout()
+        log_row.addWidget(QLabel(i18n.t("settings.tunnel.log_file"), group))
+        log_edit = QLineEdit(group)
+        log_edit.setText(tunnel.get_tunnel_log_file())
+        log_edit.setCursorPosition(0)
+        reveal_btn = QPushButton(i18n.t("settings.config_file.reveal"), group)
+        log_row.addWidget(log_edit, 1)
+        log_row.addWidget(reveal_btn)
+        col.addLayout(log_row)
+
+        def _save_log() -> None:
+            self.settings.setValue(tunnel.TUNNEL_LOG_FILE_KEY, log_edit.text().strip())
+
+        def _reveal_log() -> None:
+            self._reveal_tunnel_log(log_edit.text().strip() or tunnel.get_tunnel_log_file())
+
+        log_edit.editingFinished.connect(_save_log)
+        reveal_btn.clicked.connect(_reveal_log)
+
+        return group
+
+    def _reveal_tunnel_log(self, path: str) -> None:
+        """Reveal the tunneld log file (or its parent dir) in Finder.
+
+        The path is an app-internal setting; it may not exist yet if the tunnel
+        has never been launched, so fall back to revealing the parent directory.
+        """
+        if path and os.path.exists(path):
+            subprocess.run(["open", "-R", path], check=False)
+            return
+        parent_dir = os.path.dirname(path) if path else ""
+        if parent_dir and os.path.isdir(parent_dir):
+            subprocess.run(["open", parent_dir], check=False)
+            return
+        self._set_status(i18n.t("settings.tunnel.log_not_created"))
 
     def _build_language_group(self, parent: QWidget) -> QWidget:
         """Language picker. Restart-to-apply (no runtime retranslation)."""
@@ -373,8 +437,10 @@ class MainWindow(QMainWindow):
         dir_row = QHBoxLayout()
         dir_row.addWidget(QLabel(i18n.t("settings.logging.dir")))
         log_dir_edit = QLineEdit(group)
-        log_dir_edit.setPlaceholderText(i18n.t("common.default_prefix", path=logsys.DEFAULT_LOG_DIR))
-        log_dir_edit.setText(self._logging_dir())
+        # Show the effective path as editable/copyable text (the resolved default
+        # when nothing was customized), rather than a "Default: …" placeholder.
+        log_dir_edit.setText(self._logging_dir() or logsys.DEFAULT_LOG_DIR)
+        log_dir_edit.setCursorPosition(0)
         browse_btn = QPushButton(i18n.t("common.browse"), group)
         dir_row.addWidget(log_dir_edit, 1)
         dir_row.addWidget(browse_btn)
@@ -409,8 +475,10 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         lbl = QLabel(label, parent)
         edit = QLineEdit(parent)
-        edit.setPlaceholderText(i18n.t("common.default_prefix", path=default_dir))
-        edit.setText(self.settings.value(key, "", type=str) or "")
+        # Show the effective path as editable/copyable text (the resolved default
+        # when nothing was customized), rather than a "Default: …" placeholder.
+        edit.setText(self.settings.value(key, "", type=str) or default_dir)
+        edit.setCursorPosition(0)
         # Pin to natural height so sibling layout pressure can't clip the text.
         edit.setMinimumHeight(edit.sizeHint().height())
         browse = QPushButton(i18n.t("common.browse"), parent)

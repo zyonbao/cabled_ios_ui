@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 from ios_toolkit import logsys
 
 from . import i18n
+from .common import tunnel
 from .main_window import (
     MainWindow,
     _LOGGING_DIR_KEY,
@@ -78,6 +79,9 @@ def main() -> None:
     app.setOrganizationName("unnamed")
     app.setApplicationName("cabled_ios")
     _init_logging()
+    # Bridge the configured XPC tunnel port to ios_toolkit (which has no Qt
+    # dependency) before any device work can query tunneld.
+    tunnel.apply_tunnel_env()
     # Select the UI language before constructing any window (restart-to-apply).
     i18n.init()
     window = MainWindow()

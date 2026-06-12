@@ -21,27 +21,73 @@ and no credentials are ever passed to it.
 from __future__ import annotations
 
 import logging
+import os
+import shlex
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+from PySide6.QtCore import QSettings
+
 logger = logging.getLogger(__name__)
 
-# The tunneld port currently used by ios_toolkit (see device.TUNNELD_URL).
-# Centralized here so a future change can make it configurable.
+# The tunneld port used by ios_toolkit (see device._tunneld_url()). The host is
+# fixed to loopback (the daemon must never be reachable off-box); only the port
+# and the debug log path are user-configurable via Preferences.
 TUNNELD_HOST = "127.0.0.1"
-TUNNELD_PORT = 49151
+DEFAULT_TUNNELD_PORT = 49151
 
 # Log file for the elevated daemon's stdout/stderr (debug aid).
-_TUNNELD_LOG = "/tmp/ios_tunneld.log"
+DEFAULT_TUNNELD_LOG = "/tmp/ios_tunneld.log"
+
+# QSettings keys (resolved against the app-level org/app set in app.py, so the
+# default QSettings() constructor reads the same store the Preferences UI uses).
+TUNNEL_PORT_KEY = "settings/tunnel_port"
+TUNNEL_LOG_FILE_KEY = "settings/tunnel_log_file"
+
+# Environment variable bridging the configured port to ios_toolkit.device, which
+# stays free of any Qt/QSettings dependency. Set by apply_tunnel_env() at startup
+# and whenever the port changes in Preferences.
+TUNNELD_PORT_ENV = "IOS_TUNNELD_PORT"
+
+
+def get_tunnel_port() -> int:
+    """Return the configured tunneld port, falling back to the default.
+
+    Invalid or out-of-range stored values are ignored so a corrupt setting can
+    never break tunnel detection/launch.
+    """
+    raw = QSettings().value(TUNNEL_PORT_KEY, DEFAULT_TUNNELD_PORT)
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_TUNNELD_PORT
+    if not (1 <= port <= 65535):
+        return DEFAULT_TUNNELD_PORT
+    return port
+
+
+def get_tunnel_log_file() -> str:
+    """Return the configured tunneld log-file path, falling back to the default."""
+    value = QSettings().value(TUNNEL_LOG_FILE_KEY, "", type=str) or ""
+    return value.strip() or DEFAULT_TUNNELD_LOG
+
+
+def apply_tunnel_env() -> None:
+    """Publish the configured port to ios_toolkit via an environment variable.
+
+    Called at startup and after the port changes so the in-process device
+    manager queries the same tunneld the desktop UI launches.
+    """
+    os.environ[TUNNELD_PORT_ENV] = str(get_tunnel_port())
 
 
 def is_tunnel_running(timeout: float = 1.0) -> bool:
     """Return True if something is listening on the tunneld port."""
     try:
-        with socket.create_connection((TUNNELD_HOST, TUNNELD_PORT), timeout=timeout):
+        with socket.create_connection((TUNNELD_HOST, get_tunnel_port()), timeout=timeout):
             return True
     except OSError:
         return False
@@ -115,12 +161,15 @@ def _tunneld_command() -> list[str]:
     """Resolve the argv used to launch tunneld for the current environment.
 
     Frozen: the bundled ``cabled_ios_tunnel`` binary. Development: the project
-    interpreter running ``-m ios_toolkit.tunneld_main``. All tokens are fixed,
-    internally-resolved values — no external/UI input is ever included.
+    interpreter running ``-m ios_toolkit.tunneld_main``. The only non-fixed token
+    is ``--port <n>``, where ``n`` is the validated integer from get_tunnel_port()
+    (range-checked, never a raw string), so no free-form external input is ever
+    interpolated into the elevated command.
     """
+    port_args = ["--port", str(get_tunnel_port())]
     if _is_frozen():
-        return [str(_bundled_tunneld_binary())]
-    return [str(_interpreter()), "-m", "ios_toolkit.tunneld_main"]
+        return [str(_bundled_tunneld_binary()), *port_args]
+    return [str(_interpreter()), "-m", "ios_toolkit.tunneld_main", *port_args]
 
 
 def _tunneld_entry_exists() -> bool:
@@ -150,20 +199,25 @@ def _foreground_tunneld_command() -> str:
     """
     cmd = _tunneld_command()
     # Quote the executable path (it may contain spaces, e.g. inside an app
-    # bundle); the remaining tokens are fixed literals (e.g. "-m", module name).
+    # bundle); the remaining tokens are fixed literals plus the validated port.
     # The dev path additionally needs `cd <repo>` so `-m` resolves the package.
     exe_part = '"%s"' % cmd[0]
     rest_part = (" " + " ".join(cmd[1:])) if len(cmd) > 1 else ""
     prefix = "" if _is_frozen() else f'cd "{_repo_root()}" && '
-    return f"{prefix}{exe_part}{rest_part} " f'</dev/null >"{_TUNNELD_LOG}" 2>&1'
+    # The log path is user-configurable, so shell-quote it (shlex.quote) before
+    # it reaches the elevated `do shell script`; this neutralizes any shell
+    # metacharacters a malicious/typo'd path could otherwise inject.
+    log_redirect = shlex.quote(get_tunnel_log_file())
+    return f"{prefix}{exe_part}{rest_part} " f"</dev/null >{log_redirect} 2>&1"
 
 
 def _kill_tunneld_shell() -> str:
     """Shell snippet that kills whatever holds the tunneld port (SIGKILL fallback)."""
+    port = get_tunnel_port()
     return (
-        f"PIDS=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f"PIDS=$(lsof -ti tcp:{port}); "
         f'if [ -n "$PIDS" ]; then kill $PIDS 2>/dev/null; sleep 1; '
-        f"PIDS2=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f"PIDS2=$(lsof -ti tcp:{port}); "
         f'if [ -n "$PIDS2" ]; then kill -9 $PIDS2 2>/dev/null; fi; fi'
     )
 
@@ -264,10 +318,11 @@ def stop_tunneld() -> bool:
     SIGTERM, so this escalates to SIGKILL if the process lingers. Returns True if
     the command was authorized and run.
     """
+    port = get_tunnel_port()
     kill_cmd = (
-        f"PIDS=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f"PIDS=$(lsof -ti tcp:{port}); "
         f'if [ -n "$PIDS" ]; then kill $PIDS 2>/dev/null; sleep 1; '
-        f"PIDS2=$(lsof -ti tcp:{TUNNELD_PORT}); "
+        f"PIDS2=$(lsof -ti tcp:{port}); "
         f'if [ -n "$PIDS2" ]; then kill -9 $PIDS2; fi; fi'
     )
     applescript = (

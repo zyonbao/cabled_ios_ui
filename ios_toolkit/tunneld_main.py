@@ -17,6 +17,7 @@ device.py queries this API to retrieve RSD info for iOS 17+ devices.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 
@@ -24,8 +25,33 @@ from . import logsys
 
 _logger = logging.getLogger(__name__)
 
+# Defaults must match slide6_ui.common.tunnel (DEFAULT_TUNNELD_PORT) so a daemon
+# started without explicit args is still discoverable by the desktop UI.
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 49151
 
-def main() -> None:
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ios_tunneld",
+        description="iOS XPC tunnel daemon (RSD provider for iOS 17+).",
+    )
+    # Bind address is fixed to loopback by default; do not expose off-box.
+    parser.add_argument("--host", default=DEFAULT_HOST, help="bind host (default: %(default)s)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help="bind port (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+    if not (1 <= args.port <= 65535):
+        parser.error(f"--port must be in 1..65535 (got {args.port})")
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     # Standalone process (no Qt / QSettings): log with defaults so tunneld
     # activity lands in the same log directory for cross-process diagnosis.
     logsys.setup_logging(enabled=True, log_dir=None)
@@ -44,10 +70,10 @@ def main() -> None:
             TunnelProtocol.TCP if sys.version_info >= (3, 13) else TunnelProtocol.DEFAULT
         )
 
-        _logger.info("starting tunneld on 127.0.0.1:49151 (protocol=%s)", protocol)
+        _logger.info("starting tunneld on %s:%d (protocol=%s)", args.host, args.port, protocol)
         TunneldRunner.create(
-            host="127.0.0.1",
-            port=49151,
+            host=args.host,
+            port=args.port,
             protocol=protocol,
             usb_monitor=True,
             wifi_monitor=False,   # only USB devices are supported

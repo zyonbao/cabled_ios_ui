@@ -62,6 +62,12 @@
     "general": {
       "ask_clean_tunnel": "Ask to clean XPC tunnel on exit"
     },
+    "tunnel": {
+      "group": "XPC Tunnel",
+      "port": "Tunnel port",
+      "log_file": "Log file",
+      "log_not_created": "Tunnel log not created yet (it is created after the tunnel starts)"
+    },
     "language": {
       "group": "语言 / Language",
       "label": "Language",

@@ -131,14 +131,20 @@ generate_icon() {
 #   --python-flag=no_docstrings  Remove all docstring constants from compiled
 #       code.  pymobiledevice3 has extensive docs; this is the single biggest
 #       safe size win (~5-15 % reduction of the main binary).
-#   --python-flag=-O             Python -O mode: strip assert statements and set
-#       __debug__ = False. Equivalent to running `python -O`.
 #   --deployment                 Disable Nuitka's developer-aid checks (e.g.
 #       "-c" guard, sys.path probes) that would never fire in a deployed app.
 #       Removes a small amount of startup overhead.
+#
+# NOTE: do NOT add `--python-flag=-O` (or `--python-flag=no_asserts`).
+#   `-O` strips every `assert` statement, and pymobiledevice3 puts wire-protocol
+#   side effects *inside* asserts (e.g. os_trace.syslog() consumes the one-byte
+#   `\x02` record separator via `assert await recvall(1) == b"\x02"`; collect()/
+#   create_archive() likewise read framing bytes inside asserts). Stripping them
+#   desyncs the stream framing — the oslog stream then returns a single giant,
+#   mis-parsed entry (raw bytes, pid=0). The plain `python CablediOS.py` run
+#   keeps asserts, which is why it works; the packaged app must do the same.
 COMMON_FLAGS=(
     --python-flag=no_docstrings
-    --python-flag=-O
     --deployment
     --assume-yes-for-downloads
     --output-dir="$BUILD_DIR"

@@ -318,7 +318,28 @@ def _load_config() -> dict:
 # Tunneld RSD query
 # ---------------------------------------------------------------------------
 
-TUNNELD_URL = "http://127.0.0.1:49151"
+# Loopback host is fixed (the daemon must never be reachable off-box); the port
+# is configurable from the desktop UI and bridged in via this environment
+# variable (see slide6_ui.common.tunnel.apply_tunnel_env). Falls back to the
+# historical default when unset or malformed.
+TUNNELD_HOST = "127.0.0.1"
+TUNNELD_DEFAULT_PORT = 49151
+TUNNELD_PORT_ENV = "IOS_TUNNELD_PORT"
+
+
+def _tunneld_port() -> int:
+    """Resolve the tunneld port from the environment, with a safe fallback."""
+    raw = os.environ.get(TUNNELD_PORT_ENV, "")
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return TUNNELD_DEFAULT_PORT
+    return port if 1 <= port <= 65535 else TUNNELD_DEFAULT_PORT
+
+
+def _tunneld_url() -> str:
+    """Base URL of the local tunneld HTTP API for the configured port."""
+    return f"http://{TUNNELD_HOST}:{_tunneld_port()}"
 
 
 def _get_rsd_from_tunneld(udid: str) -> Optional[tuple[str, int]]:
@@ -327,7 +348,7 @@ def _get_rsd_from_tunneld(udid: str) -> Optional[tuple[str, int]]:
     Returns (rsd_address, rsd_port) or None if tunneld is not running or device not found.
     """
     try:
-        resp = requests.get(TUNNELD_URL, timeout=3.0)
+        resp = requests.get(_tunneld_url(), timeout=3.0)
         tunnels: dict[str, list[dict]] = resp.json()
         entries = tunnels.get(udid, [])
         if entries:

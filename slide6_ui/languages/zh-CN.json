@@ -62,6 +62,12 @@
     "general": {
       "ask_clean_tunnel": "退出时询问是否清理 XPC tunnel"
     },
+    "tunnel": {
+      "group": "XPC Tunnel",
+      "port": "Tunnel 端口",
+      "log_file": "日志文件",
+      "log_not_created": "Tunnel 日志尚未生成（tunnel 启动后会创建）"
+    },
     "language": {
       "group": "语言 / Language",
       "label": "语言",
