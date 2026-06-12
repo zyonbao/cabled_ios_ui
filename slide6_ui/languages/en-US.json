@@ -79,6 +79,11 @@
       "reveal": "Show in Finder",
       "not_created": "Config file not created yet (it is created after changing any setting)"
     },
+    "file_dialog": {
+      "group": "File Picker",
+      "use_builtin": "Use the app's built-in file/folder picker",
+      "hint": "The system picker is used by default. Enable this to use the built-in picker when the system one has limited access."
+    },
     "logging": {
       "group": "Logging",
       "enable": "Enable file logging",

@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -42,6 +41,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_directory, save_file
 from .log_panel import LogPanelBase
 
 # (field-key, i18n-header-key, default-width). The field key matches the dict
@@ -396,8 +396,8 @@ class OslogPanel(LogPanelBase):
         return "\n".join(lines)
 
     def _export_text(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, i18n.t("oslog.export_text"), "oslog.log", i18n.t("syslog.log_filter")
+        path = save_file(
+            self, i18n.t("oslog.export_text"), "oslog.log", [i18n.t("syslog.log_filter")]
         )
         if not path:
             return
@@ -413,7 +413,7 @@ class OslogPanel(LogPanelBase):
         if not target:
             self.status.setText(i18n.t("dev_tools.no_device"))
             return
-        path = QFileDialog.getExistingDirectory(self, i18n.t("oslog.select_logarchive_dir"))
+        path = open_directory(self, i18n.t("oslog.select_logarchive_dir"))
         if not path:
             return
         out_path = path if path.endswith(".logarchive") else f"{path}/device.logarchive"

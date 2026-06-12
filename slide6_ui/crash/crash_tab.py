@@ -17,7 +17,6 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -36,6 +35,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.context_copy import add_copy_value_action
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_directory
 from ..common.workers import AsyncRunner
 
 
@@ -244,7 +244,7 @@ class CrashReportsTab(QWidget):
         if not entries:
             self.status.setText(i18n.t("crash.need_select_export"))
             return
-        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("crash.export_to"))
+        out_dir = open_directory(self, i18n.t("crash.export_to"))
         if not out_dir:
             return
         paths = [e.get("path", "") for e in entries]

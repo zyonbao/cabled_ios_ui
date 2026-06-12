@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -36,6 +35,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.file_dialogs import save_file
 from ..common import readiness
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
@@ -588,8 +588,8 @@ class KeymouseTab(QWidget):
             QStandardPaths.StandardLocation.HomeLocation
         )
         default = os.path.join(download_dir, filename) if download_dir else filename
-        path, _ = QFileDialog.getSaveFileName(
-            self, i18n.t("keymouse.save_screenshot"), default, i18n.t("keymouse.png_filter")
+        path = save_file(
+            self, i18n.t("keymouse.save_screenshot"), default, [i18n.t("keymouse.png_filter")]
         )
         if not path:
             return

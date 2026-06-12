@@ -44,7 +44,11 @@ from . import i18n
 from .album import DcimAlbumTab
 from .app_manager import AppManagerTab
 from .common import tunnel
-from .common.file_dialogs import open_directory
+from .common.file_dialogs import (
+    DEFAULT_USE_BUILTIN_FILE_DIALOG,
+    USE_BUILTIN_FILE_DIALOG_KEY,
+    open_directory,
+)
 from .common.focus import suppress_auto_focus
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
@@ -275,8 +279,10 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
 
         tabs = QTabWidget(dlg)
-        tabs.addTab(self._build_general_tab(dlg), i18n.t("settings.tab.general"))
-        tabs.addTab(self._build_ddi_tab(dlg), i18n.t("settings.tab.ddi"))
+        general_tab = self._build_general_tab(dlg)
+        ddi_tab = self._build_ddi_tab(dlg)
+        tabs.addTab(general_tab, i18n.t("settings.tab.general"))
+        tabs.addTab(ddi_tab, i18n.t("settings.tab.ddi"))
         layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
@@ -285,7 +291,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
 
         suppress_auto_focus(dlg)
-        dlg.resize(560, 460)
+        # Size the dialog to the tallest tab so switching tabs never squeezes a
+        # page's rows. QTabWidget.sizeHint only reflects the current page, so take
+        # the max of every page's natural height and add room for the chrome.
+        content_h = max(general_tab.sizeHint().height(), ddi_tab.sizeHint().height())
+        chrome_h = (
+            tabs.tabBar().sizeHint().height()
+            + buttons.sizeHint().height()
+            + 2 * layout.contentsMargins().top()
+            + 24
+        )
+        dlg.resize(560, content_h + chrome_h)
         dlg.exec()
 
     def _build_general_tab(self, parent: QWidget) -> QWidget:
@@ -294,11 +310,34 @@ class MainWindow(QMainWindow):
 
         col.addWidget(self._build_language_group(page))
         col.addWidget(self._build_config_file_group(page))
+        col.addWidget(self._build_file_dialog_group(page))
         col.addWidget(self._build_logging_group(page))
         col.addWidget(self._build_tunnel_group(page))
 
         col.addStretch(1)
         return page
+
+    def _build_file_dialog_group(self, parent: QWidget) -> QWidget:
+        """Pick which file browser to use: macOS native panel or Qt's dialog."""
+        group = QGroupBox(i18n.t("settings.file_dialog.group"), parent)
+        col = QVBoxLayout(group)
+
+        builtin_checkbox = QCheckBox(i18n.t("settings.file_dialog.use_builtin"), group)
+        builtin_checkbox.setChecked(
+            self.settings.value(
+                USE_BUILTIN_FILE_DIALOG_KEY, DEFAULT_USE_BUILTIN_FILE_DIALOG, type=bool
+            )
+        )
+        builtin_checkbox.toggled.connect(
+            lambda checked: self.settings.setValue(USE_BUILTIN_FILE_DIALOG_KEY, bool(checked))
+        )
+        col.addWidget(builtin_checkbox)
+
+        hint = QLabel(i18n.t("settings.file_dialog.hint"), group)
+        hint.setWordWrap(True)
+        col.addWidget(hint)
+
+        return group
 
     def _build_tunnel_group(self, parent: QWidget) -> QWidget:
         """XPC tunnel controls: port, exit-prompt toggle, and daemon log path."""
@@ -336,6 +375,8 @@ class MainWindow(QMainWindow):
         log_edit = QLineEdit(group)
         log_edit.setText(tunnel.get_tunnel_log_file())
         log_edit.setCursorPosition(0)
+        # Pin to natural height so sibling layout pressure can't clip the row.
+        log_edit.setMinimumHeight(log_edit.sizeHint().height())
         reveal_btn = QPushButton(i18n.t("settings.config_file.reveal"), group)
         log_row.addWidget(log_edit, 1)
         log_row.addWidget(reveal_btn)
@@ -350,6 +391,8 @@ class MainWindow(QMainWindow):
         log_edit.editingFinished.connect(_save_log)
         reveal_btn.clicked.connect(_reveal_log)
 
+        # Reserve enough height so the log-file row is never squeezed by siblings.
+        group.setMinimumHeight(group.sizeHint().height())
         return group
 
     def _reveal_tunnel_log(self, path: str) -> None:

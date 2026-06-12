@@ -19,7 +19,6 @@ from typing import Callable
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -35,6 +34,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_existing_file
 from ..common.feature_tile import FeatureTile
 from ..common.flow_layout import FlowLayout
 from ..common import readiness, tunnel
@@ -502,26 +502,29 @@ class DeveloperToolsTab(QWidget):
 
     def _collect_manual_files(self) -> "dict | None":
         """Collect the local image files required for a manual mount."""
-        image, _ = QFileDialog.getOpenFileName(
-            self, i18n.t("dev_tools.mount.pick_image"), "",
-            "Disk image (*.dmg);;" + i18n.t("dev_tools.mount.all_files"),
+        image = open_existing_file(
+            self, i18n.t("dev_tools.mount.pick_image"),
+            ["Disk image (*.dmg)", i18n.t("dev_tools.mount.all_files")],
         )
         if not image:
             return None
         if self._ios_major >= 17:
-            manifest, _ = QFileDialog.getOpenFileName(
-                self, i18n.t("dev_tools.mount.pick_manifest"), "", "Plist (*.plist);;" + i18n.t("dev_tools.mount.all_files")
+            manifest = open_existing_file(
+                self, i18n.t("dev_tools.mount.pick_manifest"),
+                ["Plist (*.plist)", i18n.t("dev_tools.mount.all_files")],
             )
             if not manifest:
                 return None
-            trustcache, _ = QFileDialog.getOpenFileName(
-                self, i18n.t("dev_tools.mount.pick_trustcache"), "", i18n.t("dev_tools.mount.all_files")
+            trustcache = open_existing_file(
+                self, i18n.t("dev_tools.mount.pick_trustcache"),
+                [i18n.t("dev_tools.mount.all_files")],
             )
             if not trustcache:
                 return None
             return {"image": image, "build_manifest": manifest, "trustcache": trustcache}
-        signature, _ = QFileDialog.getOpenFileName(
-            self, i18n.t("dev_tools.mount.pick_signature"), "", "Signature (*.signature);;" + i18n.t("dev_tools.mount.all_files")
+        signature = open_existing_file(
+            self, i18n.t("dev_tools.mount.pick_signature"),
+            ["Signature (*.signature)", i18n.t("dev_tools.mount.all_files")],
         )
         if not signature:
             return None

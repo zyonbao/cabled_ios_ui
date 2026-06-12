@@ -18,7 +18,6 @@ from typing import Callable
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -37,6 +36,7 @@ from .. import i18n
 from ..common.afc_browser import AfcBrowserDialog
 from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_existing_file
 from ..common.workers import AsyncRunner
 
 
@@ -198,7 +198,7 @@ class AppManagerTab(QWidget):
     # -------------------------------------------------------- install/uninstall
 
     def on_install_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, i18n.t("app_manager.select_ipa"), "", "iOS App (*.ipa)")
+        path = open_existing_file(self, i18n.t("app_manager.select_ipa"), ["iOS App (*.ipa)"])
         if path:
             self._install(path)
 

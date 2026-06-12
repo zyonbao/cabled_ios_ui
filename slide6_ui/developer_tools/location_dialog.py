@@ -267,8 +267,8 @@ class LocationDialog(QDialog):
 
     def _pick_gpx(self) -> None:
         # Route through the shared picker; native vs non-native is governed by
-        # file_dialogs.USE_NATIVE_FILE_DIALOG (native stays off until the app is
-        # code-signed). Either way the result fills the editable path field.
+        # the Preferences → General toggle (file_dialogs.use_native_file_dialog).
+        # Either way the result fills the editable path field.
         current = self.gpx_path_input.text().strip()
         start_dir = os.path.dirname(current) if current else None
         path = open_existing_file(

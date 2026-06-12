@@ -20,7 +20,6 @@ from typing import Callable
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -37,6 +36,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_existing_file
 from ..common.workers import AsyncRunner
 
 
@@ -145,8 +145,8 @@ class ProfilesTab(QWidget):
     # --------------------------------------------------------------- install
 
     def _on_install_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, i18n.t("profiles.select_file"), "", i18n.t("profiles.file_filter")
+        path = open_existing_file(
+            self, i18n.t("profiles.select_file"), [i18n.t("profiles.file_filter")]
         )
         if path:
             self._install(path)

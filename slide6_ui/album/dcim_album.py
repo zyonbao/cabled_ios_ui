@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -47,6 +46,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
+from ..common.file_dialogs import open_directory
 from ..common.workers import AsyncRunner
 
 # pillow-heif is a required dependency (see requirements.txt). Import it lazily
@@ -556,7 +556,7 @@ class DcimAlbumTab(QWidget):
         if not files:
             self.status.setText(i18n.t("album.need_select_export"))
             return
-        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("album.export_to"))
+        out_dir = open_directory(self, i18n.t("album.export_to"))
         if not out_dir:
             return
         self.status.setText(i18n.t("album.exporting", count=len(files)))

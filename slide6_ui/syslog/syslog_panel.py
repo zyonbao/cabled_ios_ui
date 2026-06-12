@@ -8,7 +8,6 @@ richer structured / filtered / exportable view lives in OslogPanel (iOS 17+).
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
+from ..common.file_dialogs import save_file
 from .log_panel import LogPanelBase, _VIEW_BLOCK_LIMIT
 
 
@@ -69,8 +69,8 @@ class SyslogPanel(LogPanelBase):
     # ------------------------------------------------------------- save
 
     def _save(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, i18n.t("syslog.save_title"), "device.log", i18n.t("syslog.log_filter")
+        path = save_file(
+            self, i18n.t("syslog.save_title"), "device.log", [i18n.t("syslog.log_filter")]
         )
         if not path:
             return

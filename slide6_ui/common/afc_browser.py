@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -53,6 +52,7 @@ from shiboken6 import isValid
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from .file_dialogs import open_directory, open_existing_files, save_file
 from .errors import localize_error
 from .focus import suppress_auto_focus
 from .workers import AsyncRunner
@@ -410,7 +410,7 @@ class AfcBrowserPanel(QWidget):
 
     def _import_into(self, folder: dict) -> None:
         remote_dir = posixpath.join(self.cur_path, folder.get("name", ""))
-        paths, _ = QFileDialog.getOpenFileNames(self, i18n.t("afc.dialog.choose_import"), "")
+        paths = open_existing_files(self, i18n.t("afc.dialog.choose_import"))
         for path in paths:
             self._do_push(path, remote_dir)
 
@@ -431,7 +431,7 @@ class AfcBrowserPanel(QWidget):
         name = entry.get("name", "file")
         remote = posixpath.join(self.cur_path, name)
         if entry.get("isDir"):
-            parent = QFileDialog.getExistingDirectory(self, i18n.t("afc.dialog.export_folder_to"))
+            parent = open_directory(self, i18n.t("afc.dialog.export_folder_to"))
             if not parent:
                 return
             # pull creates parent/<name> for a directory source.
@@ -441,7 +441,7 @@ class AfcBrowserPanel(QWidget):
             download_dir = os.path.expanduser("~/Downloads")
             if not os.path.isdir(download_dir):
                 download_dir = os.path.expanduser("~")
-            local_path, _ = QFileDialog.getSaveFileName(
+            local_path = save_file(
                 self, i18n.t("afc.dialog.export_to"), os.path.join(download_dir, name)
             )
             if not local_path:
@@ -539,7 +539,7 @@ class AfcBrowserPanel(QWidget):
 
     def _batch_export(self, entries: list[dict]) -> None:
         """Download several selected items into one chosen directory."""
-        out_dir = QFileDialog.getExistingDirectory(self, i18n.t("afc.dialog.batch_export_to"))
+        out_dir = open_directory(self, i18n.t("afc.dialog.batch_export_to"))
         if not out_dir:
             return
         names = [e.get("name", "") for e in entries]
