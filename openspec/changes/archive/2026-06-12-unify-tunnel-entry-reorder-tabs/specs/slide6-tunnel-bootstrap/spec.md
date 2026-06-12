@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-定义 Slide6 桌面应用的 XPC tunnel 引导能力：检测 iOS 17+ 设备所需的 tunnel 端口、按需以系统授权（管理员权限）拉起 tunneld，并在应用退出时按需询问是否停止 tunneld。
-## Requirements
 ### Requirement: 选中 iOS 17+ 设备后检测 XPC tunnel 端口
 
 应用 SHALL 在用户选中设备后、执行 `prepare` 之前，依据设备元数据判定 iOS 主版本；仅当设备为 iOS 17+ 时检测 `ios_toolkit` 使用的 XPC tunnel 端口（`127.0.0.1:49151`）是否有进程在监听。iOS 17 以下设备 SHALL 跳过该检测。当检测到 iOS 17+ 设备且 tunnel 未就绪时，应用 MUST NOT 弹出任何模态对话框、MUST NOT 从当前 tab 自动拉起 tunnel，而是以**非模态**的就地提示（画面区 overlay / 状态文案）引导用户前往「开发者工具」启动 XPC tunnel。
@@ -58,75 +56,6 @@
 - **WHEN** 用户在「诊断」或「键鼠操作」tab 遇到 tunnel 未就绪
 - **THEN** 这些 tab 仅给出引导提示，不提供启动 tunnel 的按钮或模态确认，用户需到「开发者工具」启动
 
-### Requirement: 退出时按需询问是否停止 tunneld
-
-应用退出时 SHALL 探测 tunnel 端口是否仍在运行；若在运行，则弹窗让用户选择是否停止 tunneld：用户选择停止才执行 kill，否则保留进程。若端口未在运行，则退出时不弹窗、不动作。
-
-#### Scenario: 退出时 tunnel 在运行且用户选择停止
-
-- **WHEN** 用户退出应用且 tunnel 端口仍在运行，并在弹窗中选择停止
-- **THEN** 应用在一次提权操作内解析占用该端口的监听进程并停止它（root 进程的端口需特权 `lsof` 才可见）
-- **AND** 停止 root 进程需再次特权，可能触发系统授权
-
-#### Scenario: 退出时 tunnel 在运行但用户选择保留
-
-- **WHEN** 用户退出应用且 tunnel 端口仍在运行，并在弹窗中选择保留
-- **THEN** 不停止 tunneld，进程继续运行
-
-#### Scenario: 退出时 tunnel 未运行
-
-- **WHEN** 用户退出应用且 tunnel 端口未在运行
-- **THEN** 退出时不弹窗、不尝试停止任何进程
-
-### Requirement: 授权拉起的安全约束
-
-拉起 tunneld 的过程 SHALL 使用系统原生授权框，校验被执行入口的存在性（冻结环境校验 bundled `cabled_ios_tunnel` 二进制，开发环境校验 `tunneld_main.py` 源文件），命令字符串不得包含任何用户输入，且不向该进程传递任何凭据。
-
-#### Scenario: 命令路径固定且校验
-
-- **WHEN** 应用构造用于授权拉起的命令
-- **THEN** 命令仅由内部固定推导的二进制/解释器路径与 tunneld 入口组成
-- **AND** 不包含任何来自界面或外部的可变输入
-
-#### Scenario: 入口不存在时不弹授权框
-
-- **WHEN** 应用在拉起前校验 tunneld 入口而该入口（冻结环境的 bundled 二进制或开发环境的源文件）不存在
-- **THEN** 直接返回失败，不弹出系统授权框
-
-### Requirement: DDI 挂载成功后按需重启 tunnel 刷新开发者服务
-
-iOS 17+ 设备上，开发者服务（如 `com.apple.dt.testmanagerd.remote`）由设备 remoted 在 DDI 挂载后才暴露，且会被枚举进 **XPC tunnel 建立那一刻**的 RSD 服务表；若 tunnel 早于 DDI 挂载建立，其服务表不含这些服务，导致 WDA 报 `No such service: com.apple.dt.testmanagerd.remote`。为此，应用 SHALL 在 iOS 17+ 设备**挂载 DDI 成功后**，当检测到 XPC tunnel 已在运行时，重启该 tunnel，使 RSD 重新枚举此刻可用的开发者服务。
-
-重启 tunnel 必然需要 root，但 MUST 仅触发**一次**系统授权完成「停止旧 tunneld + 重新拉起」：通过单条 `do shell script ... with administrator privileges` 在同一提权上下文内先终止占用端口的旧进程、再以后台方式重新拉起 tunneld，使授权框只出现一次。应用 MUST 先弹窗告知用户挂载已成功、需要重启 XPC tunnel 以启用开发者服务（键鼠 / WDA 等），用户确认后才触发该单次授权；用户取消则不重启，并提示在 tunnel 刷新前键鼠 / WDA 可能不可用。
-
-仅 iOS 17+（`needs_tunnel`）适用；iOS<17 MUST 跳过。若挂载成功时 tunnel **未在运行**，MUST NOT 触发重启。重启失败或用户在系统授权框取消 MUST NOT 崩溃，应用继续运行并允许用户后续手动重试。
-
-#### Scenario: iOS 17+ 挂载成功且 tunnel 已在运行
-
-- **WHEN** iOS 17+ 设备挂载 DDI 成功，且 XPC tunnel 端口已在监听
-- **THEN** 弹窗告知用户挂载成功、需要重启 XPC tunnel 以启用开发者服务，并请求管理员授权
-- **AND** 用户确认并授权后，应用在**一次**系统授权内完成停止旧 tunneld 与重新拉起，轮询端口就绪后继续 DVT 就绪探测
-
-#### Scenario: 重启仅触发一次授权
-
-- **WHEN** 应用执行 tunnel 重启
-- **THEN** 系统授权框只出现一次（停止与重新拉起在同一提权上下文内完成）
-
-#### Scenario: iOS 17+ 挂载成功但 tunnel 未运行
-
-- **WHEN** iOS 17+ 设备挂载 DDI 成功，但 XPC tunnel 端口无人监听
-- **THEN** 不弹出重启提示、不触发授权
-
-#### Scenario: iOS<17 挂载成功
-
-- **WHEN** iOS 主版本低于 17 的设备挂载 DDI 成功
-- **THEN** 不进行任何 tunnel 重启或提示
-
-#### Scenario: 用户取消重启或授权失败
-
-- **WHEN** 用户在重启提示中取消，或在系统授权框取消、或重启后端口在超时内仍未就绪
-- **THEN** 不崩溃，应用继续运行，并提示在 tunnel 刷新前键鼠 / WDA 可能不可用，可稍后手动重启 tunnel 重试
-
 ### Requirement: tunnel 停止与重启控制入口
 
 应用 SHALL 仅在 iOS 17+ 设备的「开发者工具」界面提供 XPC tunnel 的启动、停止与重启控制入口（统一入口，经系统授权执行）；「诊断」与「键鼠操作」MUST NOT 提供任何 tunnel 控制入口。停止 MUST 终止占用 tunnel 端口的 root 进程；重启 MUST 复用单次授权语义（停止 + 重新拉起仅一次密码）。控制入口的可见性与状态 MUST 与当前 tunnel 运行状态一致。
@@ -145,4 +74,3 @@ iOS 17+ 设备上，开发者服务（如 `com.apple.dt.testmanagerd.remote`）�
 
 - **WHEN** 用户进入「诊断」或「键鼠操作」tab
 - **THEN** 界面中不出现 tunnel 的启动 / 停止 / 重启控制
-

@@ -22,7 +22,6 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPlainTextEdit,
@@ -82,26 +81,10 @@ class DiagnosticsTab(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(8)
 
-        # XPC tunnel status panel (iOS 17+ only). Every DiagnosticsService call on
-        # iOS 17+ goes over RSD and so needs the tunnel; this panel reflects the
-        # running state and offers start (when down) or stop + restart (when up),
-        # reusing the shared tunnel helpers and the dev_tools.tunnel.* strings.
-        tunnel_row = QHBoxLayout()
-        tunnel_row.setContentsMargins(0, 0, 0, 0)
-        self.tunnel_label = QLabel(i18n.t("dev_tools.tunnel.unknown"))
-        self.tunnel_btn = QPushButton(i18n.t("dev_tools.tunnel.start"))
-        self.tunnel_stop_btn = QPushButton(i18n.t("dev_tools.tunnel.stop"))
-        self.tunnel_restart_btn = QPushButton(i18n.t("dev_tools.tunnel.restart"))
-        self.tunnel_refresh_btn = QPushButton(i18n.t("dev_tools.tunnel.refresh"))
-        tunnel_row.addWidget(self.tunnel_label, 1)
-        tunnel_row.addWidget(self.tunnel_btn)
-        tunnel_row.addWidget(self.tunnel_stop_btn)
-        tunnel_row.addWidget(self.tunnel_restart_btn)
-        tunnel_row.addWidget(self.tunnel_refresh_btn)
-        self.tunnel_widget = QWidget()
-        self.tunnel_widget.setLayout(tunnel_row)
-        self.tunnel_widget.setVisible(False)
-        root.addWidget(self.tunnel_widget)
+        # XPC tunnel is managed exclusively from the Developer Tools tab. When the
+        # tunnel is required (iOS 17+) but not running, the tiles below are gated
+        # with a tooltip and the status bar points the user to Developer Tools —
+        # there is no tunnel control panel here anymore.
 
         # Section 1 — power control.
         self.power_header = self._section_header(i18n.t("diagnostics.section.power"))
@@ -149,6 +132,44 @@ class DiagnosticsTab(QWidget):
             self.mobilegestalt_tile,
         ]
 
+        # Full-tab gate overlay: shown (covering everything and intercepting
+        # clicks) when the XPC tunnel is required but not running, so the user
+        # can't miss why the tiles are inert. The hint is centered, not buried in
+        # the bottom status bar. Parented to self so it floats above the layout.
+        self._overlay = QWidget(self)
+        self._overlay.setObjectName("diagGateOverlay")
+        self._overlay.setStyleSheet(
+            "#diagGateOverlay { background-color: rgba(20, 20, 20, 150); }"
+        )
+        overlay_layout = QVBoxLayout(self._overlay)
+        overlay_layout.setAlignment(Qt.AlignCenter)
+        self._overlay_label = QLabel("", self._overlay)
+        self._overlay_label.setAlignment(Qt.AlignCenter)
+        self._overlay_label.setWordWrap(True)
+        self._overlay_label.setMaximumWidth(420)
+        self._overlay_label.setStyleSheet(
+            "color: #ffffff; font-size: 14px; background-color: rgba(0, 0, 0, 160);"
+            " padding: 18px 24px; border-radius: 10px;"
+        )
+        overlay_layout.addWidget(self._overlay_label)
+        self._overlay.hide()
+
+    def _set_gate_overlay(self, text: str | None) -> None:
+        """Show the centered gate overlay with ``text``, or hide it when falsy."""
+        if text:
+            self._overlay_label.setText(text)
+            self._overlay.setGeometry(self.rect())
+            self._overlay.show()
+            self._overlay.raise_()
+        else:
+            self._overlay.hide()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        # Keep the floating overlay matched to the tab size.
+        if self._overlay.isVisible():
+            self._overlay.setGeometry(self.rect())
+
     @staticmethod
     def _section_header(text: str) -> QLabel:
         label = QLabel(text)
@@ -168,11 +189,6 @@ class DiagnosticsTab(QWidget):
         return tile
 
     def _wire(self) -> None:
-        # Tunnel controls (iOS 17+).
-        self.tunnel_btn.clicked.connect(self._on_start_tunnel)
-        self.tunnel_stop_btn.clicked.connect(self._on_stop_tunnel)
-        self.tunnel_restart_btn.clicked.connect(self._on_restart_tunnel)
-        self.tunnel_refresh_btn.clicked.connect(self._on_refresh_tunnel)
         # Power actions require a confirmation before dispatch.
         self.restart_tile.clicked.connect(
             lambda: self._confirm_power("restart", api.device_restart)
@@ -207,10 +223,9 @@ class DiagnosticsTab(QWidget):
         os_version = self._get_os_version()
         # MobileGestalt is deprecated from iOS 17.4; only show it below the cutoff.
         self.mobilegestalt_tile.setVisible(_below_mobilegestalt_cutoff(os_version))
-        # The tunnel panel is only relevant on iOS 17+ (RSD-backed diagnostics).
-        self.tunnel_widget.setVisible(tunnel.needs_tunnel(os_version) if target else False)
-        self._refresh_tunnel_panel()
         self._op_in_flight = False
+        # _refresh_features drives the centered gate overlay when the tunnel is
+        # missing, so the status bar just shows the normal ready / no-device line.
         self._refresh_features()
         self._set_status(
             i18n.t("diagnostics.ready") if target else i18n.t("diagnostics.no_device")
@@ -228,110 +243,41 @@ class DiagnosticsTab(QWidget):
         for tile in self._all_tiles:
             tile.setEnabled(enabled)
 
-    def _refresh_features(self) -> None:
+    def _refresh_features(self) -> bool:
         """Drive tile enabled state from device selection + tunnel readiness.
 
         Diagnostics needs no DDI; on iOS 17+ it only needs the XPC tunnel. When a
         device is selected but the tunnel is required and not running, the tiles
-        are disabled with a tooltip explaining the missing precondition.
+        are disabled with a tooltip pointing to Developer Tools (the only place
+        the tunnel can be started). Returns whether the tiles are gated.
         """
         target = self._get_target()
         if not target:
             for tile in self._all_tiles:
                 tile.setEnabled(False)
                 tile.setToolTip("")
-            return
+            self._set_gate_overlay(None)
+            return False
         needs = tunnel.needs_tunnel(self._get_os_version())
         gated = needs and not tunnel.is_tunnel_running()
         hint = i18n.t("diagnostics.tunnel_required_hint") if gated else ""
         for tile in self._all_tiles:
             tile.setEnabled(not gated)
             tile.setToolTip(hint)
+        # Centered mask over the whole tab when gated; cleared once tunnel is up.
+        self._set_gate_overlay(i18n.t("diagnostics.tunnel_required_goto") if gated else None)
+        return gated
 
     # -------------------------------------------------------------- tunnel
-
-    def _refresh_tunnel_panel(self) -> None:
-        """Update the iOS 17+ tunnel panel label + buttons from running state."""
-        if not self.tunnel_widget.isVisible():
-            return
-        running = tunnel.is_tunnel_running()
-        self.tunnel_label.setText(
-            i18n.t("dev_tools.tunnel.running") if running else i18n.t("dev_tools.tunnel.stopped")
-        )
-        self.tunnel_btn.setVisible(not running)
-        self.tunnel_btn.setEnabled(not running)
-        self.tunnel_stop_btn.setVisible(running)
-        self.tunnel_restart_btn.setVisible(running)
-        self.tunnel_stop_btn.setEnabled(running)
-        self.tunnel_restart_btn.setEnabled(running)
-
-    def _set_tunnel_busy(self, busy: bool) -> None:
-        for btn in (self.tunnel_btn, self.tunnel_stop_btn, self.tunnel_restart_btn):
-            btn.setEnabled(not busy)
-
-    def _on_start_tunnel(self) -> None:
-        if tunnel.is_tunnel_running():
-            self._after_tunnel(i18n.t("dev_tools.tunnel.already_running"))
-            return
-        self._set_status(i18n.t("dev_tools.tunnel.starting"))
-        self._set_tunnel_busy(True)
-        self.runner.submit(
-            tunnel.launch_tunneld,
-            on_done=lambda ok: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.started_ok") if ok else i18n.t("dev_tools.tunnel.start_failed")
-            ),
-            on_error=lambda e: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.start_failed_detail", error=e)
-            ),
-        )
-
-    def _on_stop_tunnel(self) -> None:
-        self._set_status(i18n.t("dev_tools.tunnel.stopping"))
-        self._set_tunnel_busy(True)
-        self.runner.submit(
-            tunnel.stop_tunneld,
-            on_done=lambda ok: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.stopped_ok") if ok else i18n.t("dev_tools.tunnel.stop_failed")
-            ),
-            on_error=lambda e: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.stop_failed_detail", error=e)
-            ),
-        )
-
-    def _on_restart_tunnel(self) -> None:
-        self._set_status(i18n.t("dev_tools.tunnel.restarting_once"))
-        self._set_tunnel_busy(True)
-        self.runner.submit(
-            tunnel.restart_tunneld,
-            on_done=lambda ok: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.restarted") if ok else i18n.t("dev_tools.tunnel.restart_failed")
-            ),
-            on_error=lambda e: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.restart_failed")
-            ),
-        )
 
     def on_tab_activated(self) -> None:
         """Called by the main window when this tab becomes the current one.
 
         The XPC tunnel is global state that can change while another tab is shown
         (or before this tab is first entered), so re-poll it on activation instead
-        of relying solely on device-switch (set_target) or a manual refresh.
+        of relying solely on device-switch (set_target).
         """
-        self._refresh_tunnel_panel()
         self._refresh_features()
-
-    def _on_refresh_tunnel(self) -> None:
-        """Re-read the tunnel running state and update the status label + tiles."""
-        self._refresh_tunnel_panel()
-        self._refresh_features()
-        self._set_status(i18n.t("dev_tools.tunnel.refreshed"))
-
-    def _after_tunnel(self, message: str) -> None:
-        self._set_tunnel_busy(False)
-        self._refresh_tunnel_panel()
-        self._refresh_features()
-        self._set_status(message)
 
     # --------------------------------------------------------- power actions
 
@@ -361,7 +307,6 @@ class DiagnosticsTab(QWidget):
         self._op_in_flight = False
         # A successful restart/shutdown drops the tunnel as the device reboots, so
         # re-derive tile state from the (possibly changed) tunnel readiness.
-        self._refresh_tunnel_panel()
         self._refresh_features()
         if not result.get("ok"):
             self._set_status(localize_error(result.get("error")))

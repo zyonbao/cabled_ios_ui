@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTextEdit,
@@ -37,7 +36,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
-from ..common import readiness, tunnel
+from ..common import readiness
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
 from .mirror import MjpegThread, ScreenView
@@ -371,61 +370,23 @@ class KeymouseTab(QWidget):
         if not dev:
             return
         os_version = (dev.get("metadata") or {}).get("os_version", "")
-        need = tunnel.needs_tunnel(os_version)
-        running = tunnel.is_tunnel_running()
-        _dbg(f"select target={self.target} os={os_version} need_tunnel={need} tunnel_running={running} gen={gen}")
-        if need and not running:
-            self._gate_tunnel(self.target, gen)
-        else:
-            self._check_readiness(self.target, gen)
-
-    def _gate_tunnel(self, target: str, gen: int) -> None:
-        reply = QMessageBox.question(
-            self,
-            i18n.t("keymouse.tunnel_need.title"),
-            i18n.t("keymouse.tunnel_need.body"),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if reply != QMessageBox.Yes:
-            self._set_status(i18n.t("keymouse.tunnel_not_started"))
-            self.screen.set_overlay(i18n.t("keymouse.tunnel_unavailable_overlay"))
-            return
-
-        self._set_status(i18n.t("keymouse.tunnel_starting"))
-        self.screen.set_overlay(i18n.t("keymouse.tunnel_starting_overlay"))
-
-        def work():
-            # launch_tunneld already polls the port and returns True only once the
-            # tunnel is reachable (or False on cancel/failure/timeout).
-            _dbg("work: calling launch_tunneld")
-            ready = tunnel.launch_tunneld()
-            _dbg(f"work: launch_tunneld ready={ready}")
-            return "ok" if ready else "fail"
-
-        self.runner.submit(
-            work,
-            on_done=lambda r: self._after_tunnel(r, target, gen),
-            on_error=lambda e: (_dbg(f"work on_error: {e}"), self._tunnel_failed(e)),
-            generation=gen,
-        )
-
-    def _after_tunnel(self, result, target: str, gen: int) -> None:
-        _dbg(f"after_tunnel status={result} gen={gen} cur_gen={self.runner.generation}")
-        if result != "ok":
-            self._tunnel_failed(i18n.t("keymouse.tunnel_not_ready"))
-            return
-        self._check_readiness(target, gen)
+        _dbg(f"select target={self.target} os={os_version} gen={gen}")
+        # XPC tunnel is managed solely from the Developer Tools tab. Here we only
+        # run the unified readiness check and, when a precondition is missing,
+        # surface non-modal guidance (overlay/status) pointing the user there —
+        # no modal prompt and no auto-launch of the tunnel from this tab.
+        self._check_readiness(self.target, gen)
 
     # --------------------------------------------------- readiness precheck
 
     def _check_readiness(self, target: str, gen: int) -> None:
-        """Verify DDI (and, on iOS 17+, the RSD service) before starting WDA.
+        """Verify tunnel / DDI / RSD before starting WDA, guiding non-modally.
 
         WDA needs a mounted DeveloperDiskImage on every iOS version, plus the
-        ``testmanagerd.remote`` RSD service on iOS 17+. Probing here turns the
-        otherwise cryptic WDA failure into actionable guidance (mount DDI /
-        restart tunnel). The tunnel itself is already handled by _gate_tunnel.
+        XPC tunnel and ``testmanagerd.remote`` RSD service on iOS 17+. Probing
+        here turns the otherwise cryptic WDA failure into actionable guidance
+        (start tunnel / mount DDI / restart tunnel) shown as a non-modal overlay;
+        the tunnel is started by the user in the Developer Tools tab, not here.
         """
         dev = self.dev or {}
         os_version = (dev.get("metadata") or {}).get("os_version", "")
@@ -449,17 +410,16 @@ class KeymouseTab(QWidget):
         # Not ready: surface actionable guidance and stop (user fixes it in the
         # developer-tools tab, then reselects the device to retry).
         self._set_status(i18n.t("keymouse.device_not_ready"))
-        if result.missing == readiness.MISSING_DDI:
+        if result.missing == readiness.MISSING_TUNNEL_AND_DDI:
+            self.screen.set_overlay(i18n.t("keymouse.overlay_need_tunnel_ddi"))
+        elif result.missing == readiness.MISSING_TUNNEL:
+            self.screen.set_overlay(i18n.t("keymouse.overlay_need_tunnel"))
+        elif result.missing == readiness.MISSING_DDI:
             self.screen.set_overlay(i18n.t("keymouse.overlay_need_ddi"))
         elif result.missing == readiness.MISSING_RSD:
             self.screen.set_overlay(i18n.t("keymouse.overlay_need_rsd"))
         else:
             self.screen.set_overlay(i18n.t("keymouse.overlay_unavailable", message=result.message))
-
-    def _tunnel_failed(self, detail: str) -> None:
-        _dbg(f"tunnel_failed detail={detail}")
-        self._set_status(i18n.t("keymouse.tunnel_start_failed"))
-        self.screen.set_overlay(i18n.t("keymouse.tunnel_failed_overlay", detail=detail))
 
     # ------------------------------------------------------- prepare / WDA
 

@@ -107,7 +107,8 @@
   "diagnostics": {
     "no_device": "No device selected",
     "ready": "Select an action above",
-    "tunnel_required_hint": "iOS 17+ diagnostics require the XPC tunnel: start it above, then retry.",
+    "tunnel_required_hint": "iOS 17+ diagnostics require the XPC tunnel: start it in Developer Tools first, then retry.",
+    "tunnel_required_goto": "iOS 17+ diagnostics require the XPC tunnel: start it in the Developer Tools tab, then return to this page to use these features.",
     "section": {
       "power": "Power Control",
       "info": "Diagnostics"
@@ -162,8 +163,9 @@
       "unmounted_hint": "DDI not mounted; mount it first to unlock features",
       "mounted_probing": "DDI mounted; checking developer-service readiness…",
       "mounted_unlocked": "DDI mounted; features unlocked",
+      "mounted_need_tunnel": "DDI mounted; start the XPC tunnel above before using developer features",
       "service_ready": "Developer services ready; features unlocked",
-      "service_inactive": "DDI mounted but developer services are not active: restart the XPC tunnel or re-mount the DDI"
+      "service_inactive": "DDI mounted but the current tunnel session hasn't picked up the developer service: restart the XPC tunnel"
     },
     "tunnel": {
       "unknown": "XPC tunnel: unknown",
@@ -425,23 +427,14 @@
     "no_wda_overlay": "WebDriverAgent (WDA) is not installed on this device\nCannot mirror or control it",
     "device_selected": "Device selected",
     "switch_tab_hint": "Switch to the “Key/Mouse” tab to start mirroring and control",
-    "tunnel_need": {
-      "title": "XPC tunnel required",
-      "body": "This iOS 17+ device requires an XPC tunnel to control.\nStart the XPC tunnel now with administrator privileges?"
-    },
-    "tunnel_not_started": "XPC tunnel not started",
-    "tunnel_unavailable_overlay": "This iOS 17+ device is unavailable\n(XPC tunnel not started; reselect the device to retry)",
-    "tunnel_starting": "Starting XPC tunnel…",
-    "tunnel_starting_overlay": "Requesting administrator authorization and starting the XPC tunnel…",
-    "tunnel_not_ready": "tunnel not ready",
     "checking_ready": "Checking device readiness…",
     "ready_check_failed": "Readiness check failed: {error}",
     "device_not_ready": "Device not ready",
+    "overlay_need_tunnel_ddi": "XPC tunnel and DDI required\nStart the XPC tunnel and mount the DeveloperDiskImage in Developer Tools, then reselect the device to retry",
+    "overlay_need_tunnel": "XPC tunnel must be started\nStart the XPC tunnel in Developer Tools, then reselect the device to retry",
     "overlay_need_ddi": "DeveloperDiskImage must be mounted\nMount the DDI on the Developer Tools root tab, then reselect the device to retry",
-    "overlay_need_rsd": "Developer services are not active\nRestart the XPC tunnel or re-mount the DDI in Developer Tools, then reselect the device to retry",
+    "overlay_need_rsd": "Developer services are not active\nThe current XPC tunnel session hasn't picked up this device's developer service. Restart the XPC tunnel in Developer Tools, then reselect the device to retry",
     "overlay_unavailable": "Device unavailable\n{message}\nReselect the device to retry",
-    "tunnel_start_failed": "Failed to start XPC tunnel",
-    "tunnel_failed_overlay": "Could not start the XPC tunnel\n{detail}\nThis iOS 17+ device is unavailable; you can retry",
     "wda_starting": "Starting WebDriverAgent…",
     "wda_starting_overlay": "Starting WebDriverAgent…\nThe first launch may take tens of seconds",
     "start_failed": "Start failed",
@@ -566,8 +559,9 @@
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
+    "missing_tunnel_ddi": "Enable the XPC tunnel and mount the DDI first (Developer Tools: “Start” then mount DDI).",
     "missing_ddi": "Mount the DDI on the Developer Tools root tab.",
-    "missing_rsd": "Tunnel and DDI are ready but the developer service is not active: re-mount the DDI or restart the XPC tunnel."
+    "missing_rsd": "Tunnel and DDI are ready but the current tunnel session hasn't picked up the developer service: restart the XPC tunnel."
   },
   "file_dialog": {
     "path_placeholder": "Enter an absolute folder or file path, then press Enter",

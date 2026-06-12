@@ -29,6 +29,10 @@ from . import tunnel
 MISSING_TUNNEL = "tunnel"
 MISSING_DDI = "ddi"
 MISSING_RSD = "rsd"
+# iOS 17+ only: tunnel down AND DDI not mounted (both must be set up). The DDI
+# mount state is queryable over usbmux even without the tunnel, so we can tell
+# this apart from "tunnel only" (DDI already mounted) and guide accordingly.
+MISSING_TUNNEL_AND_DDI = "tunnel_ddi"
 
 # The RSD developer service WDA / keyboard-mouse needs on iOS 17+.
 TESTMANAGERD_REMOTE = "com.apple.dt.testmanagerd.remote"
@@ -38,6 +42,7 @@ _GUIDANCE_KEY = {
     MISSING_TUNNEL: "readiness.missing_tunnel",
     MISSING_DDI: "readiness.missing_ddi",
     MISSING_RSD: "readiness.missing_rsd",
+    MISSING_TUNNEL_AND_DDI: "readiness.missing_tunnel_ddi",
 }
 
 
@@ -86,8 +91,13 @@ def evaluate(
     device round-trips are needed. ``rsd_ok`` is ignored for iOS < 17.
     """
     if _needs_tunnel(os_version):
+        # Four distinct iOS 17+ states, each with focused guidance:
+        #   tunnel off + DDI off  → start tunnel AND mount DDI
+        #   tunnel off + DDI on   → start tunnel only
+        #   tunnel on  + DDI off  → mount DDI only
+        #   tunnel on  + DDI on + RSD stale → restart tunnel
         if not tunnel_running:
-            return _missing(MISSING_TUNNEL)
+            return _missing(MISSING_TUNNEL if ddi_mounted else MISSING_TUNNEL_AND_DDI)
         if not ddi_mounted:
             return _missing(MISSING_DDI)
         if not rsd_ok:
@@ -109,19 +119,18 @@ def probe(target: str, os_version: str, *, known_mounted: "bool | None" = None) 
     needs_tunnel = _needs_tunnel(os_version)
     tunnel_running = tunnel.is_tunnel_running() if needs_tunnel else False
 
-    # Short-circuit: on iOS 17+ a missing tunnel makes DDI/RSD moot.
-    if needs_tunnel and not tunnel_running:
-        return _missing(MISSING_TUNNEL)
-
+    # DDI mount state is queryable over usbmux without the tunnel, so resolve it
+    # unconditionally — this lets evaluate() distinguish "tunnel only" (DDI
+    # already mounted) from "tunnel + DDI" (both missing) when the tunnel is down.
     ddi_mounted = known_mounted
     if ddi_mounted is None:
         status = api.ddi_status(target)
         ddi_mounted = bool(status.get("ok") and status.get("data", {}).get("mounted"))
-    if not ddi_mounted:
-        return _missing(MISSING_DDI)
 
+    # RSD only matters once the tunnel is up and the DDI is mounted; checking it
+    # otherwise is pointless (and would just time out without a tunnel).
     rsd_ok = True
-    if needs_tunnel:
+    if needs_tunnel and tunnel_running and ddi_mounted:
         res = api.rsd_service_available(target, TESTMANAGERD_REMOTE)
         if res.get("ok"):
             rsd_ok = bool(res.get("data", {}).get("available"))

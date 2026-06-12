@@ -107,7 +107,8 @@
   "diagnostics": {
     "no_device": "未选择设备",
     "ready": "请选择上方的操作",
-    "tunnel_required_hint": "iOS 17+ 诊断需要 XPC tunnel：请先在上方启动，然后重试。",
+    "tunnel_required_hint": "iOS 17+ 诊断需要 XPC tunnel：请先到「开发者工具」启动 tunnel，然后重试。",
+    "tunnel_required_goto": "iOS 17+ 诊断需要 XPC tunnel：请先到「开发者工具」标签启动 tunnel，启动后切回本页即可使用。",
     "section": {
       "power": "电源控制",
       "info": "诊断信息"
@@ -162,8 +163,9 @@
       "unmounted_hint": "DDI 未挂载，请先挂载以解锁功能",
       "mounted_probing": "DDI 已挂载，正在检测开发者服务就绪…",
       "mounted_unlocked": "DDI 已挂载，功能已解锁",
+      "mounted_need_tunnel": "DDI 已挂载；请先在上方启动 XPC tunnel 后再使用开发者功能",
       "service_ready": "开发者服务已就绪，功能已解锁",
-      "service_inactive": "DDI 已挂载但开发者服务未生效：请重启 XPC tunnel 或重新挂载 DDI"
+      "service_inactive": "DDI 已挂载但当前 tunnel 会话未识别到开发者服务：请重启 XPC tunnel"
     },
     "tunnel": {
       "unknown": "XPC tunnel：未知",
@@ -425,23 +427,14 @@
     "no_wda_overlay": "该设备未安装 WebDriverAgent (WDA)\n无法镜像或控制此设备",
     "device_selected": "已选择设备",
     "switch_tab_hint": "切换到「键鼠操作」标签以启动镜像与控制",
-    "tunnel_need": {
-      "title": "需要 XPC tunnel",
-      "body": "该 iOS 17+ 设备需要 XPC tunnel 才能控制。\n是否现在以管理员权限启动 XPC tunnel？"
-    },
-    "tunnel_not_started": "未启动 XPC tunnel",
-    "tunnel_unavailable_overlay": "该 iOS 17+ 设备暂不可用\n（未启动 XPC tunnel，可重选设备重试）",
-    "tunnel_starting": "正在启动 XPC tunnel…",
-    "tunnel_starting_overlay": "正在请求管理员授权并启动 XPC tunnel…",
-    "tunnel_not_ready": "tunnel 未就绪",
     "checking_ready": "正在检查设备就绪状态…",
     "ready_check_failed": "就绪检查失败：{error}",
     "device_not_ready": "设备未就绪",
+    "overlay_need_tunnel_ddi": "需要启动 XPC tunnel 并挂载 DDI\n请到「开发者工具」启动 XPC tunnel 并挂载 DeveloperDiskImage 后，重选设备重试",
+    "overlay_need_tunnel": "需要启动 XPC tunnel\n请到「开发者工具」启动 XPC tunnel 后，重选设备重试",
     "overlay_need_ddi": "需要挂载 DeveloperDiskImage\n请到「开发者工具」根 tab 挂载 DDI 后，重选设备重试",
-    "overlay_need_rsd": "开发者服务未生效\n请到「开发者工具」重启 XPC tunnel 或重新挂载 DDI 后，重选设备重试",
+    "overlay_need_rsd": "开发者服务未生效\n当前 XPC tunnel 会话未识别到该设备的开发者服务。请到「开发者工具」重启 XPC tunnel 后，重选设备重试",
     "overlay_unavailable": "设备暂不可用\n{message}\n可重选设备重试",
-    "tunnel_start_failed": "XPC tunnel 启动失败",
-    "tunnel_failed_overlay": "无法启动 XPC tunnel\n{detail}\n该 iOS 17+ 设备暂不可用，可重试",
     "wda_starting": "正在启动 WebDriverAgent…",
     "wda_starting_overlay": "正在启动 WebDriverAgent…\n首次启动可能需要数十秒",
     "start_failed": "启动失败",
@@ -566,8 +559,9 @@
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
+    "missing_tunnel_ddi": "请先启用 XPC tunnel 并挂载 DDI（开发者工具顶部「启动」并挂载 DDI）",
     "missing_ddi": "请到「开发者工具」根 tab 挂载 DDI",
-    "missing_rsd": "tunnel 与 DDI 已就绪但开发者服务未生效：请重新挂载 DDI 或重启 XPC tunnel"
+    "missing_rsd": "tunnel 与 DDI 已就绪但当前 tunnel 会话未识别到开发者服务：请重启 XPC tunnel"
   },
   "file_dialog": {
     "path_placeholder": "输入文件夹或文件的绝对路径后回车跳转",

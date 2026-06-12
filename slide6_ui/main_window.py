@@ -177,18 +177,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.profiles_tab, i18n.t("main_window.tab.profiles"))
         self.crash_tab = CrashReportsTab(self.runner, lambda: self.target)
         self.tabs.addTab(self.crash_tab, i18n.t("main_window.tab.crash"))
+        # XPC-tunnel-dependent tabs are grouped consecutively at the end in the
+        # order Developer Tools → Key/Mouse → Diagnostics, since the tunnel (and
+        # DDI) are managed only in Developer Tools and the other two depend on it.
         self.diagnostics_tab = DiagnosticsTab(
             self.runner, lambda: self.target, self._current_os_version
         )
-        self.tabs.addTab(self.diagnostics_tab, i18n.t("main_window.tab.diagnostics"))
         # System logs moved into the Developer Tools tab (no longer a sidebar tab).
         self.developer_tools_tab = DeveloperToolsTab(
             self.runner, lambda: self.target, self._current_os_version
         )
         self.tabs.addTab(self.developer_tools_tab, i18n.t("main_window.tab.developer_tools"))
-        # Key/Mouse owns the costly WDA/mirror flow; kept last in the sidebar.
+        # Key/Mouse owns the costly WDA/mirror flow.
         self.keymouse_tab = KeymouseTab(self.runner, self._set_status, self.on_select_device)
         self.tabs.addTab(self.keymouse_tab, i18n.t("main_window.tab.keymouse"))
+        self.tabs.addTab(self.diagnostics_tab, i18n.t("main_window.tab.diagnostics"))
         root.addWidget(self.tabs, stretch=1)
 
         # Don't let filter / path / search fields steal focus when a tab is

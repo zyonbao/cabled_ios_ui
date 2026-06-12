@@ -389,9 +389,14 @@ class DeveloperToolsTab(QWidget):
             return
         if tunnel.needs_tunnel(self._get_os_version()):
             # iOS 17+: mounted is necessary but not sufficient — the RSD service
-            # must also be enumerated. Probe it (lightweight) to gate features.
+            # must also be enumerated over the tunnel. Probing RSD without a
+            # running tunnel would wrongly report "service inactive"; gate on the
+            # tunnel first and tell the user to start it.
             self._dvt_ready = False
             self._refresh_features()
+            if not tunnel.is_tunnel_running():
+                self._set_status(i18n.t("dev_tools.ddi.mounted_need_tunnel"))
+                return
             self._set_status(i18n.t("dev_tools.ddi.mounted_probing"))
             self._probe_rsd(target=self._get_target())
         else:
@@ -538,8 +543,15 @@ class DeveloperToolsTab(QWidget):
         # com.apple.dt.testmanagerd.remote), so WDA / keyboard-mouse would fail.
         # Offer to restart the tunnel so RSD re-enumerates them. If no tunnel is
         # running, a later fresh launch already includes them — nothing to do.
-        if tunnel.needs_tunnel(self._get_os_version()) and tunnel.is_tunnel_running():
-            self._prompt_restart_tunnel(target)
+        if tunnel.needs_tunnel(self._get_os_version()):
+            if tunnel.is_tunnel_running():
+                self._prompt_restart_tunnel(target)
+                return
+            # No tunnel yet: probing DVT readiness here would just block on the
+            # long ddi_wait_ready timeout. Tell the user to start the tunnel
+            # first; a fresh launch will enumerate the just-mounted services.
+            self._refresh_features()
+            self._set_status(i18n.t("dev_tools.ddi.mounted_need_tunnel"))
             return
         self._start_ready_probe(target)
 
