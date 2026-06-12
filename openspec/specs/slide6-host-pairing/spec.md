@@ -1,7 +1,7 @@
 # slide6-host-pairing Specification
 
 ## Purpose
-TBD - created by archiving change add-host-pairing. Update Purpose after archive.
+定义桌面端配对交互规范：顶栏配对/取消配对按钮、异步配对状态广播、配对门控下的 tab 加载策略、设备列表呈现与状态提示边界，避免未配对调用造成错误噪音。
 ## Requirements
 ### Requirement: 顶栏配对按钮反映并切换设备配对状态
 
@@ -47,24 +47,24 @@ TBD - created by archiving change add-host-pairing. Update Purpose after archive
 - **WHEN** 探测结果返回时用户已切换到另一台设备
 - **THEN** 忽略该结果，不影响当前设备的状态展示
 
-### Requirement: 共享配对蒙版门控依赖配对的 tab
+### Requirement: 每个受门控 tab 使用自身单层蒙版承载配对门控
 
-应用 SHALL 用一个共享蒙版覆盖所有依赖配对的 tab：当所选设备未配对且当前 tab 属于受门控集合时，蒙版 MUST 覆盖该 tab 并给出"需先配对"的提示；其余情况 MUST 隐藏。「设备信息」tab 读取公共 lockdown 值、无需配对会话，MUST NOT 被门控。蒙版 SHALL 跟随其宿主 tab 的尺寸变化重新定位。
+应用 SHALL 让每个依赖配对的 tab 各自持有一个铺满页面的门控蒙版；当所选设备未配对时，这些 tab 的蒙版 MUST 显示"需先配对"提示并拦截交互；其余情况 MUST 隐藏。该门控蒙版与 tab 自身的其它外部门控（如 tunnel / DDI）MUST 复用同一层，不得叠两层。「设备信息」tab 读取公共 lockdown 值、无需配对会话，MUST NOT 被门控。
 
-#### Scenario: 未配对时覆盖受门控 tab
+#### Scenario: 未配对时各受门控 tab 显示自身蒙版
 
 - **WHEN** 设备未配对且用户位于应用安装/文件/相册/描述文件/崩溃/开发者工具/诊断/键鼠等 tab
-- **THEN** 蒙版覆盖该 tab 并提示需先配对
+- **THEN** 该 tab 自身的门控蒙版覆盖页面并提示需先配对
 
 #### Scenario: 设备信息不被门控
 
 - **WHEN** 设备未配对且用户位于「设备信息」tab
 - **THEN** 不出现配对蒙版，可正常查看公共信息
 
-#### Scenario: 配对后解除蒙版
+#### Scenario: 配对后解除各 tab 的配对门控
 
 - **WHEN** 设备完成配对
-- **THEN** 蒙版隐藏，受门控 tab 恢复可用
+- **THEN** 各受门控 tab 的配对门控蒙版隐藏，tab 恢复可用
 
 ### Requirement: 依赖配对的 tab 仅在已配对时加载
 

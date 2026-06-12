@@ -1,7 +1,7 @@
 # device-info-op Specification
 
 ## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
+定义设备信息读取能力：通过 lockdown 获取公开设备属性并标准化返回，明确字段清洗规则（剔除原始字节/序列化嵌套结构），供 UI 直接展示与复制。
 ## Requirements
 ### Requirement: 读取设备信息
 

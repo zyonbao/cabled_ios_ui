@@ -1,7 +1,7 @@
 # slide6-crash-reports Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义「Crash 报告」页面交互规范：崩溃日志列表与目录浏览、导出与删除流程、筛选与刷新策略，以及与工具层 crash-reports-op 的一致联动。
 ## Requirements
 ### Requirement: Crash 报告独立 Tab
 

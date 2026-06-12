@@ -1,7 +1,7 @@
 # dvt-process-op Specification
 
 ## Purpose
-TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose after archive.
+定义基于 DVT ProcessControl 的进程管理能力：查询进程列表、按名称筛选、查看进程详情、按 PID 终止进程、以及按 bundle id 启动应用，并统一返回稳定的工具层结果结构。
 ## Requirements
 ### Requirement: DVT 连接底座
 

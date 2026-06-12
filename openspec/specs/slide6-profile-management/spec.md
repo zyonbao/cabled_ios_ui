@@ -1,7 +1,7 @@
 # slide6-profile-management Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义「描述文件」页面的交互与信息展示规范：描述文件列表、安装与删除流程、批量操作、筛选刷新与状态反馈，确保与工具层 mobileconfig 能力一致联动。
 ## Requirements
 ### Requirement: 描述文件管理入口
 

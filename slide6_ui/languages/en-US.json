@@ -189,7 +189,7 @@
       "start": "Start",
       "stop": "Stop",
       "restart": "Restart",
-      "refresh": "Refresh",
+      "refresh": "Refresh Status",
       "manage": "Tunnel management",
       "refreshed": "XPC tunnel status refreshed",
       "running": "XPC tunnel: running",

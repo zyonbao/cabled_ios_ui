@@ -189,7 +189,7 @@
       "start": "启动",
       "stop": "停止",
       "restart": "重启",
-      "refresh": "刷新",
+      "refresh": "刷新状态",
       "manage": "tunnel 管理",
       "refreshed": "已刷新 XPC tunnel 状态",
       "running": "XPC tunnel：已启动",

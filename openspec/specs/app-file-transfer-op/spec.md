@@ -1,7 +1,7 @@
 # app-file-transfer-op Specification
 
 ## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
+定义面向应用容器的文件传输能力：Documents 与 Sandbox 的列举、上传、下载、删除、重命名与读取，并明确能力门控和错误包络。
 ## Requirements
 ### Requirement: 浏览 App 文件目录
 

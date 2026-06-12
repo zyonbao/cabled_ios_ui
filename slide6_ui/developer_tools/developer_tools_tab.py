@@ -300,6 +300,19 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.tunnel_stop_btn.setEnabled(running)
         self.tunnel_restart_btn.setEnabled(running)
 
+    def _cancel_ready_probe(self) -> None:
+        """Invalidate any in-flight DVT readiness probe and restore refresh."""
+        self._ready_probing = False
+        self._ready_token += 1
+        self.ddi_refresh_btn.setEnabled(True)
+
+    def _sync_dvt_state_for_tunnel(self) -> None:
+        """Recompute DVT gating immediately after a tunnel transition."""
+        if not tunnel.needs_tunnel(self._get_os_version()):
+            return
+        self._dvt_ready = False
+        self._refresh_features()
+
     # ----------------------------------------------------------- status text
 
     def _set_status(self, text: str) -> None:
@@ -345,6 +358,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         target = self._get_target()
         if not target:
             self._set_status(i18n.t("dev_tools.no_device"))
+            return
+        # Once the UI already knows "DDI mounted + iOS 17+ tunnel not running",
+        # a direct ddi_status round-trip is expected to stall in this device
+        # state. Short-circuit to the actionable guidance instead of issuing a
+        # query that predictably times out.
+        if self._mounted and tunnel.needs_tunnel(self._get_os_version()) and not tunnel.is_tunnel_running():
+            self._refresh_tunnel_panel()
+            self._refresh_features()
+            self._set_status(i18n.t("dev_tools.ddi.mounted_need_tunnel"))
             return
         if self._ready_probing:
             # Keep showing "已挂载（准备中…）" — a mounter query here would just
@@ -606,12 +628,18 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
             self._refresh_features()
             self._set_status(i18n.t("dev_tools.ready.unlocked"))
         else:
-            # The image is mounted, but its developer services never came up in
-            # time. Keep mounted state; surface the timeout and leave tiles off.
+            # On iOS 17+ with a running tunnel, a mounted-but-unready developer
+            # path usually means the current tunnel session never enumerated the
+            # service; guide the user to restart the tunnel rather than showing a
+            # generic timeout. Lower versions still surface a plain ready timeout.
             self._dvt_ready = False
-            self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted_timeout"))
             self._refresh_features()
-            self._set_status(i18n.t("dev_tools.ready.timeout"))
+            if tunnel.needs_tunnel(self._get_os_version()) and tunnel.is_tunnel_running():
+                self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted"))
+                self._set_status(i18n.t("dev_tools.ddi.service_inactive"))
+            else:
+                self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted_timeout"))
+                self._set_status(i18n.t("dev_tools.ready.timeout"))
 
     def _after_mount(self, message: str) -> None:
         self._op_in_flight = False
@@ -626,9 +654,7 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
             return
         logger.info("user requested DDI unmount: target=%s", target)
         # Cancel any in-flight readiness probe and re-enable refresh.
-        self._ready_probing = False
-        self._ready_token += 1
-        self.ddi_refresh_btn.setEnabled(True)
+        self._cancel_ready_probe()
         self._dvt_ready = False
         self._refresh_features()
         self._set_status(i18n.t("dev_tools.unmount.unmounting", target=target))
@@ -686,17 +712,19 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         )
 
     def _on_stop_tunnel(self) -> None:
+        self._cancel_ready_probe()
+        self._sync_dvt_state_for_tunnel()
         self._set_status(i18n.t("dev_tools.tunnel.stopping"))
         self._set_tunnel_busy(True)
         self.runner.submit(
             tunnel.stop_tunneld,
-            on_done=lambda ok: self._after_tunnel(
-                i18n.t("dev_tools.tunnel.stopped_ok") if ok else i18n.t("dev_tools.tunnel.stop_failed")
-            ),
+            on_done=self._on_tunnel_stopped,
             on_error=lambda e: self._after_tunnel(i18n.t("dev_tools.tunnel.stop_failed_detail", error=e)),
         )
 
     def _on_restart_tunnel(self) -> None:
+        self._cancel_ready_probe()
+        self._sync_dvt_state_for_tunnel()
         self._set_status(i18n.t("dev_tools.tunnel.restarting_once"))
         self._set_tunnel_busy(True)
         target = self._get_target()
@@ -716,6 +744,18 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
                 self.ddi_label.setText(i18n.t("dev_tools.ddi.mounted_preparing"))
                 self._set_status(i18n.t("dev_tools.tunnel.started_reprobe"))
                 self._start_ready_probe(target)
+
+    def _on_tunnel_stopped(self, ok: bool) -> None:
+        self._set_tunnel_busy(False)
+        self._refresh_tunnel_panel()
+        self._sync_dvt_state_for_tunnel()
+        if not ok:
+            self._set_status(i18n.t("dev_tools.tunnel.stop_failed"))
+            return
+        if self._mounted and tunnel.needs_tunnel(self._get_os_version()):
+            self._set_status(i18n.t("dev_tools.ddi.mounted_need_tunnel"))
+            return
+        self._set_status(i18n.t("dev_tools.tunnel.stopped_ok"))
 
     def on_tab_activated(self) -> None:
         """Called by the main window when this tab becomes the current one.

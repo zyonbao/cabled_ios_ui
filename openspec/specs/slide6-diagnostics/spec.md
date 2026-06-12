@@ -1,7 +1,7 @@
 # slide6-diagnostics Specification
 
 ## Purpose
-TBD - created by archiving change add-diagnostics-tab. Update Purpose after archive.
+定义「诊断」页面的能力与门控规范：电源控制与诊断信息卡片、确认弹窗、结果展示，以及在 tunnel/配对等前置不满足时的统一门控提示行为。
 ## Requirements
 ### Requirement: 诊断 Tab 入口
 

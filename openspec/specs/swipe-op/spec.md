@@ -1,6 +1,6 @@
 ## Purpose
 
-滑动手势能力——通过 W3C pointer actions 实现滑动。
+定义滑动手势能力：通过 W3C pointer actions 生成稳定的滑动动作序列（按下、停顿、移动、抬起），并明确持续时长、坐标语义及返回格式，保证跨设备行为一致。
 
 ## Requirements
 

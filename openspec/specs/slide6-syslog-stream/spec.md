@@ -1,7 +1,7 @@
 # slide6-syslog-stream Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义桌面端系统日志页面/区块的展示规范：实时流式日志读取、开始停止控制、设备切换联动、过滤与滚动体验，以及异常状态反馈。
 ## Requirements
 ### Requirement: 系统日志独立 Tab 与来源选择
 

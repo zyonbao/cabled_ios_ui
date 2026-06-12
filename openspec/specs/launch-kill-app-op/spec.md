@@ -1,6 +1,6 @@
 ## Purpose
 
-App 启停能力——通过 WDA apps API 启动与终止指定 App。
+定义应用启动与终止能力：优先通过 WDA apps API 执行指定 bundle 的启动/结束动作，并在 WDA 不可用时按约定回退到工具层备用实现，确保行为稳定可恢复。
 
 ## Requirements
 

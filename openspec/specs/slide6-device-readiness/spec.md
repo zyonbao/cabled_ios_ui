@@ -1,7 +1,7 @@
 # slide6-device-readiness Specification
 
 ## Purpose
-TBD - created by archiving change enhance-devtools-readiness. Update Purpose after archive.
+定义依赖开发者能力操作的统一设备就绪前置检查：按 iOS 版本判定 tunnel / DDI / RSD 前提是否满足，并在未就绪时输出可操作引导，避免直接失败或阻塞 UI。
 ## Requirements
 ### Requirement: 设备就绪前置检查矩阵
 
@@ -28,7 +28,7 @@ TBD - created by archiving change enhance-devtools-readiness. Update Purpose aft
 
 - 缺 XPC tunnel（iOS 17+）：MUST 提示用户启用 XPC tunnel（并可经现有入口启动）。
 - 缺 DDI 挂载：MUST 提示用户前往「开发者工具」根 tab 挂载 DDI；iOS 17 以下 MUST 额外提供 reload 按钮以重新检查 / 刷新状态。
-- tunnel 就绪且 DDI 已挂载、但目标 RSD 服务不工作（iOS 17+）：MUST 提示用户重新挂载 DDI 或重启 XPC tunnel。
+- tunnel 就绪且 DDI 已挂载、但目标 RSD 服务不工作（iOS 17+）：MUST 提示用户重新挂载 DDI，且 MAY 提示可手动重启 XPC tunnel。
 
 「键鼠操作」与「开发者工具」中依赖 DVT / WDA 的能力 MUST 在执行前应用上述就绪检查与引导。
 
@@ -50,5 +50,6 @@ TBD - created by archiving change enhance-devtools-readiness. Update Purpose aft
 #### Scenario: RSD 服务不工作引导
 
 - **WHEN** iOS 17+ 设备 tunnel 就绪、DDI 已挂载，但目标 RSD 开发者服务不可用
-- **THEN** 提示用户重新挂载 DDI 或重启 XPC tunnel
+- **THEN** 提示用户重新挂载 DDI
+- **AND** 可附带提示用户可手动重启 XPC tunnel
 

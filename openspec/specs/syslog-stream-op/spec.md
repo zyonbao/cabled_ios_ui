@@ -1,7 +1,7 @@
 # syslog-stream-op Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义系统日志流工具层能力：按设备与版本选择可用日志通道、持续拉取与中止、输出标准化日志事件，并对连接中断与权限异常提供可恢复反馈。
 ## Requirements
 ### Requirement: 提供系统日志流来源
 

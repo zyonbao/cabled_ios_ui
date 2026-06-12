@@ -1,7 +1,7 @@
 # slide6-developer-tools Specification
 
 ## Purpose
-TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose after archive.
+定义「开发者工具」页面的统一能力入口与交互约束：DDI 挂载状态与控制、iOS 17+ 的 XPC tunnel 面板、进程管理与虚拟定位能力卡、系统日志入口，以及相关门控、状态刷新和窗口行为规范。
 ## Requirements
 ### Requirement: 开发者工具 Tab 入口
 
@@ -21,6 +21,8 @@ TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose
 
 「开发者工具」Tab SHALL 在顶部展示 DDI 挂载状态（已挂载 / 未挂载）。未挂载时 SHALL 提供「挂载」按钮，点击 MUST 弹出可选挂载方式（自动按版本 / 个性化镜像(17+) / 开发者镜像(<17) / 手动选本地镜像文件）；选择手动方式时 SHALL 经文件选择器收集所需镜像文件。已挂载时 SHALL 提供「卸载」按钮。挂载 / 卸载完成后 MUST 刷新状态并据此联动功能位的可用性。iOS 17+ MUST 在状态栏提示进程 / 定位能力依赖 XPC tunnel，并提供启动入口。
 
+iOS 17+ 下，DDI 已挂载但 XPC tunnel 未启动时，应用 MUST NOT 继续探测 `RSD/DVT` 开发者服务状态；此时 MUST 直接提示用户先启动 XPC tunnel。只有在 XPC tunnel 已启动时，才允许继续探测 DVT / RSD readiness。若 tunnel 已启动但开发者服务仍不可用，SHOULD 提示用户可重挂 DDI 或手动重启 XPC tunnel，不得强制弹窗要求立即重启。
+
 #### Scenario: 未挂载时挂载
 
 - **WHEN** DDI 未挂载，用户点击「挂载」并选择一种方式
@@ -30,6 +32,18 @@ TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose
 
 - **WHEN** DDI 已挂载，用户点击「卸载」
 - **THEN** 应用卸载 DDI，状态更新为「未挂载」并禁用功能位
+
+#### Scenario: 已挂载但 tunnel 未启动
+
+- **WHEN** iOS 17+ 设备 DDI 已挂载但 XPC tunnel 未启动
+- **THEN** 应用直接提示用户先启动 XPC tunnel
+- **AND** 不继续探测 `RSD/DVT` 开发者服务状态
+
+#### Scenario: tunnel 已启动但开发者服务不可用
+
+- **WHEN** iOS 17+ 设备 DDI 已挂载、XPC tunnel 已启动，但开发者服务仍不可用
+- **THEN** 应用提示用户可重挂 DDI 或手动重启 XPC tunnel
+- **AND** 不弹出“是否立即重启 tunnel”的强制确认框
 
 ### Requirement: 功能位 grid 与 DDI 门控
 
@@ -116,6 +130,8 @@ TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose
 
 「开发者工具」Tab 顶部的 XPC tunnel 区块 SHALL 仅对 iOS 17+ 设备展示；iOS 17 以下 MUST 隐藏。该面板 MUST 反映当前 tunnel 运行状态并据此切换控制：未启动时提供「启动」按钮；已启动时提供「停止」与「重启」按钮。三者 MUST 复用系统授权（osascript）逻辑并经 `AsyncRunner` 在工作线程执行，操作进行中 MUST 禁用相应按钮、给出状态提示。
 
+tunnel 状态变化后，面板标签、按钮组，以及依赖 tunnel 的功能位门控 MUST 立即联动刷新，不得要求用户再手动点击一次“刷新状态”才能恢复正确 UI。
+
 #### Scenario: iOS 17+ 未启动 tunnel
 
 - **WHEN** iOS 17+ 设备且 tunnel 未运行
@@ -125,6 +141,13 @@ TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose
 
 - **WHEN** iOS 17+ 设备且 tunnel 正在运行
 - **THEN** 面板显示「已启动」与「停止」「重启」按钮
+
+#### Scenario: 停止 tunnel 后立即刷新面板
+
+- **WHEN** 用户点击「停止」且 tunnel 已停止
+- **THEN** 面板立即更新为「未启动」状态，并显示「启动」按钮
+- **AND** 依赖 tunnel 的功能位门控与状态提示同步刷新
+- **AND** 不要求用户再手动点击“刷新状态”
 
 #### Scenario: iOS 17 以下隐藏面板
 
@@ -187,4 +210,3 @@ TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose
 
 - **WHEN** 功能位按既有门控处于可用 / 禁用态并被点击
 - **THEN** 点击与禁用行为同改造前一致，仅文字的视觉层级发生变化
-

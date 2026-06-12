@@ -1,7 +1,7 @@
 # dvt-location-op Specification
 
 ## Purpose
-TBD - created by archiving change add-developer-tools-tab-phase1. Update Purpose after archive.
+定义基于 DVT 的虚拟定位能力：单点定位设置、清除恢复真实定位、GPX/多点轨迹回放及中止控制，并约束输入校验与状态反馈一致性。
 ## Requirements
 ### Requirement: 设定虚拟定位
 

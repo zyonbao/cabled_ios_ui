@@ -1,7 +1,7 @@
 # mobile-config-op Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义描述文件（mobileconfig）工具层能力：列出已安装描述文件、安装新描述文件、删除指定描述文件，并提供一致的错误包络与状态返回。
 ## Requirements
 ### Requirement: 列出配置描述文件
 

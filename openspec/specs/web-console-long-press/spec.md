@@ -1,6 +1,6 @@
 ## Purpose
 
-Web 控制台长按能力——提供后端 long_press 端点与前端原地长按手势识别。
+定义 Web 控制台长按能力：在后端提供 long_press API 转发链路，并在前端完成原地长按识别与冲突规避，使长按与点击/滑动在同一镜像视图下可稳定共存。
 ## Requirements
 ### Requirement: 后端 long_press 端点
 

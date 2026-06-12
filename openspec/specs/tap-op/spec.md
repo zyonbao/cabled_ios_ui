@@ -1,6 +1,6 @@
 ## Purpose
 
-点击手势能力——通过 W3C pointer actions 在指定逻辑坐标执行点击。
+定义点击手势能力：通过 W3C pointer actions 在指定逻辑坐标执行点击，并统一输入校验、坐标单位与返回结构，确保点击语义在不同调用端保持一致。
 
 ## Requirements
 

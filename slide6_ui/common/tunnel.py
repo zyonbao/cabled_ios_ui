@@ -470,14 +470,15 @@ def kill_tunnel_processes(pids: "list[int]") -> bool:
     return result.returncode == 0
 
 
-def stop_tunneld() -> bool:
+def stop_tunneld(timeout: float = 5.0) -> bool:
     """Stop the tunneld process with administrator privileges.
 
     The daemon runs as root, so a non-privileged ``lsof`` cannot see its socket;
     the port lookup and kill therefore run together inside the elevated shell
     (``lsof`` under root resolves the listener). tunneld does not reliably honor
-    SIGTERM, so this escalates to SIGKILL if the process lingers. Returns True if
-    the command was authorized and run.
+    SIGTERM, so this escalates to SIGKILL if the process lingers. Returns True
+    only when the command was authorized and the configured tunnel port is no
+    longer listening within ``timeout`` seconds.
     """
     port = get_tunnel_port()
     kill_cmd = (
@@ -499,4 +500,11 @@ def stop_tunneld() -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not is_tunnel_running(timeout=0.3):
+            return True
+        time.sleep(0.2)
+    return not is_tunnel_running(timeout=0.3)

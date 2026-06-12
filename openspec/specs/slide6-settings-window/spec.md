@@ -1,7 +1,7 @@
 # slide6-settings-window Specification
 
 ## Purpose
-TBD - created by archiving change add-settings-window-revamp. Update Purpose after archive.
+定义设置窗口（Settings）的结构与交互规范：分组布局、跨页一致性、窗口尺寸与可用性约束，以及与通用配置项（如日志、文件选择、DDI 来源等）的联动行为。
 ## Requirements
 ### Requirement: 分组标签页式 Settings 窗口
 

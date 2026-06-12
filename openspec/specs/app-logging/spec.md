@@ -1,7 +1,7 @@
 # app-logging Specification
 
 ## Purpose
-TBD - created by archiving change add-logging-system. Update Purpose after archive.
+定义应用级日志系统规范：日志文件命名与落盘位置、轮转与保留策略、日志级别与格式、运行期可观测性，以及敏感信息脱敏与安全约束。
 ## Requirements
 ### Requirement: 独立日志模块与低耦合接入
 

@@ -1,7 +1,7 @@
 # slide6-ddi-mount-settings Specification
 
 ## Purpose
-TBD - created by archiving change add-settings-window-revamp. Update Purpose after archive.
+定义 DDI 挂载相关设置项：镜像来源与路径、自动/手动挂载策略、输入校验与持久化行为，确保开发者工具页可基于稳定配置执行挂载。
 ## Requirements
 ### Requirement: DeveloperDiskImage 标签 — System Developer Image section
 

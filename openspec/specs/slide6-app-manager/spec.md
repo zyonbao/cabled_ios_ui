@@ -1,7 +1,7 @@
 # slide6-app-manager Specification
 
 ## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
+定义「App 列表」页面能力：应用清单展示、搜索与筛选、安装与卸载动作、按能力暴露 Documents/Sandbox 入口，并与底层 app inventory / AFC 能力协同。
 ## Requirements
 ### Requirement: App 列表展示
 

@@ -1,7 +1,7 @@
 # diagnostics-op Specification
 
 ## Purpose
-TBD - created by archiving change add-diagnostics-tab. Update Purpose after archive.
+定义诊断工具层能力：电源控制（重启/关机/睡眠）与诊断信息读取（电池、Wi-Fi、ioregistry 等），并统一成功/失败返回结构与错误本地化入口。
 ## Requirements
 ### Requirement: 诊断服务版本感知连接
 

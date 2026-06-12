@@ -1,7 +1,7 @@
 # crash-reports-op Specification
 
 ## Purpose
-TBD - created by archiving change add-profiles-crash-syslog-tabs. Update Purpose after archive.
+定义崩溃报告工具层能力：列出崩溃日志、目录导航、导出与删除操作，并保证在大目录与异常场景下返回可恢复、可诊断的结果。
 ## Requirements
 ### Requirement: 列出崩溃日志
 

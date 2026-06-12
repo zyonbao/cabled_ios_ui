@@ -1,7 +1,7 @@
 # slide6-logging-settings Specification
 
 ## Purpose
-TBD - created by archiving change add-logging-system. Update Purpose after archive.
+定义日志设置界面的用户可配置项与行为：日志目录、日志级别、运行时生效与持久化策略，以及与底层 logging 系统的映射关系与校验约束。
 ## Requirements
 ### Requirement: 日志设置项与持久化
 

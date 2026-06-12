@@ -1,7 +1,7 @@
 # host-pairing-op Specification
 
 ## Purpose
-TBD - created by archiving change add-host-pairing. Update Purpose after archive.
+定义主机配对工具层能力：配对状态探测、发起配对、取消配对，以及配对记录存储位置与权限健壮性，确保 stale 记录与权限异常不会阻断配对流程。
 ## Requirements
 ### Requirement: 探测主机配对状态
 

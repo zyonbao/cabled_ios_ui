@@ -1,7 +1,7 @@
 # slide6-file-picker Specification
 
 ## Purpose
-TBD - created by archiving change add-file-picker-toggle. Update Purpose after archive.
+定义文件/目录选择体验的一致性规范：系统选择器与应用内置选择器的切换开关、路径跳转栏样式统一、长路径显示策略及相关设置文案约束。
 ## Requirements
 ### Requirement: 统一的本地文件/文件夹选取入口
 

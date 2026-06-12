@@ -1,7 +1,7 @@
 # app-inventory-op Specification
 
 ## Purpose
-TBD - created by archiving change add-app-list-and-file-manager. Update Purpose after archive.
+定义应用清单查询能力：枚举设备已安装应用并输出名称、bundle id、版本、应用类型，以及文件共享与沙盒可访问性等能力标记，供上层 UI 进行筛选和动作决策。
 ## Requirements
 ### Requirement: 列出已安装 App 及元数据
 
