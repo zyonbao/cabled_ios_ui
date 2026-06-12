@@ -51,6 +51,18 @@
     "tunnel_stop": {
       "title": "Stop XPC tunnel",
       "body": "The XPC tunnel is still running.\nStop it? (requires administrator authorization)"
+    },
+    "pair": {
+      "pair": "Pair",
+      "unpair": "Unpair",
+      "checking": "Checking pairing…",
+      "pairing": "Pairing… tap \"Trust\" on the device and enter its passcode…",
+      "unpairing": "Unpairing…",
+      "done": "Pairing state updated",
+      "failed": "Pairing action failed: {error}",
+      "overlay": "This device is not paired (the computer is not trusted).\nClick the \"Pair\" button at the top, then tap \"Trust\" and enter the passcode on the device to use this feature.",
+      "unpair_confirm_title": "Unpair",
+      "unpair_confirm_body": "Unpairing removes this computer's trust record; all features that require pairing will stop working. Continue?"
     }
   },
   "settings": {

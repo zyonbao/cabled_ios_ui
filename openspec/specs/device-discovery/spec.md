@@ -1,9 +1,7 @@
 ## Purpose
 
 设备发现能力——枚举 USB 连接的物理 iOS 设备及其元数据，`list_targets` 不触发端口转发。
-
 ## Requirements
-
 ### Requirement: 枚举 USB 连接的物理 iOS 设备
 系统 SHALL 通过 `pymobiledevice3` 的 `usbmux.list_devices()` 获取当前已连接的 iOS 设备列表，并仅保留 `connection_type == "USB"` 的条目，过滤所有 Wi-Fi 配对设备。
 
@@ -36,3 +34,23 @@
 #### Scenario: list_targets 不依赖 WDA
 - **WHEN** 调用 `list_targets()`，且设备上 WDA 未运行
 - **THEN** 仍然正常返回设备信息，不因 WDA 不可用而报错
+
+### Requirement: 未配对设备跳过 WDA 安装探测
+
+`list_targets()` 在判定每台设备的 `state`（`"online"` 表示 WDA 已安装、否则 `"offline"`）时，SHALL 先检查该设备是否已配对：仅当**已配对**时才打开 InstallationProxy 会话探测 WDA 是否安装；**未配对**设备 MUST 跳过 WDA 探测并直接置为 `"offline"`，以避免对依赖配对的服务发起请求而抛出 `NotPairedError`。任一设备的探测异常 MUST 被吞掉并降级为 `"offline"`，不影响其它设备。
+
+#### Scenario: 未配对设备不触发 WDA 探测
+
+- **WHEN** `list_targets()` 发现一台未配对设备
+- **THEN** 该设备 `state` 为 `"offline"`，且枚举过程不因其产生 `NotPairedError`
+
+#### Scenario: 已配对设备正常探测 WDA
+
+- **WHEN** `list_targets()` 发现一台已配对设备且 WDA 已安装
+- **THEN** 该设备 `state` 为 `"online"`
+
+#### Scenario: 探测异常降级
+
+- **WHEN** 某台设备的配对检查或 WDA 探测抛出异常
+- **THEN** 该设备 `state` 降级为 `"offline"` 并仍出现在结果中，不影响其它设备
+

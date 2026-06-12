@@ -318,8 +318,12 @@ class KeymouseTab(QWidget):
 
         self._fill_info(dev)
         if not dev or dev.get("state") != "online":
-            self._set_status(i18n.t("keymouse.no_wda_status"))
+            # Only surface "WDA not installed" in the shared top-bar status when
+            # this tab is actually active; a deferred selection (user sitting on
+            # another tab) must not hijack the global status line.
             self.screen.set_overlay(i18n.t("keymouse.no_wda_overlay"))
+            if active:
+                self._set_status(i18n.t("keymouse.no_wda_status"))
             return
 
         # WDA / mirror startup is costly and only this tab needs it. Defer it
@@ -327,7 +331,6 @@ class KeymouseTab(QWidget):
         if active:
             self._start_mirror_flow(gen)
         else:
-            self._set_status(i18n.t("keymouse.device_selected"))
             self.screen.set_overlay(i18n.t("keymouse.switch_tab_hint"))
 
     def on_enter(self) -> None:

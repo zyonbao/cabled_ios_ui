@@ -51,6 +51,18 @@
     "tunnel_stop": {
       "title": "停止 XPC tunnel",
       "body": "检测到 XPC tunnel 仍在运行。\n是否停止它？（停止需要管理员授权）"
+    },
+    "pair": {
+      "pair": "配对",
+      "unpair": "取消配对",
+      "checking": "检测配对…",
+      "pairing": "正在配对，请在设备上点按「信任」并输入密码…",
+      "unpairing": "正在取消配对…",
+      "done": "配对状态已更新",
+      "failed": "配对操作失败：{error}",
+      "overlay": "设备尚未配对（未信任此电脑）。\n请点击顶部的「配对」按钮，并在设备上点按「信任」、输入密码，完成后该功能即可使用。",
+      "unpair_confirm_title": "取消配对",
+      "unpair_confirm_body": "取消配对会移除此电脑的信任记录，所有依赖配对的功能将不可用。确定继续吗？"
     }
   },
   "settings": {

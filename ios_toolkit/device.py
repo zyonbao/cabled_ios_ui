@@ -32,6 +32,14 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Keep host pairing records inside the app's own data dir instead of
+# pymobiledevice3's shared default (~/.pymobiledevice3). That default is often
+# polluted with root-owned files from earlier ``sudo`` runs, which makes
+# save_pair_record() fail with PermissionError. usbmuxd remains the
+# authoritative store (validate_pairing reads it first), so this only relocates
+# pmd3's local cache copy.
+_PAIRING_RECORDS_DIR = os.path.expanduser("~/Library/CablediOS/PairingRecords")
+
 # ---------------------------------------------------------------------------
 # Static-analysis hints for Nuitka (never executed)
 # ---------------------------------------------------------------------------
@@ -1896,6 +1904,213 @@ class iOSDevice:
                 value = str(value)
             info[str(key)] = value
         return _ok({"udid": self.udid, "info": info})
+
+    # ------------------------------------------------------------------
+    # Host pairing (trust) — over usbmux lockdown, no WDA / tunnel required
+    # ------------------------------------------------------------------
+    #
+    # Most lockdown services (app install, AFC, crash, profiles, DDI/DVT, WDA)
+    # require a valid host pairing record. These helpers expose the pairing state
+    # and let the UI establish or revoke trust without auto-pairing elsewhere
+    # (all other lockdown connections use autopair=False on purpose).
+
+    async def _open_lockdown_no_autopair(self):
+        """Create an initialized usbmux lockdown client WITHOUT the built-in
+        validate/autopair step.
+
+        ``create_using_usbmux`` always runs ``_handle_autopair`` ->
+        ``validate_pairing`` (even with ``autopair=False``). On a device that
+        still carries a stale host pair record, ``validate_pairing`` raises
+        ``ConnectionTerminatedError`` (a wrapped SSL EOF) and tears down the
+        whole connection — which previously broke both the pairing probe and the
+        pair request itself (the on-device "Trust" prompt was never sent).
+        Building the client by hand lets us decide when to validate / pair.
+
+        The caller owns the returned client and must ``await lockdown.close()``.
+        """
+        from pymobiledevice3 import usbmux
+        from pymobiledevice3.lockdown import (
+            DEFAULT_LABEL,
+            SERVICE_PORT,
+            SYSTEM_BUID,
+            PlistUsbmuxLockdownClient,
+            UsbmuxLockdownClient,
+        )
+        from pymobiledevice3.pair_records import (
+            create_pairing_records_cache_folder,
+            generate_host_id,
+        )
+        from pymobiledevice3.service_connection import ServiceConnection
+        from pymobiledevice3.usbmux import PlistMuxConnection
+
+        service = await ServiceConnection.create_using_usbmux(self.udid, SERVICE_PORT)
+        try:
+            cls: type = UsbmuxLockdownClient
+            system_buid = SYSTEM_BUID
+            async with await usbmux.create_mux() as mux:
+                if isinstance(mux, PlistMuxConnection):
+                    # Modern usbmuxd: BUID + pair-record persistence available.
+                    system_buid = await mux.get_buid()
+                    cls = PlistUsbmuxLockdownClient
+            lockdown = cls(
+                service,
+                host_id=generate_host_id(),
+                identifier=service.mux_device.serial,
+                label=DEFAULT_LABEL,
+                system_buid=system_buid,
+                pair_record=None,
+                pairing_records_cache_folder=create_pairing_records_cache_folder(
+                    Path(_PAIRING_RECORDS_DIR)
+                ),
+                port=SERVICE_PORT,
+            )
+            await lockdown._initialize()
+        except Exception:
+            await service.close()
+            raise
+        return lockdown
+
+    def _clear_unwritable_pair_cache(self) -> None:
+        """Remove a stale local pair-record file we are unable to overwrite.
+
+        Records left behind by an earlier ``sudo`` run are owned by root. The
+        cache directory itself is user-owned, so we can *delete* (but not
+        rewrite) such files — clearing one lets ``lockdown.pair()`` persist a
+        fresh, user-owned record instead of failing with ``PermissionError``.
+        Best-effort: any failure here is logged and ignored.
+        """
+        try:
+            from pymobiledevice3.pair_records import create_pairing_records_cache_folder
+
+            folder = create_pairing_records_cache_folder(Path(_PAIRING_RECORDS_DIR))
+            path = folder / f"{self.udid}.plist"
+            if path.exists() and not os.access(path, os.W_OK):
+                path.unlink()
+                logger.info("pair: removed unwritable stale cache record %s", path)
+        except Exception:
+            logger.warning("pair: failed to clear stale cache record udid=%s",
+                           self.udid, exc_info=True)
+
+    async def _probe_paired_async(self) -> bool:
+        """Report whether a valid host pairing record exists for this device.
+
+        We run ``validate_pairing`` ourselves so we can interpret the
+        SSL-EOF / connection-terminated case the way pymobiledevice3 intends but
+        currently fails to: its ``except SSLZeroReturnError`` no longer matches
+        because ``ssl_start`` rewraps the error as ``ConnectionTerminatedError``.
+        A stale record the device no longer honors means "not paired", not a
+        hard error.
+        """
+        import ssl
+
+        from pymobiledevice3.exceptions import ConnectionTerminatedError
+
+        lockdown = await self._open_lockdown_no_autopair()
+        try:
+            try:
+                return bool(await lockdown.validate_pairing())
+            except (ConnectionTerminatedError, ssl.SSLError):
+                logger.info(
+                    "pairing probe: validate raised SSL/terminated -> treating "
+                    "udid=%s as unpaired", self.udid)
+                return False
+        finally:
+            with contextlib.suppress(Exception):
+                await lockdown.close()
+
+    def pairing_state(self) -> dict:
+        """Report whether a valid host pairing record exists for this device."""
+        from .toolkit_api import _ok, _err
+
+        logger.info("pairing_state: probing udid=%s", self.udid)
+        future = asyncio.run_coroutine_threadsafe(self._probe_paired_async(), _bg_loop)
+        try:
+            paired = future.result(timeout=20)
+            logger.info("pairing_state: udid=%s paired=%s", self.udid, paired)
+            return _ok({"paired": paired})
+        except Exception as exc:
+            logger.exception("pairing_state: probe failed udid=%s", self.udid)
+            return _err("SUBPROCESS", str(exc))
+
+    def pair(self) -> dict:
+        """Initiate host pairing; the device shows a "Trust This Computer" prompt.
+
+        We pair on a fresh connection WITHOUT validating first: a stale host
+        record makes validation abort before the trust prompt can even be sent.
+        ``lockdown.pair()`` regenerates the host certificate, drives the
+        on-device dialog, and (for usbmux clients) persists the fresh record back
+        to usbmuxd — overwriting any stale record so later validation succeeds.
+        Blocks until the user accepts (and enters the passcode) or it fails.
+        """
+        from .toolkit_api import _ok, _err
+
+        # Drop a stale, root-owned cache record up front so save_pair_record()
+        # can write a fresh user-owned one after the trust prompt succeeds.
+        self._clear_unwritable_pair_cache()
+
+        async def _op() -> bool:
+            lockdown = await self._open_lockdown_no_autopair()
+            try:
+                logger.info(
+                    "pair: requesting pairing (awaiting on-device trust) udid=%s",
+                    self.udid)
+                await lockdown.pair()
+                logger.info("pair: pair() returned udid=%s paired=%s",
+                            self.udid, getattr(lockdown, "paired", None))
+                return True
+            finally:
+                with contextlib.suppress(Exception):
+                    await lockdown.close()
+
+        # Generous timeout: the user must physically accept on the device.
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            future.result(timeout=120)
+        except Exception as exc:
+            logger.exception("pair: failed udid=%s", self.udid)
+            return _err("SUBPROCESS", str(exc))
+
+        # Confirm the persisted pairing state on a clean connection.
+        try:
+            verify = asyncio.run_coroutine_threadsafe(self._probe_paired_async(), _bg_loop)
+            paired = verify.result(timeout=20)
+        except Exception:
+            logger.exception("pair: post-pair verify failed udid=%s", self.udid)
+            paired = True
+        logger.info("pair: final state udid=%s paired=%s", self.udid, paired)
+        return _ok({"paired": paired})
+
+    def unpair(self) -> dict:
+        """Revoke this host's pairing record on the device.
+
+        Unpair only needs the existing record to send the ``Unpair`` request (no
+        SSL handshake), so we load it manually and skip validation — which would
+        otherwise abort on a stale record.
+        """
+        from .toolkit_api import _ok, _err
+
+        async def _op() -> bool:
+            lockdown = await self._open_lockdown_no_autopair()
+            try:
+                await lockdown.fetch_pair_record()
+                if getattr(lockdown, "pair_record", None):
+                    await lockdown.unpair()
+                    logger.info("unpair: unpair() sent udid=%s", self.udid)
+                else:
+                    logger.info("unpair: no pair record to revoke udid=%s", self.udid)
+                return False
+            finally:
+                with contextlib.suppress(Exception):
+                    await lockdown.close()
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            paired = future.result(timeout=30)
+            logger.info("unpair: completed udid=%s paired=%s", self.udid, paired)
+            return _ok({"paired": paired})
+        except Exception as exc:
+            logger.exception("unpair: failed udid=%s", self.udid)
+            return _err("SUBPROCESS", str(exc))
 
     # ------------------------------------------------------------------
     # Configuration profiles (mobile_config / MCInstall)

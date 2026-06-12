@@ -105,8 +105,14 @@ def list_targets() -> dict:
     devices = manager.list_devices()
     targets = []
     for device in devices:
+        # Probing WDA install state opens an InstallationProxy session, which
+        # requires a pairing record. Skip it for unpaired devices so enumeration
+        # doesn't spew NotPairedError; "offline" is the correct state there.
         try:
-            wda_installed = device.is_wda_installed()
+            paired = bool(
+                (device.pairing_state().get("data") or {}).get("paired")
+            )
+            wda_installed = device.is_wda_installed() if paired else False
         except Exception:
             wda_installed = False
         targets.append({
@@ -662,6 +668,34 @@ def device_info(target: str) -> dict:
     if err:
         return err
     return device.device_info()
+
+
+# ---------------------------------------------------------------------------
+# Host pairing (trust)
+# ---------------------------------------------------------------------------
+
+def pairing_state(target: str) -> dict:
+    """Report whether a valid host pairing record exists. data = {"paired": bool}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.pairing_state()
+
+
+def pair_device(target: str) -> dict:
+    """Initiate host pairing (device shows a trust prompt). data = {"paired": bool}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.pair()
+
+
+def unpair_device(target: str) -> dict:
+    """Revoke this host's pairing record. data = {"paired": bool}."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.unpair()
 
 
 # ---------------------------------------------------------------------------

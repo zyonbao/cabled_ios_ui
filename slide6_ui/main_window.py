@@ -9,6 +9,7 @@ KeymouseTab, which MainWindow drives through a small delegation surface
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -59,6 +60,8 @@ from .diagnostics import DiagnosticsTab
 from .file_system import FileSystemTab
 from .keymouse import KeymouseTab
 from .profiles import ProfilesTab
+
+logger = logging.getLogger(__name__)
 
 # QSettings identifier. On macOS this maps to the preferences plist
 # com.<org>.<app>.plist (i.e. com.unnamed.cabled_ios.plist). Changing these keys
@@ -136,6 +139,9 @@ class MainWindow(QMainWindow):
         self.runner = AsyncRunner()
         self.devices: dict = {}
         self.target = ""
+        # Host pairing (trust) state for the selected device: True / False /
+        # None (unknown — no device, or probe in flight).
+        self._paired: "bool | None" = None
 
         self._build_ui()
         self._build_menu()
@@ -155,10 +161,15 @@ class MainWindow(QMainWindow):
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(320)
         self.refresh_btn = QPushButton(i18n.t("common.refresh"))
+        # Pair / unpair the selected device (text + action depend on trust state).
+        # Hidden until a device is selected.
+        self.pair_btn = QPushButton(i18n.t("main_window.pair.pair"))
+        self.pair_btn.hide()
         self.status_label = QLabel(i18n.t("main_window.status.disconnected"))
         top.addWidget(QLabel(i18n.t("main_window.device")))
         top.addWidget(self.device_combo)
         top.addWidget(self.refresh_btn)
+        top.addWidget(self.pair_btn)
         top.addStretch(1)
         top.addWidget(self.status_label)
         root.addLayout(top)
@@ -208,6 +219,36 @@ class MainWindow(QMainWindow):
         ):
             suppress_auto_focus(tab)
 
+        # Tabs whose features require a host pairing record. 「设备信息」reads
+        # public lockdown values without a session, so it stays usable unpaired
+        # and is intentionally excluded.
+        self._pair_gated_tabs = {
+            self.album_tab, self.fs_tab, self.app_tab, self.profiles_tab,
+            self.crash_tab, self.developer_tools_tab, self.keymouse_tab,
+            self.diagnostics_tab,
+        }
+
+        # A single shared gate overlay floats above whichever pair-gated tab is
+        # current when the selected device is not paired. Centralizing it here
+        # (one overlay, reparented to the current page) avoids per-tab plumbing.
+        self._pair_overlay = QWidget(central)
+        self._pair_overlay.setObjectName("pairGateOverlay")
+        self._pair_overlay.setStyleSheet(
+            "#pairGateOverlay { background-color: rgba(20, 20, 20, 150); }"
+        )
+        _pov = QVBoxLayout(self._pair_overlay)
+        _pov.setAlignment(Qt.AlignCenter)
+        self._pair_overlay_label = QLabel("", self._pair_overlay)
+        self._pair_overlay_label.setAlignment(Qt.AlignCenter)
+        self._pair_overlay_label.setWordWrap(True)
+        self._pair_overlay_label.setMaximumWidth(460)
+        self._pair_overlay_label.setStyleSheet(
+            "color: #ffffff; font-size: 14px; background-color: rgba(0, 0, 0, 160);"
+            " padding: 18px 24px; border-radius: 10px;"
+        )
+        _pov.addWidget(self._pair_overlay_label)
+        self._pair_overlay.hide()
+
         self.setCentralWidget(central)
 
     def _build_menu(self) -> None:
@@ -224,8 +265,23 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.refresh_btn.clicked.connect(self.load_devices)
         self.device_combo.activated.connect(self.on_select_device)
+        self.pair_btn.clicked.connect(self._on_pair_clicked)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.preferences_action.triggered.connect(self._open_preferences)
+        # Keep the gate overlay matched to its host page as that page resizes.
+        for tab in self._pair_gated_tabs:
+            tab.installEventFilter(self)
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt override
+        from PySide6.QtCore import QEvent
+
+        if (
+            event.type() == QEvent.Resize
+            and self._pair_overlay.isVisible()
+            and self._pair_overlay.parent() is obj
+        ):
+            self._pair_overlay.setGeometry(obj.rect())
+        return super().eventFilter(obj, event)
 
     # -------------------------------------------------------------- status
 
@@ -725,9 +781,11 @@ class MainWindow(QMainWindow):
         self.device_combo.addItem(i18n.t("main_window.device_combo.placeholder"), "")
         for t in targets:
             self.devices[t["id"]] = t
-            wda = "" if t.get("state") == "online" else i18n.t("main_window.device_combo.no_wda")
-            model = (t.get("metadata") or {}).get("model", "")
-            label = f"{t.get('name') or t['id']}  {model} {wda}".strip()
+            # Identify by UDID; pairing/WDA state lives in the pair button and tab
+            # overlays, not the picker. The device name only resolves once paired,
+            # so include it (with the UDID) when available and fall back to UDID.
+            name = t.get("name")
+            label = f"{name} ({t['id']})" if name else t["id"]
             self.device_combo.addItem(label, t["id"])
         if prev and prev in self.devices:
             idx = self.device_combo.findData(prev)
@@ -744,19 +802,151 @@ class MainWindow(QMainWindow):
         target = self.device_combo.currentData() or ""
         self.target = target
         dev = self.devices.get(target) if target else None
-        # App management / device info work without WDA/tunnel, so refresh those
-        # tabs for any selected device (they clear when no device is selected).
-        self.app_tab.set_target(self.target)
+        # 「设备信息」reads public lockdown values without a pairing session, so it
+        # can refresh for any selected device regardless of trust.
         self.device_info_tab.set_target(self.target)
-        self.fs_tab.set_target(self.target)
-        self.album_tab.set_target(self.target)
-        self.profiles_tab.set_target(self.target)
-        self.crash_tab.set_target(self.target)
-        self.diagnostics_tab.set_target(self.target)
-        self.developer_tools_tab.set_target(self.target)
-        # The key/mouse tab owns the costly WDA/mirror flow; only start it when
-        # that tab is the current one (otherwise it is deferred until entered).
-        self.keymouse_tab.select_device(self.target, dev, active=self._on_keymouse_tab())
+        # The key/mouse tab owns the costly WDA/mirror flow. Defer its startup
+        # until the pairing probe confirms trust (started in _set_pair_state),
+        # so we never kick off WDA against an unpaired device.
+        self.keymouse_tab.select_device(self.target, dev, active=False)
+        # Every other tab needs a pairing record; _set_pair_state loads them only
+        # once the probe reports paired (and clears them otherwise) so we don't
+        # fire pairing-required calls — and their NotPairedError noise — against
+        # an unpaired device.
+        if self.target:
+            self._refresh_pairing(self.target)
+        else:
+            self._set_pair_state(None)
+
+    # ------------------------------------------------------- host pairing
+
+    def _refresh_pairing(self, target: str) -> None:
+        """Probe host pairing for ``target`` and update the button / overlay."""
+        logger.info("pairing: probing state for target=%s", target)
+        self._set_pair_state(None)
+        self.runner.submit(
+            lambda: api.pairing_state(target),
+            on_done=lambda res: self._on_pairing_result(target, res),
+            on_error=lambda e: self._on_pairing_result(
+                target, {"ok": False, "error": {"message": e}}
+            ),
+        )
+
+    def _on_pairing_result(self, target: str, res: dict) -> None:
+        logger.info("pairing: probe result target=%s res=%s", target, res)
+        # Ignore results for a device the user already switched away from.
+        if target != self.target:
+            logger.info("pairing: ignoring stale probe (current=%s)", self.target)
+            return
+        if not res.get("ok"):
+            # A clean "not paired" comes back as ok=True/paired=False; an error
+            # here means the probe itself failed (device busy/locked). Lean to
+            # "unpaired" so the user can still attempt to pair.
+            self._set_pair_state(False)
+            return
+        self._set_pair_state(bool(res.get("data", {}).get("paired")))
+
+    def _set_pair_state(self, paired: "bool | None") -> None:
+        self._paired = paired
+        self._update_pair_button()
+        self._apply_pair_overlay()
+        self._apply_gated_targets()
+        if paired is False:
+            # Make sure no WDA/mirror keeps running against an untrusted device.
+            self.keymouse_tab.on_leave()
+        elif paired and self._on_keymouse_tab():
+            # Trust confirmed while sitting on the key/mouse tab — start now.
+            self.keymouse_tab.on_enter()
+
+    def _apply_gated_targets(self) -> None:
+        """Load pair-gated tabs only when trust is confirmed; clear them otherwise.
+
+        Each of these tabs talks to a lockdown service that requires a pairing
+        record, so handing them the real target before the device is paired just
+        produces a wall of NotPairedError tracebacks. Hold the target back until
+        ``_paired`` is True and clear them ("") in every other state. The
+        key/mouse tab is gated too but driven via its own select_device/on_enter.
+        """
+        tgt = self.target if self._paired else ""
+        for tab in (self.app_tab, self.fs_tab, self.album_tab, self.profiles_tab,
+                    self.crash_tab, self.diagnostics_tab, self.developer_tools_tab):
+            tab.set_target(tgt)
+
+    def _update_pair_button(self) -> None:
+        if not self.target:
+            self.pair_btn.hide()
+            return
+        self.pair_btn.show()
+        if self._paired is None:
+            self.pair_btn.setText(i18n.t("main_window.pair.checking"))
+            self.pair_btn.setEnabled(False)
+        elif self._paired:
+            self.pair_btn.setText(i18n.t("main_window.pair.unpair"))
+            self.pair_btn.setEnabled(True)
+        else:
+            self.pair_btn.setText(i18n.t("main_window.pair.pair"))
+            self.pair_btn.setEnabled(True)
+
+    def _apply_pair_overlay(self) -> None:
+        """Cover the current pair-gated tab with the overlay when unpaired."""
+        current = self.tabs.currentWidget()
+        if self.target and self._paired is False and current in self._pair_gated_tabs:
+            self._pair_overlay.setParent(current)
+            self._pair_overlay_label.setText(i18n.t("main_window.pair.overlay"))
+            self._pair_overlay.setGeometry(current.rect())
+            self._pair_overlay.show()
+            self._pair_overlay.raise_()
+        else:
+            self._pair_overlay.hide()
+
+    def _on_pair_clicked(self) -> None:
+        if not self.target:
+            return
+        if self._paired:
+            reply = QMessageBox.question(
+                self,
+                i18n.t("main_window.pair.unpair_confirm_title"),
+                i18n.t("main_window.pair.unpair_confirm_body"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            self._run_pair_action(api.unpair_device, "unpairing")
+        else:
+            self._run_pair_action(api.pair_device, "pairing")
+
+    def _run_pair_action(self, fn, status_key: str) -> None:
+        target = self.target
+        logger.info("pairing: action=%s target=%s", status_key, target)
+        self.pair_btn.setEnabled(False)
+        self._set_status(i18n.t(f"main_window.pair.{status_key}"))
+        self.runner.submit(
+            lambda: fn(target),
+            on_done=lambda res: self._on_pair_action_done(target, res),
+            on_error=lambda e: self._on_pair_action_done(
+                target, {"ok": False, "error": {"message": e}}
+            ),
+        )
+
+    def _on_pair_action_done(self, target: str, res: dict) -> None:
+        logger.info("pairing: action result target=%s res=%s", target, res)
+        if target != self.target:
+            logger.info("pairing: ignoring stale action result (current=%s)", self.target)
+            return
+        if not res.get("ok"):
+            self._set_status(
+                i18n.t(
+                    "main_window.pair.failed",
+                    error=(res.get("error") or {}).get("message", ""),
+                )
+            )
+            self._update_pair_button()
+            return
+        self._set_status(i18n.t("main_window.pair.done"))
+        # Re-run the full selection flow so every tab reloads under the new trust
+        # state and the pairing is re-probed/gated consistently.
+        self.on_select_device()
 
     def _current_os_version(self) -> str:
         """Return the os_version of the selected device (or '' if none)."""
@@ -768,7 +958,13 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, _index: int) -> None:
         if self._on_keymouse_tab():
-            self.keymouse_tab.on_enter()
+            # Don't start the WDA/mirror flow while the device is unpaired (the
+            # gate overlay blocks it); start only when trusted.
+            if self._paired is False:
+                self.keymouse_tab.on_leave()
+            else:
+                self.keymouse_tab.on_enter()
+            self._apply_pair_overlay()
             return
         self.keymouse_tab.on_leave()
         # Let a tab refresh transient/global state (e.g. XPC tunnel status) when
@@ -777,6 +973,7 @@ class MainWindow(QMainWindow):
         on_activated = getattr(current, "on_tab_activated", None)
         if callable(on_activated):
             on_activated()
+        self._apply_pair_overlay()
         # Qt grabs keyboard focus for the first focusable child of the page that
         # just became visible (a Refresh button, a checkbox, …), which is
         # intrusive. Clear it after Qt finishes its focus assignment so a freshly
