@@ -21,6 +21,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -58,6 +59,15 @@ _COLUMNS: list[tuple[str, str, int]] = [
 ]
 # Columns shown by default; the rest start hidden (toggle via the eye button).
 _DEFAULT_VISIBLE = {"message"}
+
+# Filter fields whose values come from a fixed set, rendered as a dropdown in the
+# filter dialog instead of a free-text input. ``level`` mirrors pymobiledevice3's
+# SyslogLogLevel names emitted by the platform layer (_oslog_entry_to_dict stores
+# ``level.name``). Listed here (rather than imported) to keep the UI decoupled
+# from the device library; unknown device levels still pass through as free text.
+_FILTER_CHOICES: dict[str, list[str]] = {
+    "level": ["NOTICE", "INFO", "DEBUG", "USER_ACTION", "ERROR", "FAULT"],
+}
 
 
 def _col_label(header_key: str) -> str:
@@ -148,7 +158,12 @@ class _FilterButton(QPushButton):
     def _refresh(self) -> None:
         shown = self._full or self._placeholder
         avail = max(10, self.width() - 16)
-        super().setText(self.fontMetrics().elidedText(shown, Qt.ElideRight, avail))
+        elided = self.fontMetrics().elidedText(shown, Qt.ElideRight, avail)
+        # QPushButton treats '&' as a mnemonic marker (the '&' in the joined
+        # "key=value&key=value" condition would otherwise be swallowed); escape
+        # it to '&&' so the separator renders literally. Elide first so the
+        # width budget is measured against the real text, not the escaped one.
+        super().setText(elided.replace("&", "&&"))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
@@ -246,12 +261,28 @@ class OslogPanel(LogPanelBase):
         dlg = QDialog(self)
         dlg.setWindowTitle(i18n.t("oslog.filter_title"))
         form = QFormLayout(dlg)
-        edits: dict[str, QLineEdit] = {}
+        edits: dict[str, QWidget] = {}
         for key, header_key, _w in _COLUMNS:
-            edit = QLineEdit(self._conditions.get(key, ""), dlg)
-            edit.setPlaceholderText(i18n.t("oslog.filter_field_placeholder"))
-            form.addRow(_col_label(header_key), edit)
-            edits[key] = edit
+            current = self._conditions.get(key, "")
+            choices = _FILTER_CHOICES.get(key)
+            if choices:
+                # Enumerable field (e.g. level): pick from a dropdown. The first
+                # empty-data entry means "no filter"; an unknown current value
+                # (e.g. a device LEVEL_n) is added so it stays selectable.
+                combo = QComboBox(dlg)
+                combo.addItem(i18n.t("oslog.filter_any"), "")
+                for opt in choices:
+                    combo.addItem(opt, opt)
+                if current and combo.findData(current) < 0:
+                    combo.addItem(current, current)
+                combo.setCurrentIndex(max(0, combo.findData(current)))
+                form.addRow(_col_label(header_key), combo)
+                edits[key] = combo
+            else:
+                edit = QLineEdit(current, dlg)
+                edit.setPlaceholderText(i18n.t("oslog.filter_field_placeholder"))
+                form.addRow(_col_label(header_key), edit)
+                edits[key] = edit
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg
         )
@@ -263,7 +294,11 @@ class OslogPanel(LogPanelBase):
             return
         conditions: dict[str, str] = {}
         for key, _, _w in _COLUMNS:
-            value = edits[key].text().strip()
+            widget = edits[key]
+            if isinstance(widget, QComboBox):
+                value = (widget.currentData() or "").strip()
+            else:
+                value = widget.text().strip()
             if value:
                 conditions[key] = value
         self._apply_conditions(conditions)

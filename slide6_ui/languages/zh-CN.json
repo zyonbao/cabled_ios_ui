@@ -265,6 +265,7 @@
     "export": "导出…",
     "filter_title": "oslog 过滤",
     "filter_field_placeholder": "子串匹配，留空不生效",
+    "filter_any": "（全部）",
     "detail_title": "日志详情",
     "export_text": "导出为文本",
     "export_logarchive": "导出为 .logarchive",

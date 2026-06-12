@@ -265,6 +265,7 @@
     "export": "Export…",
     "filter_title": "oslog filter",
     "filter_field_placeholder": "Substring match; leave empty to ignore",
+    "filter_any": "(All)",
     "detail_title": "Log detail",
     "export_text": "Export as text",
     "export_logarchive": "Export as .logarchive",
