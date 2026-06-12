@@ -3100,6 +3100,10 @@ class LogStreamHandle:
                 if self.source == "oslog":
                     from pymobiledevice3.services.os_trace import OsTraceService
 
+                    # Tolerate device-reported log levels outside the library's
+                    # SyslogLogLevel enum (e.g. 4) so a single odd entry can't
+                    # abort the whole stream with "is not a valid SyslogLogLevel".
+                    _patch_oslog_level_enum()
                     svc = OsTraceService(lockdown=lockdown)
                     gen = svc.syslog(
                         pid=self.pid,
@@ -3188,6 +3192,45 @@ class LogStreamHandle:
             logger.debug("LogStreamHandle.close: relay released")
         else:
             logger.warning("LogStreamHandle.close: timed out waiting for relay release")
+
+
+_oslog_level_patched = False
+
+
+def _patch_oslog_level_enum() -> None:
+    """Make pymobiledevice3's ``SyslogLogLevel`` tolerate unknown level values.
+
+    The bundled ``parse_syslog_entry`` does ``SyslogLogLevel(level)`` on a raw
+    device byte, but the enum only covers a handful of known values. Devices can
+    report levels outside that set (e.g. 4), which raises ``ValueError`` inside
+    the ``syslog()`` async generator and kills the whole stream after 0 lines.
+    Install a ``_missing_`` hook so an unknown value yields a synthetic member
+    (numeric value preserved, name ``LEVEL_<n>``) instead of crashing.
+    """
+    global _oslog_level_patched
+    if _oslog_level_patched:
+        return
+    try:
+        from pymobiledevice3.services.os_trace import SyslogLogLevel
+
+        if getattr(SyslogLogLevel, "_cabledios_tolerant", False):
+            _oslog_level_patched = True
+            return
+
+        @classmethod
+        def _missing_(cls, value):  # type: ignore[no-redef]
+            if not isinstance(value, int):
+                return None
+            pseudo = int.__new__(cls, value)
+            pseudo._name_ = f"LEVEL_{value}"
+            pseudo._value_ = value
+            return pseudo
+
+        SyslogLogLevel._missing_ = _missing_
+        SyslogLogLevel._cabledios_tolerant = True
+        _oslog_level_patched = True
+    except Exception as exc:  # pragma: no cover - defensive, never block streaming
+        logger.debug("_patch_oslog_level_enum: skipped (%s)", exc)
 
 
 def _oslog_entry_to_dict(entry) -> dict:
