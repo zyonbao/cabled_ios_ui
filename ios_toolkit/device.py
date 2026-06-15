@@ -1365,9 +1365,9 @@ class iOSDevice:
         # "degrees" needed to bring a portrait frame upright.
         z_map = {
             0: "PORTRAIT",
-            90: "LANDSCAPE_LEFT",
+            90: "LANDSCAPE_RIGHT",
             180: "PORTRAIT_UPSIDE_DOWN",
-            270: "LANDSCAPE_RIGHT",
+            270: "LANDSCAPE_LEFT",
         }
         # Fallback for the coarse /orientation string.
         normalize = {
@@ -1376,11 +1376,11 @@ class iOSDevice:
             "PORTRAITUPSIDEDOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
             "UPSIDE_DOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
             "UIA_DEVICE_ORIENTATION_PORTRAIT_UPSIDEDOWN": ("PORTRAIT_UPSIDE_DOWN", 180),
-            "LANDSCAPELEFT": ("LANDSCAPE_LEFT", 90),
-            "LANDSCAPE": ("LANDSCAPE_LEFT", 90),
-            "UIA_DEVICE_ORIENTATION_LANDSCAPELEFT": ("LANDSCAPE_LEFT", 90),
-            "LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 270),
-            "UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 270),
+            "LANDSCAPELEFT": ("LANDSCAPE_LEFT", 270),
+            "LANDSCAPE": ("LANDSCAPE_LEFT", 270),
+            "UIA_DEVICE_ORIENTATION_LANDSCAPELEFT": ("LANDSCAPE_LEFT", 270),
+            "LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 90),
+            "UIA_DEVICE_ORIENTATION_LANDSCAPERIGHT": ("LANDSCAPE_RIGHT", 90),
         }
 
         try:
