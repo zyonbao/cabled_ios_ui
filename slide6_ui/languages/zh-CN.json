@@ -12,6 +12,7 @@
     "no": "否",
     "apply": "应用",
     "select_device_first": "请先选择一个设备",
+    "default": "默认",
     "default_prefix": "默认:{path}",
     "copy_value": "复制值",
     "copy_line": "复制本行",
@@ -69,7 +70,8 @@
     "title": "设置",
     "tab": {
       "general": "General",
-      "ddi": "DeveloperDiskImage"
+      "ddi": "DeveloperDiskImage",
+      "keymouse": "Key/Mouse"
     },
     "general": {
       "ask_clean_tunnel": "退出时询问是否清理 XPC tunnel"
@@ -119,6 +121,45 @@
       "priority_need_one": "至少启用一个来源后才能配置优先级。",
       "move_up": "上移",
       "move_down": "下移"
+    },
+    "keymouse": {
+      "wda": {
+        "group": "WDA",
+        "bundle_id": "WDA Bundle ID",
+        "port": "WDA Server Port",
+        "mjpeg_port": "WDA MJPEG Port",
+        "hint": "这些设置会应用到后续设备发现与 WDA 启动流程。修改后会立即刷新设备列表。"
+      },
+      "bottom_edge": {
+        "group": "底部手势",
+        "hint": "配置底部手势及其按钮名称。不支持某个手势的设备无法使用该手势。",
+        "device": "设备",
+        "device_placeholder": "输入设备 UDID / device id",
+        "swipe_up_hold": "上滑停留",
+        "swipe_up": "底部上滑",
+        "option": {
+          "swipe_up_hold": {
+            "disabled": "禁用",
+            "app_switcher": "应用切换"
+          },
+          "swipe_up": {
+            "disabled": "禁用",
+            "bottom_swipe_up": "底部上滑",
+            "control_center": "控制中心"
+          }
+        },
+        "add": "添加",
+        "edit": "编辑",
+        "delete": "删除",
+        "delete_title": "删除设备规则",
+        "delete_body": "确定删除设备 {device_id} 的底部手势规则吗？",
+        "dialog": {
+          "title": "设备",
+          "invalid_title": "输入无效",
+          "need_device_id": "请输入 Device ID。",
+          "duplicate_device_id": "该 Device ID 已存在。"
+        }
+      }
     }
   },
   "diagnostics": {
@@ -422,9 +463,16 @@
     "reload": "刷新画面 / 方向",
     "fps": "帧率",
     "home": "主屏幕 (HOME)",
-    "switcher": "应用切换 (后台)",
     "kbd_off": "键盘输入: 关",
     "screenshot": "截图并保存",
+    "bottom_edge": {
+      "app_switcher": "应用切换",
+      "bottom_swipe_up": "底部上滑",
+      "control_center": "控制中心",
+      "opening": "正在执行 {name}…",
+      "failed": "{name} 失败",
+      "failed_detail": "{name} 失败: {error}"
+    },
     "kbd_exit_tip": "退出键盘输入",
     "send_placeholder": "输入文本后发送到设备",
     "send_tip": "Enter 发送，Shift+Enter 换行",

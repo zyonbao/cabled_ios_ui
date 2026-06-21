@@ -12,6 +12,7 @@
     "no": "No",
     "apply": "Apply",
     "select_device_first": "Please select a device first",
+    "default": "Default",
     "default_prefix": "Default: {path}",
     "copy_value": "Copy value",
     "copy_line": "Copy line",
@@ -69,7 +70,8 @@
     "title": "Settings",
     "tab": {
       "general": "General",
-      "ddi": "DeveloperDiskImage"
+      "ddi": "DeveloperDiskImage",
+      "keymouse": "Key/Mouse"
     },
     "general": {
       "ask_clean_tunnel": "Ask to clean XPC tunnel on exit"
@@ -119,6 +121,45 @@
       "priority_need_one": "Enable at least one source to configure priority.",
       "move_up": "Move Up",
       "move_down": "Move Down"
+    },
+    "keymouse": {
+      "wda": {
+        "group": "WDA",
+        "bundle_id": "WDA Bundle ID",
+        "port": "WDA Server Port",
+        "mjpeg_port": "WDA MJPEG Port",
+        "hint": "These settings apply to future device discovery and WDA startup. The device list refreshes immediately after a change."
+      },
+      "bottom_edge": {
+        "group": "Bottom Gestures",
+        "hint": "Configure bottom gestures and their button names. Devices that do not support a gesture cannot use it.",
+        "device": "Device",
+        "device_placeholder": "Enter the device UDID / device id",
+        "swipe_up_hold": "Swipe Up Hold",
+        "swipe_up": "Bottom Swipe Up",
+        "option": {
+          "swipe_up_hold": {
+            "disabled": "Disabled",
+            "app_switcher": "App Switcher"
+          },
+          "swipe_up": {
+            "disabled": "Disabled",
+            "bottom_swipe_up": "Bottom Swipe Up",
+            "control_center": "Control Center"
+          }
+        },
+        "add": "Add",
+        "edit": "Edit",
+        "delete": "Delete",
+        "delete_title": "Delete Device Rule",
+        "delete_body": "Delete the bottom-gesture rule for device {device_id}?",
+        "dialog": {
+          "title": "Device",
+          "invalid_title": "Invalid Input",
+          "need_device_id": "Enter a Device ID.",
+          "duplicate_device_id": "That Device ID already exists."
+        }
+      }
     }
   },
   "diagnostics": {
@@ -422,9 +463,16 @@
     "reload": "Refresh Screen / Orientation",
     "fps": "FPS",
     "home": "Home (HOME)",
-    "switcher": "App Switcher (background)",
     "kbd_off": "Keyboard input: Off",
     "screenshot": "Capture & Save",
+    "bottom_edge": {
+      "app_switcher": "App Switcher",
+      "bottom_swipe_up": "Bottom Swipe Up",
+      "control_center": "Control Center",
+      "opening": "Running {name}…",
+      "failed": "{name} failed",
+      "failed_detail": "{name} failed: {error}"
+    },
     "kbd_exit_tip": "Exit keyboard input",
     "send_placeholder": "Enter text to send to the device",
     "send_tip": "Enter to send, Shift+Enter for newline",

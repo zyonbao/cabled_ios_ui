@@ -15,7 +15,7 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, QStandardPaths, QTimer, Qt, Signal
+from PySide6.QtCore import QBuffer, QIODevice, QSettings, QStandardPaths, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtWidgets import (
     QApplication,
@@ -38,6 +38,14 @@ from .. import i18n
 from ..common.errors import localize_error
 from ..common.file_dialogs import save_file
 from ..common.gate_overlay import GatedTabMixin
+from ..common.keymouse_settings import (
+    SWIPE_UP_BOTTOM,
+    SWIPE_UP_CONTROL_CENTER,
+    SWIPE_UP_DISABLED,
+    SWIPE_UP_HOLD_APP_SWITCHER,
+    SWIPE_UP_HOLD_DISABLED,
+    resolve_bottom_edge_gesture_row,
+)
 from ..common import readiness
 from ..common.workers import AsyncRunner
 from .keyboard import KeyboardCapture, KeyboardSender
@@ -63,6 +71,12 @@ _ORIENT_KEYS = {
     "PORTRAIT_UPSIDE_DOWN": "keymouse.orient.portrait_upside_down",
     "LANDSCAPE_LEFT": "keymouse.orient.landscape_left",
     "LANDSCAPE_RIGHT": "keymouse.orient.landscape_right",
+}
+
+_BOTTOM_EDGE_LABEL_KEYS = {
+    SWIPE_UP_HOLD_APP_SWITCHER: "keymouse.bottom_edge.app_switcher",
+    SWIPE_UP_BOTTOM: "keymouse.bottom_edge.bottom_swipe_up",
+    SWIPE_UP_CONTROL_CENTER: "keymouse.bottom_edge.control_center",
 }
 
 
@@ -198,12 +212,17 @@ class KeymouseTab(GatedTabMixin, QWidget):
         sidebar.addWidget(fps_row)
 
         self.home_btn = QPushButton(i18n.t("keymouse.home"))
-        self.switcher_btn = QPushButton(i18n.t("keymouse.switcher"))
         self.kbd_btn = QPushButton(i18n.t("keymouse.kbd_off"))
         self.shot_btn = QPushButton(i18n.t("keymouse.screenshot"))
-        for btn in (self.home_btn, self.switcher_btn):
-            btn.setEnabled(False)
-            sidebar.addWidget(btn)
+        self.home_btn.setEnabled(False)
+        sidebar.addWidget(self.home_btn)
+
+        self.bottom_edge_box = QWidget()
+        self.bottom_edge_layout = QVBoxLayout(self.bottom_edge_box)
+        self.bottom_edge_layout.setContentsMargins(0, 0, 0, 0)
+        self.bottom_edge_layout.setSpacing(6)
+        self.bottom_edge_buttons: list[QPushButton] = []
+        sidebar.addWidget(self.bottom_edge_box)
 
         # Keyboard area: the toggle button and the active-capture row share the
         # same slot. When keyboard mirroring is on, the button is hidden and the
@@ -260,7 +279,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
     def _wire(self) -> None:
         self.fps_combo.activated.connect(self.on_fps_changed)
         self.home_btn.clicked.connect(self.on_home)
-        self.switcher_btn.clicked.connect(self.on_switcher)
         # Per-device refresh: re-run the full select flow for the current device.
         self.reload_btn.clicked.connect(self._reload_cb)
         self.kbd_btn.clicked.connect(self.on_toggle_keyboard)
@@ -321,6 +339,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         # Refresh button only needs a selected device (it re-runs this flow), so
         # enable/disable it purely on target presence.
         self.reload_btn.setEnabled(bool(self.target))
+        self.refresh_bottom_edge_gesture_buttons()
 
         if not self.target:
             self._fill_info(None)
@@ -583,14 +602,23 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.runner.submit(lambda: api.key_event(target, "HOME"),
                            on_error=lambda e: self._flash(i18n.t("keymouse.home_failed", error=e)))
 
-    def on_switcher(self) -> None:
+    def on_bottom_edge_action(self, action: str) -> None:
         target = self.target
-        self._set_status(i18n.t("keymouse.switcher_opening"))
-        self.runner.submit(
-            lambda: api.app_switcher(target),
-            on_done=lambda r: self._set_status(i18n.t("keymouse.connected")) if r.get("ok") else self._flash(i18n.t("keymouse.switcher_failed")),
-            on_error=lambda e: self._flash(i18n.t("keymouse.switcher_failed_detail", error=e)),
-        )
+        label = i18n.t(_BOTTOM_EDGE_LABEL_KEYS[action])
+        if action == SWIPE_UP_HOLD_APP_SWITCHER:
+            self._set_status(i18n.t("keymouse.switcher_opening"))
+            self.runner.submit(
+                lambda: api.app_switcher(target),
+                on_done=lambda r: self._set_status(i18n.t("keymouse.connected")) if r.get("ok") else self._flash(i18n.t("keymouse.switcher_failed")),
+                on_error=lambda e: self._flash(i18n.t("keymouse.switcher_failed_detail", error=e)),
+            )
+        else:
+            self._set_status(i18n.t("keymouse.bottom_edge.opening", name=label))
+            self.runner.submit(
+                lambda: api.bottom_edge_swipe(target),
+                on_done=lambda r: self._set_status(i18n.t("keymouse.connected")) if r.get("ok") else self._flash(i18n.t("keymouse.bottom_edge.failed", name=label)),
+                on_error=lambda e: self._flash(i18n.t("keymouse.bottom_edge.failed_detail", name=label, error=e)),
+            )
         self._refocus_keyboard()
 
     def on_screenshot(self) -> None:
@@ -790,9 +818,33 @@ class KeymouseTab(GatedTabMixin, QWidget):
         # refresh (screen / orientation) button is intentionally excluded: it is
         # gated on device selection alone (see select_device), not on WDA.
         return (
-            self.home_btn, self.switcher_btn, self.kbd_btn,
+            self.home_btn, *self.bottom_edge_buttons, self.kbd_btn,
             self.shot_btn, self.send_btn, self.set_pb_btn, self.get_pb_btn,
         )
+
+    def refresh_bottom_edge_gesture_buttons(self) -> None:
+        while self.bottom_edge_layout.count():
+            item = self.bottom_edge_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.bottom_edge_buttons = []
+
+        row = resolve_bottom_edge_gesture_row(self.target, QSettings())
+        actions: list[str] = []
+        if row["swipeUpHold"] != SWIPE_UP_HOLD_DISABLED:
+            actions.append(row["swipeUpHold"])
+        if row["swipeUp"] != SWIPE_UP_DISABLED:
+            actions.append(row["swipeUp"])
+
+        for action in actions:
+            button = QPushButton(i18n.t(_BOTTOM_EDGE_LABEL_KEYS[action]))
+            button.setEnabled(self.mirror_thread is not None)
+            button.clicked.connect(lambda _checked=False, value=action: self.on_bottom_edge_action(value))
+            self.bottom_edge_layout.addWidget(button)
+            self.bottom_edge_buttons.append(button)
+
+        self.bottom_edge_box.setVisible(bool(self.bottom_edge_buttons))
 
     def _fill_info(self, dev: dict | None) -> None:
         self.info_size.setText(

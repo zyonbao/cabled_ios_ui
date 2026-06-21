@@ -51,6 +51,7 @@ from .common.file_dialogs import (
     open_directory,
 )
 from .common.focus import suppress_auto_focus
+from .common.keymouse_settings_widget import KeyMouseSettingsWidget
 from .common.sidebar_tabs import SidebarTabs
 from .common.workers import AsyncRunner
 from .crash import CrashReportsTab
@@ -307,8 +308,10 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(dlg)
         general_tab = self._build_general_tab(dlg)
         ddi_tab = self._build_ddi_tab(dlg)
+        keymouse_tab = self._build_keymouse_tab(dlg)
         tabs.addTab(general_tab, i18n.t("settings.tab.general"))
         tabs.addTab(ddi_tab, i18n.t("settings.tab.ddi"))
+        tabs.addTab(keymouse_tab, i18n.t("settings.tab.keymouse"))
         layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, dlg)
@@ -320,7 +323,11 @@ class MainWindow(QMainWindow):
         # Size the dialog to the tallest tab so switching tabs never squeezes a
         # page's rows. QTabWidget.sizeHint only reflects the current page, so take
         # the max of every page's natural height and add room for the chrome.
-        content_h = max(general_tab.sizeHint().height(), ddi_tab.sizeHint().height())
+        content_h = max(
+            general_tab.sizeHint().height(),
+            ddi_tab.sizeHint().height(),
+            keymouse_tab.sizeHint().height(),
+        )
         chrome_h = (
             tabs.tabBar().sizeHint().height()
             + buttons.sizeHint().height()
@@ -731,6 +738,14 @@ class MainWindow(QMainWindow):
 
         col.addStretch(1)
         return page
+
+    def _build_keymouse_tab(self, parent: QWidget) -> QWidget:
+        return KeyMouseSettingsWidget(
+            self.settings,
+            on_runtime_config_changed=self.load_devices,
+            on_bottom_gestures_changed=self.keymouse_tab.refresh_bottom_edge_gesture_buttons,
+            parent=parent,
+        )
 
     # --------------------------------------------------------- device list
 

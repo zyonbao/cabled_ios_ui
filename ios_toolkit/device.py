@@ -29,6 +29,17 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 import requests
+from keymouse_runtime_config import (
+    DEFAULT_WDA_BUNDLE_ID,
+    DEFAULT_WDA_MJPEG_PORT,
+    DEFAULT_WDA_PORT,
+    WDA_BUNDLE_ID_ENV,
+    WDA_MJPEG_PORT_ENV,
+    WDA_PORT_ENV,
+    normalize_wda_bundle_id,
+    normalize_wda_mjpeg_port,
+    normalize_wda_port,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -299,27 +310,38 @@ def _parse_gpx_steps(
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
-_DEFAULT_WDA_BUNDLE_ID = "com.facebook.WebDriverAgentRunner.xctrunner"
 # Kept as the legacy filename on purpose so existing user config keeps loading
 # after the package rename (executor_ios -> ios_toolkit).
 _CONFIG_PATH = Path.home() / ".executor_ios.json"
 
-# WDA HTTP server and MJPEG broadcaster ports on the device.
-_WDA_DEVICE_PORT = 8100
-_WDA_MJPEG_DEVICE_PORT = 9100
-
 
 def _load_config() -> dict:
     """Read ~/.executor_ios.json; return defaults for any missing field."""
-    defaults = {"wda_bundle_id": _DEFAULT_WDA_BUNDLE_ID}
+    defaults = {
+        "wda_bundle_id": DEFAULT_WDA_BUNDLE_ID,
+        "wda_port": DEFAULT_WDA_PORT,
+        "wda_mjpeg_port": DEFAULT_WDA_MJPEG_PORT,
+    }
     try:
         with _CONFIG_PATH.open() as f:
             data = json.load(f)
-        return {**defaults, **data}
+        config = {**defaults, **data}
     except FileNotFoundError:
-        return defaults
+        config = defaults
     except Exception:
-        return defaults
+        config = defaults
+
+    config["wda_bundle_id"] = normalize_wda_bundle_id(
+        os.environ.get(WDA_BUNDLE_ID_ENV, config.get("wda_bundle_id", DEFAULT_WDA_BUNDLE_ID))
+    )
+    config["wda_port"] = normalize_wda_port(
+        os.environ.get(WDA_PORT_ENV, config.get("wda_port", DEFAULT_WDA_PORT))
+    )
+    config["wda_mjpeg_port"] = normalize_wda_mjpeg_port(
+        os.environ.get(WDA_MJPEG_PORT_ENV, config.get("wda_mjpeg_port", DEFAULT_WDA_MJPEG_PORT))
+    )
+
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -1402,18 +1424,101 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
-    def _app_switcher_w3c(self, cx: float, h: int) -> None:
-        """Fallback App Switcher gesture using synthetic W3C touch actions."""
+    # -- App-switcher gestures -----------------------------------------
+
+    def _app_switcher_swipe_w3c_fallback(
+        self,
+        cx: float,
+        h: int,
+        *,
+        to_y_ratio: float,
+        move_duration_ms: int,
+        pause_before_ms: int,
+        pause_after_ms: int,
+    ) -> None:
+        """Fallback swipe-up-hold for App Switcher using W3C touch actions."""
         y_start = h - 2
-        y_mid = int(h * 0.5)
+        y_end = int(h * to_y_ratio)
         self._pointer_gesture([
             {"type": "pointerMove", "duration": 0, "x": int(cx), "y": y_start},
             {"type": "pointerDown", "button": 0},
-            {"type": "pause", "duration": 70},
-            {"type": "pointerMove", "duration": 600, "x": int(cx), "y": y_mid},
-            {"type": "pause", "duration": 1100},
+            {"type": "pause", "duration": pause_before_ms},
+            {"type": "pointerMove", "duration": move_duration_ms, "x": int(cx), "y": y_end},
+            {"type": "pause", "duration": pause_after_ms},
             {"type": "pointerUp", "button": 0},
         ])
+
+    def _app_switcher_swipe_native(
+        self,
+        *,
+        to_y_ratio: float,
+        press_duration: float,
+        velocity_duration: float,
+        hold_duration: float,
+        w3c_move_duration_ms: int,
+        w3c_pause_before_ms: int,
+        w3c_pause_after_ms: int,
+    ) -> dict:
+        """Execute the App Switcher swipe-up-hold gesture."""
+        size = self.window_size()
+        if not size.get("ok"):
+            return size
+        w = size["data"]["width"]
+        h = size["data"]["height"]
+        cx = w / 2.0
+        from_y = float(h - 1)
+        to_y = h * to_y_ratio
+        velocity = (from_y - to_y) / velocity_duration
+
+        try:
+            self._post_with_session_retry(
+                "/session/{sid}/wda/pressAndDragWithVelocity",
+                {
+                    "fromX": cx, "fromY": from_y,
+                    "toX": cx, "toY": to_y,
+                    "pressDuration": press_duration,
+                    "velocity": velocity,
+                    "holdDuration": hold_duration,
+                },
+            )
+            return {}
+        except Exception:
+            self._app_switcher_swipe_w3c_fallback(
+                cx,
+                h,
+                to_y_ratio=to_y_ratio,
+                move_duration_ms=w3c_move_duration_ms,
+                pause_before_ms=w3c_pause_before_ms,
+                pause_after_ms=w3c_pause_after_ms,
+            )
+            return {"w3c_fallback": True}
+
+    def _bottom_edge_swipe_w3c(
+        self,
+        *,
+        to_y_ratio: float,
+    ) -> dict:
+        """Execute a fast bottom-edge swipe using segmented W3C touch actions."""
+        size = self.window_size()
+        if not size.get("ok"):
+            return size
+        w = size["data"]["width"]
+        h = size["data"]["height"]
+        cx = w / 2.0
+        y_start = h - 2
+        y_end = int(h * to_y_ratio)
+        y_mid_1 = int(h * 0.90)
+        y_mid_2 = int(h * 0.68)
+
+        self._pointer_gesture([
+            {"type": "pointerMove", "duration": 0, "x": int(cx), "y": y_start},
+            {"type": "pointerDown", "button": 0},
+            {"type": "pointerMove", "duration": 24, "x": int(cx), "y": y_mid_1},
+            {"type": "pointerMove", "duration": 36, "x": int(cx), "y": y_mid_2},
+            {"type": "pointerMove", "duration": 48, "x": int(cx), "y": y_end},
+            {"type": "pointerUp", "button": 0},
+        ])
+        return {}
 
     def configure_mjpeg(
         self,
@@ -1442,81 +1547,50 @@ class iOSDevice:
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
-    def _is_app_switcher_open(self) -> bool:
-        """True if the multitasking switcher is currently on screen.
+    def _app_switcher_swipe(self) -> dict:
+        """Open App Switcher via one native swipe-up-hold attempt."""
+        from .toolkit_api import _ok
 
-        Both the Home screen and the switcher run under SpringBoard, so the
-        discriminator is the app grid: the Home screen exposes
-        XCUIElementTypeIcon elements, the switcher (app cards) does not.
-        """
+        result = self._app_switcher_swipe_native(
+            to_y_ratio=0.6,
+            press_duration=0.03,
+            velocity_duration=0.1,
+            hold_duration=0.1,
+            w3c_move_duration_ms=600,
+            w3c_pause_before_ms=70,
+            w3c_pause_after_ms=1100,
+        )
+        if result.get("ok") is False:
+            return result
+        if result.get("w3c_fallback"):
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                        "extra": {"gesture": "app_switcher", "method": "w3c_fallback"}})
+        return _ok({"exitCode": 0, "stdout": "", "stderr": "",
+                    "extra": {"gesture": "app_switcher",
+                              "method": "pressAndDragWithVelocity"}})
+
+    def app_switcher(self) -> dict:
+        """Open the iOS App Switcher via swipe-up-and-hold."""
+
         try:
-            sid = self._ensure_session()
-            info = self._get(f"/session/{sid}/wda/activeAppInfo").get("value") or {}
-            if info.get("bundleId") != "com.apple.springboard":
-                return False
-            source = self._get("/source?format=xml").get("value", "")
-            return "XCUIElementTypeIcon" not in source
-        except Exception:
-            return False
+            return self._app_switcher_swipe()
+        except Exception as exc:
+            from .toolkit_api import _err
+            return _err("SUBPROCESS", str(exc))
 
-    def app_switcher(self, max_attempts: int = 2) -> dict:
-        """Open the iOS App Switcher via a bottom-edge swipe-up-and-hold.
-
-        Short-circuits if the switcher is already open, then issues WDA's native
-        press-drag gesture from the current screen and verifies the result. The
-        gesture is reliable from any non-switcher state, so no Home reset is
-        needed. Falls back to a synthetic-W3C swipe when the native endpoint is
-        unavailable (older WDA builds).
-        """
+    def bottom_edge_swipe(self) -> dict:
+        """Perform a bottom-edge swipe-up gesture."""
         from .toolkit_api import _ok, _err
 
         try:
-            if self._is_app_switcher_open():
-                return _ok({"exitCode": 0, "stdout": "", "stderr": "",
-                            "extra": {"gesture": "app_switcher",
-                                      "method": "already_open", "attempts": 0}})
-
-            size = self.window_size()
-            if not size.get("ok"):
-                return size
-            w = size["data"]["width"]
-            h = size["data"]["height"]
-            cx = w / 2.0
-            from_y = float(h - 1)
-            to_y = h * 0.6
-            # Fast drag (~0.35s) + short end-hold, tuned on-device.
-            velocity = (from_y - to_y) / 0.35
-
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    self._post_with_session_retry(
-                        "/session/{sid}/wda/pressAndDragWithVelocity",
-                        {
-                            "fromX": cx, "fromY": from_y,
-                            "toX": cx, "toY": to_y,
-                            "pressDuration": 0.05,
-                            "velocity": velocity,
-                            "holdDuration": 0.6,
-                        },
-                    )
-                except Exception:
-                    self._app_switcher_w3c(cx, h)
-                    return _ok({"exitCode": 0, "stdout": "", "stderr": "",
-                                "extra": {"gesture": "app_switcher", "method": "w3c_fallback"}})
-
-                time.sleep(0.8)
-                if self._is_app_switcher_open():
-                    return _ok({"exitCode": 0, "stdout": "", "stderr": "",
-                                "extra": {"gesture": "app_switcher",
-                                          "method": "pressAndDragWithVelocity",
-                                          "attempts": attempt}})
-                time.sleep(0.3)
-
-            # Report unconfirmed so the caller can surface a retry hint.
+            result = self._bottom_edge_swipe_w3c(
+                to_y_ratio=0.32,
+            )
+            if result.get("ok") is False:
+                return result
             return _ok({"exitCode": 0, "stdout": "", "stderr": "",
-                        "extra": {"gesture": "app_switcher",
-                                  "method": "pressAndDragWithVelocity",
-                                  "attempts": max_attempts, "confirmed": False}})
+                        "extra": {"gesture": "bottom_edge_swipe",
+                                  "method": "w3c_actions"}})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
@@ -3539,6 +3613,7 @@ class iOSDevicesManager:
     def __init__(self) -> None:
         self._devices: dict[str, iOSDevice] = {}
         self._lock = threading.Lock()
+        self._config_signature: tuple[str, int, int] | None = None
 
     def _discover(self) -> None:
         """Synchronize the registry with currently connected USB devices."""
@@ -3553,13 +3628,19 @@ class iOSDevicesManager:
         from pymobiledevice3.lockdown import create_using_usbmux
 
         config = _load_config()
-        wda_bundle_id = config.get("wda_bundle_id", _DEFAULT_WDA_BUNDLE_ID)
+        wda_bundle_id = config.get("wda_bundle_id", DEFAULT_WDA_BUNDLE_ID)
+        wda_device_port = int(config.get("wda_port", DEFAULT_WDA_PORT))
+        wda_mjpeg_port = int(config.get("wda_mjpeg_port", DEFAULT_WDA_MJPEG_PORT))
+        config_signature = (wda_bundle_id, wda_device_port, wda_mjpeg_port)
 
         devices = await usbmux.list_devices()
         current_udids = {dev.serial for dev in devices if dev.is_usb}
 
         with self._lock:
+            config_changed = self._config_signature != config_signature
             stale_udids = set(self._devices) - current_udids
+            if config_changed:
+                stale_udids |= set(self._devices)
             for udid in stale_udids:
                 device = self._devices.pop(udid)
                 device._forward_task.cancel()
@@ -3570,6 +3651,7 @@ class iOSDevicesManager:
                     device._wda_task.cancel()
 
             new_udids = current_udids - set(self._devices)
+            self._config_signature = config_signature
 
         for udid in new_udids:
 
@@ -3585,11 +3667,11 @@ class iOSDevicesManager:
                 pass
 
             local_port = _find_free_port()
-            forward_task = _launch_forward(udid, local_port, _WDA_DEVICE_PORT)
+            forward_task = _launch_forward(udid, local_port, wda_device_port)
 
             mjpeg_local_port = _find_free_port(local_port + 1)
             mjpeg_forward_task = _launch_forward(
-                udid, mjpeg_local_port, _WDA_MJPEG_DEVICE_PORT
+                udid, mjpeg_local_port, wda_mjpeg_port
             )
 
             device = iOSDevice(

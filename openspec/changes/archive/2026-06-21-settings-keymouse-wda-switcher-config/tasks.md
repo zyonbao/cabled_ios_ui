@@ -1,0 +1,8 @@
+- [x] 1. 更新 OpenSpec，把 `App Switcher` 设置模型替换为 `Bottom Gestures / 底部手势`
+- [x] 2. 重构 `slide6_ui/common/keymouse_settings.py`，改用统一底部手势表格配置
+- [x] 3. 重构 Settings UI，使用默认行 + 设备行三列表格
+- [x] 4. 重构 `KeymouseTab`，动态生成底部手势按钮
+- [x] 5. 新增普通 `swipe_up` 底层动作，并保留 `swipe_up_hold` 用于应用切换
+- [x] 6. 更新中英文 i18n 文案
+- [x] 7. 运行 `openspec validate settings-keymouse-wda-switcher-config --strict`
+- [x] 8. 运行最小化本地校验（Python 语法 / i18n 结构）

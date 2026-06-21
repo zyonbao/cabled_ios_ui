@@ -191,6 +191,14 @@ def app_switcher(target: str) -> dict:
     return device.app_switcher()
 
 
+def bottom_edge_swipe(target: str) -> dict:
+    """Perform a bottom-edge swipe-up gesture."""
+    device, err = _prepare_device(target)
+    if err:
+        return err
+    return device.bottom_edge_swipe()
+
+
 def configure_mjpeg(
     target: str,
     framerate: int = 20,
