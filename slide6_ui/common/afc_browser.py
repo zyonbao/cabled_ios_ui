@@ -164,6 +164,7 @@ class AfcBrowserPanel(QWidget):
         # default so its behavior is unchanged.
         self.multi_select = multi_select
         self.cur_path = "/"
+        self._list_request_seq = 0
 
         self._build_ui()
         if self.target:
@@ -175,6 +176,7 @@ class AfcBrowserPanel(QWidget):
         """Point the panel at a (possibly empty) device and reload from root."""
         self.target = target or ""
         self.cur_path = "/"
+        self._list_request_seq += 1
         if self.target:
             self._refresh()
         else:
@@ -196,6 +198,9 @@ class AfcBrowserPanel(QWidget):
         self.path_edit.returnPressed.connect(self._on_path_entered)
         self.refresh_btn = QPushButton(i18n.t("common.refresh"))
         self.mkdir_btn = QPushButton(i18n.t("afc.add_folder"))
+        for btn in (self.up_btn, self.refresh_btn, self.mkdir_btn):
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
         nav.addWidget(self.up_btn)
         nav.addWidget(self.path_edit, 1)
         nav.addWidget(self.refresh_btn)
@@ -277,29 +282,43 @@ class AfcBrowserPanel(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        self.path_edit.setText(self._display_path())
-        self.up_btn.setEnabled(self.cur_path != "/")
+        request_path = self.cur_path
+        self.path_edit.setText(request_path or "/")
+        self.up_btn.setEnabled(request_path != "/")
         if not self.target:
             self.table.setRowCount(0)
             self.status.setText(i18n.t("common.select_device_first"))
             return
         self.status.setText(i18n.t("afc.loading"))
         self.table.setRowCount(0)
+        self._list_request_seq += 1
+        request_seq = self._list_request_seq
         self.runner.submit(
-            lambda: api.afc_list(self.target, self.bundle_id, self.root, self.cur_path),
-            on_done=self._on_list,
-            on_error=lambda e: self.status.setText(i18n.t("afc.load_failed_detail", error=e)),
+            lambda: api.afc_list(self.target, self.bundle_id, self.root, request_path),
+            on_done=lambda result, seq=request_seq, path=request_path: self._on_list(result, seq, path),
+            on_error=lambda e, seq=request_seq: self._on_list_error(e, seq),
         )
 
-    def _on_list(self, result: dict) -> None:
+    def _on_list_error(self, error: object, request_seq: int) -> None:
+        if not isValid(self) or request_seq != self._list_request_seq:
+            return
+        self.status.setText(i18n.t("afc.load_failed_detail", error=error))
+
+    def _on_list(self, result: dict, request_seq: int, request_path: str) -> None:
         # A modal browse dialog can be closed (and its C++ widgets deleted) while
         # an afc_list load is still in flight; the queued callback then fires on a
         # dead panel. Drop it instead of touching freed Qt objects.
         if not isValid(self):
             return
+        if request_seq != self._list_request_seq:
+            return
         if not result.get("ok"):
             self.status.setText(i18n.t("afc.load_failed") + ": " + localize_error(result.get("error")))
             return
+        actual_path = ((result.get("data") or {}).get("path") or request_path or "/")
+        self.cur_path = actual_path
+        self.path_edit.setText(self._display_path())
+        self.up_btn.setEnabled(self.cur_path != "/")
         entries = result["data"].get("entries", [])
         # Parent-dir navigation is provided by the top "上一级" button, so the
         # listing no longer carries a ".." row.
