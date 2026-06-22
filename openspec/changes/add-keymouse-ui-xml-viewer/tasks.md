@@ -1,0 +1,5 @@
+- [x] 1. 更新 OpenSpec，定义 `Key/Mouse` tab 的 `UI XML` 按钮位置与交互
+- [x] 2. 在 `KeymouseTab` 新增 `UI XML` 按钮并接入 `toolkit_api.dump_ui(target)`
+- [x] 3. 使用 `QPlainTextEdit` 弹窗展示原始 XML 并提供复制按钮
+- [x] 4. 更新中英文 i18n 文案
+- [x] 5. 运行最小本地校验（Python 语法）

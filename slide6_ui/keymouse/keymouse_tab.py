@@ -224,12 +224,17 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.bottom_edge_buttons: list[QPushButton] = []
         sidebar.addWidget(self.bottom_edge_box)
 
+        self.input_group = QWidget()
+        input_layout = QVBoxLayout(self.input_group)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(6)
+
         # Keyboard area: the toggle button and the active-capture row share the
         # same slot. When keyboard mirroring is on, the button is hidden and the
         # capture field + exit (✕) button take its place; toggling off restores
         # the button.
         self.kbd_btn.setEnabled(False)
-        sidebar.addWidget(self.kbd_btn)
+        input_layout.addWidget(self.kbd_btn)
 
         self.kbd_capture = KeyboardCapture()
         self.kbd_close_btn = QPushButton("✕")
@@ -241,10 +246,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         kbd_row.addWidget(self.kbd_capture, 1)
         kbd_row.addWidget(self.kbd_close_btn)
         self.kbd_active_row.setVisible(False)
-        sidebar.addWidget(self.kbd_active_row)
-
-        self.shot_btn.setEnabled(False)
-        sidebar.addWidget(self.shot_btn)
+        input_layout.addWidget(self.kbd_active_row)
 
         # Text send row: a standalone field + send button, independent of the
         # keyboard-mirroring capture above. The field is multi-line and grows
@@ -259,16 +261,34 @@ class KeymouseTab(GatedTabMixin, QWidget):
         send_layout = QHBoxLayout(send_row)
         send_layout.setContentsMargins(0, 0, 0, 0)
         send_layout.addWidget(self.send_input, 1)
-        # Keep the button pinned to the first line as the field grows taller.
-        send_layout.addWidget(self.send_btn, 0, Qt.AlignTop)
-        sidebar.addWidget(send_row)
+        send_layout.addWidget(self.send_btn, 0, Qt.AlignVCenter)
+        input_layout.addWidget(send_row)
+        sidebar.addWidget(self.input_group)
+
+        self.shot_btn.setEnabled(False)
+        sidebar.addWidget(self.shot_btn)
+
+        self.clipboard_group = QWidget()
+        clipboard_layout = QVBoxLayout(self.clipboard_group)
+        clipboard_layout.setContentsMargins(0, 0, 0, 0)
+        clipboard_layout.setSpacing(6)
 
         # Pasteboard buttons.
         self.set_pb_btn = QPushButton(i18n.t("keymouse.set_pasteboard"))
         self.get_pb_btn = QPushButton(i18n.t("keymouse.get_pasteboard"))
         for btn in (self.set_pb_btn, self.get_pb_btn):
             btn.setEnabled(False)
-            sidebar.addWidget(btn)
+            clipboard_layout.addWidget(btn)
+        sidebar.addWidget(self.clipboard_group)
+
+        self.ui_xml_group = QWidget()
+        ui_xml_layout = QVBoxLayout(self.ui_xml_group)
+        ui_xml_layout.setContentsMargins(0, 0, 0, 0)
+        ui_xml_layout.setSpacing(6)
+        self.ui_xml_btn = QPushButton(i18n.t("keymouse.ui_xml"))
+        self.ui_xml_btn.setEnabled(False)
+        ui_xml_layout.addWidget(self.ui_xml_btn)
+        sidebar.addWidget(self.ui_xml_group)
 
         sidebar.addStretch(1)
         center.addWidget(sidebar_box)
@@ -288,6 +308,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.send_input.send_requested.connect(self.on_send_text)
         self.set_pb_btn.clicked.connect(self.on_set_pasteboard)
         self.get_pb_btn.clicked.connect(self.on_get_pasteboard)
+        self.ui_xml_btn.clicked.connect(self.on_dump_ui)
 
         self.screen.tap.connect(self.on_tap)
         self.screen.long_press.connect(self.on_long_press)
@@ -566,6 +587,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
 
     def _on_stream_error(self, message: str) -> None:
         self._set_status(i18n.t("keymouse.stream_disconnected"))
+        self.screen.clear_frame()
         self.screen.set_overlay(i18n.t("keymouse.stream_error_overlay", message=message))
 
     def stop_stream(self) -> None:
@@ -811,6 +833,45 @@ class KeymouseTab(GatedTabMixin, QWidget):
         QApplication.clipboard().setText(text)
         self._flash(i18n.t("keymouse.pb_copied"))
 
+    def on_dump_ui(self) -> None:
+        if not self.target:
+            return
+        target = self.target
+        self._set_status(i18n.t("keymouse.ui_xml_loading"))
+        self.runner.submit(
+            lambda: api.dump_ui(target),
+            on_done=self._show_ui_xml,
+            on_error=lambda e: self._flash(i18n.t("keymouse.ui_xml_failed_detail", error=e)),
+        )
+
+    def _show_ui_xml(self, result: dict) -> None:
+        if not result.get("ok"):
+            msg = localize_error(result.get("error"))
+            self._flash(i18n.t("keymouse.ui_xml_failed_msg", msg=msg) if msg else i18n.t("keymouse.ui_xml_failed"))
+            return
+
+        raw = (result.get("data") or {}).get("raw", "")
+        self._flash(i18n.t("keymouse.ui_xml_ready"))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(i18n.t("keymouse.ui_xml_dialog_title"))
+        layout = QVBoxLayout(dlg)
+        view = QPlainTextEdit()
+        view.setPlainText(raw)
+        view.setReadOnly(True)
+        view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(view)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        copy_btn = buttons.addButton(i18n.t("keymouse.pb_copy_to_host"), QDialogButtonBox.ButtonRole.ActionRole)
+        copy_btn.clicked.connect(lambda: self._copy_to_host(raw))
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.resize(760, 520)
+        dlg.exec()
+        self._refocus_keyboard()
+
     # ------------------------------------------------------------- helpers
 
     def _connected_buttons(self) -> tuple:
@@ -819,7 +880,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         # gated on device selection alone (see select_device), not on WDA.
         return (
             self.home_btn, *self.bottom_edge_buttons, self.kbd_btn,
-            self.shot_btn, self.send_btn, self.set_pb_btn, self.get_pb_btn,
+            self.shot_btn, self.send_btn, self.set_pb_btn, self.get_pb_btn, self.ui_xml_btn,
         )
 
     def refresh_bottom_edge_gesture_buttons(self) -> None:

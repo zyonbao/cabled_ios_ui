@@ -463,8 +463,11 @@
     "reload": "刷新画面 / 方向",
     "fps": "帧率",
     "home": "主屏幕 (HOME)",
+    "input_group": "输入",
     "kbd_off": "键盘输入: 关",
     "screenshot": "截图并保存",
+    "clipboard_group": "剪贴板",
+    "ui_xml_group": "UI XML",
     "bottom_edge": {
       "app_switcher": "应用切换",
       "bottom_swipe_up": "底部上滑",
@@ -479,6 +482,7 @@
     "send": "发送",
     "set_pasteboard": "设置剪贴板",
     "get_pasteboard": "读取剪贴板",
+    "ui_xml": "UI XML",
     "input_failed": "输入失败: {msg}",
     "no_wda_status": "该设备未安装 WDA",
     "no_wda_overlay": "该设备未安装 WebDriverAgent (WDA)\n无法镜像或控制此设备",
@@ -533,7 +537,13 @@
     "pb_dialog_title": "设备剪贴板",
     "pb_empty_detail": "剪贴板为空或为非文本内容，无法显示/复制\n（请确认设备上已复制文本）",
     "pb_copy_to_host": "复制到本机",
-    "pb_copied": "已复制到本机剪贴板"
+    "pb_copied": "已复制到本机剪贴板",
+    "ui_xml_loading": "正在读取 UI XML…",
+    "ui_xml_failed_detail": "读取 UI XML 失败: {error}",
+    "ui_xml_failed": "读取 UI XML 失败",
+    "ui_xml_failed_msg": "读取 UI XML 失败: {msg}",
+    "ui_xml_ready": "UI XML 已加载",
+    "ui_xml_dialog_title": "WDA UI XML"
   },
   "process": {
     "title": "进程管理",

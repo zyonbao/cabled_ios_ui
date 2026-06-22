@@ -463,8 +463,11 @@
     "reload": "Refresh Screen / Orientation",
     "fps": "FPS",
     "home": "Home (HOME)",
+    "input_group": "Input",
     "kbd_off": "Keyboard input: Off",
     "screenshot": "Capture & Save",
+    "clipboard_group": "Clipboard",
+    "ui_xml_group": "UI XML",
     "bottom_edge": {
       "app_switcher": "App Switcher",
       "bottom_swipe_up": "Bottom Swipe Up",
@@ -479,6 +482,7 @@
     "send": "Send",
     "set_pasteboard": "Set Clipboard",
     "get_pasteboard": "Read Clipboard",
+    "ui_xml": "UI XML",
     "input_failed": "Input failed: {msg}",
     "no_wda_status": "WDA is not installed on this device",
     "no_wda_overlay": "WebDriverAgent (WDA) is not installed on this device\nCannot mirror or control it",
@@ -533,7 +537,13 @@
     "pb_dialog_title": "Device Clipboard",
     "pb_empty_detail": "Clipboard is empty or non-text content; cannot display/copy\n(Make sure text has been copied on the device)",
     "pb_copy_to_host": "Copy to Host",
-    "pb_copied": "Copied to host clipboard"
+    "pb_copied": "Copied to host clipboard",
+    "ui_xml_loading": "Loading UI XML…",
+    "ui_xml_failed_detail": "Failed to load UI XML: {error}",
+    "ui_xml_failed": "Failed to load UI XML",
+    "ui_xml_failed_msg": "Failed to load UI XML: {msg}",
+    "ui_xml_ready": "UI XML loaded",
+    "ui_xml_dialog_title": "WDA UI XML"
   },
   "process": {
     "title": "Process Management",
