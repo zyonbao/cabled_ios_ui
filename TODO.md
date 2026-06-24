@@ -57,9 +57,9 @@
 - **可基于 DVT 实现的功能（候选清单，按价值排序；标注分期）**：
   1. **进程管理**（**Phase 1**）：进程列表（`device_info.DeviceInfo.proclist`）、按 bundleid 启动（`process_control.ProcessControl.launch`，支持参数/环境变量/暂停在 main）、杀进程（`process_control.kill`）。
   2. **位置模拟**（**Phase 1**）：设定/清除虚拟 GPS 坐标（<17 `simulate_location.DtSimulateLocation`；17+ `location_simulation.LocationSimulation`）。
-  3. **实时性能监控**（Phase 2）：CPU/内存/线程/磁盘/网络的系统级与进程级采样（`sysmontap.Sysmontap`）、FPS/GPU 图形指标（`graphics`）、能耗（`energy_monitor`）。可做实时折线图 + 进程级 TopN。
-  4. **网络监控**（Phase 2）：按进程的连接与收发字节（`network_monitor`）。
-  5. **条件诱导**（Phase 2）：模拟弱网/高温等设备条件（`condition_inducer`），用于稳定性/性能测试。
+  3. **实时性能监控**（Phase 2）✅ **已完成**：基于 `sysmontap` 的 CPU / 内存 / 网络与磁盘 IO 三图表，10 分钟滚动窗口 + 限速渲染 + 图例切换；内存按 16KB 页换算、轴上限绑物理内存（已实现，规格 `dvt-performance-op`）。注：GPU/进程图表经评估与真机校准后未纳入。
+  4. **网络监控**（Phase 2）✅ **已完成**：基于 `network_monitor` 事件流（非按间隔采样），连接按 `connection_serial` 聚合 + 吞吐速率 + 左栏按远端 IP/接口聚合；真机确认 **pid 恒为 -2（无进程归属）**，故无进程维度（archive `2026-06-24-devtools-network-monitor-phase2`，已提交 `511caf6`）。
+  5. **条件诱导**（Phase 2）✅ **已完成**：基于 `condition_inducer`，连接作用域单一活动条件（弱网/热/GPU），切换=先清后启、关窗自动恢复；真机确认热条件需确认回滚（archive `2026-06-24-devtools-condition-inducer-phase2`）。
   6. **设备/系统信息增强**（Phase 2）：内核、运行时、硬件信息（`device_info`），补充现有「设备信息」Tab。
   7. **DVT 截图**（Phase 2）：经 instruments 通道截图（`screenshot.Screenshot`），与现有 WDA/AFC 截图互为备选。
   8. **高级 trace（工程量大）**（Phase 2）：系统调用/活动追踪（`activity_trace_tap`）、core profile 采样（`core_profile_session_tap`）、通知监听（`notifications`，可测冷/热启动耗时）。
@@ -71,20 +71,20 @@
   4. Tab 内子工具布局（子 Tab 或左侧列表）。
   5. 与 tunnel 生命周期联动（DVT 必须在 tunnel 之上；复用 `tunnel.py` 的拉起/停止与 `_get_rsd_from_tunneld`）。
   6. 采样性能：`sysmontap` 高频采样需后台线程 + 限速渲染（复用 mirror / syslog 的线程模型）。
-- **优先级**：Phase 1 进行中（DDI 挂载 + 进程管理 + 虚拟定位最小闭环，走 openspec）；Phase 2 按资源排期，逐个功能位叠加到同一 Tab。
+- **优先级**：Phase 1 ✅ 已完成（DDI 挂载 + 进程管理 + 虚拟定位）；**Phase 2 进行中**：性能监控 / 网络监控 / 条件诱导 / Web 检查器均已落地并归档；Web 检查器为 tunnel-only（不经 DDI 门控）。剩余 Phase 2 候选：设备信息增强、DVT 截图、高级 trace；PCAP 见「5」（DEFERRED）。
 
-### 5. Network sniffing（PCAP 抓包，数据链路层）
-- **定位**：独立 Tab。开启远程虚拟接口抓包，落地 .pcap，可用 Wireshark 打开。
-- **依赖**：`pymobiledevice3.services.pcapd.PcapdService`（rvictl 等价能力）。iOS 17+ 需 tunnel。
-- **可行性**：**中-高**。pcapd 在 `pymobiledevice3` 可用；UI 侧主要是流式落盘 + 大小/时长限制 + 状态展示。
+### 5. Network sniffing（PCAP 抓包，数据链路层）⏸ DEFERRED（暂缓）
+- **定位**：开发者工具子面板。边抓边落 `.pcap`（Wireshark 可读）+ 实时摘要表，进程/接口过滤、上限自动停。设计已成型（openspec change `devtools-pcap-capture-phase2`，含 `pcap-capture-op` delta）。
+- **依赖**：`pymobiledevice3.services.pcapd.PcapdService`（iOS 17+ 经 tunnel 的 `com.apple.pcapd.shim.remote`，**不需要 DDI**）。pcapd 提供**每包进程名/pid**（与网络监控不同）。
+- **暂缓原因（真机实测）**：唯一可测设备为 **iOS 26（beta）**，`pcapd.shim.remote` 被设备拒绝启动（`StartServiceError`）；同 tunnel 上 DVT/webinspector 正常 → pcapd 专属限制。网搜确认 iOS 17/18 支持，判定 iOS 26 回归。**待有 iOS 17/18（非 beta）设备复测可用后再实现**（change 的 tasks 0 为阻塞前置）。
 - **注意**：抓包涉及隐私/合规，UI 需明确提示用途与范围；只落地本地文件。
-- **优先级**：中。
+- **优先级**：中（阻塞于设备验证）。
 
-### 6. WebInspector automation（Safari / 应用内 WebView 调试）
-- **定位**：独立 Tab。列出可调试的 Web 页面/上下文，桥接到本地 DevTools。
-- **依赖**：`pymobiledevice3.services.web_protocol` / WebInspector（RemoteWebInspector）。设备需开启「Web 检查器」；iOS 17+ 需 tunnel。
-- **可行性**：**中**。枚举页面可行；完整 DevTools 体验需把 WIP 协议桥接到 CDP/本地浏览器，工程量较大，首版可做「列出 + 基础命令」。
-- **优先级**：中-低（依赖较重，价值面向特定调试场景）。
+### 6. WebInspector（Safari / 应用内 WebView 调试）✅ 已完成
+- **状态**：已实现并归档（`archive/2026-06-24-devtools-webinspector-phase2`，能力 `webinspector-op`）。开发者工具内「Web 检查器」子面板：枚举可调试页面（App/标题/URL）+ 一键 **CDP 桥接**（嵌入式 uvicorn，默认 `localhost:9222`，端口可改），用 **Chrome `chrome://inspect`** 获得完整 DevTools。
+- **依赖**：`pymobiledevice3.services.webinspector` + `web_protocol.cdp_server`（lockdown 服务，iOS 17+ 经 tunnel，**不需要 DDI**）。设备需开启「设置→Safari→高级→Web 检查器」（未开有引导）。真机 iOS 26 验证通过。
+- **门控**：tunnel-only（不在 DDI 门控 grid 内），缺 tunnel 在对话框内运行时报错。
+- **说明**：完整 DevTools UI 交给 Chrome（不自造）；个别面板覆盖度取决于 WIP→CDP 翻译层（pymobiledevice3）。
 
 ### 7. Backup and restore（数据备份与重置）
 - **定位**：独立 Tab。mobilebackup2 完整/增量备份与恢复。
@@ -110,7 +110,11 @@
 - **可行性**：**高**。observe/post 简单可靠；可做成共享服务 + 可选的调试浮层/日志。
 - **优先级**：中（作为底层能力，随需要它的 Tab 一起落地）。
 
-
+### 10. Querying and setting SpringBoard options（SpringBoard 查询/设置）
+- **定位**：无独立 Tab。设置类工具（如壁纸、图标状态、方向锁等可读写项），可嵌入「设备信息」或设置面板。
+- **依赖**：`pymobiledevice3.services.springboard.SpringBoardServicesService`（取图标状态/壁纸等）。不需要 WDA / tunnel（iOS 16-）。
+- **可行性**：**中-高**。读取类（图标布局、壁纸）可行；可写项较有限且随版本变化，需按设备验证。
+- **优先级**：中-低。
 
 ---
 
@@ -139,14 +143,10 @@
 
 | 优先级 | 项目 |
 |---|---|
-| ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09） |
-| 中 | 4 DDI/DVT 开发者工具（**Phase 1 已验收完成**，Phase 2 排期）、5 PCAP 抓包、7 备份恢复、9 通知监听 |
-| 中-低 | 6 WebInspector、10 SpringBoard 设置 |
+| ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09）；4 DDI/DVT 开发者工具 **Phase 1 + Phase 2 主体**（进程管理/虚拟定位/性能监控/网络监控/条件诱导/Web 检查器）；6 WebInspector |
+| 中 | 4 DDI/DVT 剩余 Phase 2（设备信息增强 / DVT 截图 / 高级 trace）、7 备份恢复、9 通知监听 |
+| ⏸ 暂缓 | 5 PCAP 抓包（iOS 26 上 pcapd 被拒，待 iOS 17/18 设备验证后实现） |
+| 中-低 | 10 SpringBoard 设置 |
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 
 > 通用工程注意：所有需要 iOS 17+ 的服务复用现有 tunnel 生命周期；流式/大数据量能力（syslog/pcap/性能）一律后台线程采集 + 主线程限速渲染（参考 `mirror.py`）；破坏性操作（恢复/刷机/批量删除）统一走二次确认；密码/令牌等敏感信息严禁落日志（安全基线）。
-### 10. Querying and setting SpringBoard options（SpringBoard 查询/设置）
-- **定位**：无独立 Tab。设置类工具（如壁纸、图标状态、方向锁等可读写项），可嵌入「设备信息」或设置面板。
-- **依赖**：`pymobiledevice3.services.springboard.SpringBoardServicesService`（取图标状态/壁纸等）。不需要 WDA / tunnel（iOS 16-）。
-- **可行性**：**中-高**。读取类（图标布局、壁纸）可行；可写项较有限且随版本变化，需按设备验证。
-- **优先级**：中-低。
