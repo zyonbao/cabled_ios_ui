@@ -71,14 +71,14 @@
   4. Tab 内子工具布局（子 Tab 或左侧列表）。
   5. 与 tunnel 生命周期联动（DVT 必须在 tunnel 之上；复用 `tunnel.py` 的拉起/停止与 `_get_rsd_from_tunneld`）。
   6. 采样性能：`sysmontap` 高频采样需后台线程 + 限速渲染（复用 mirror / syslog 的线程模型）。
-- **优先级**：Phase 1 ✅ 已完成（DDI 挂载 + 进程管理 + 虚拟定位）；**Phase 2 进行中**：性能监控 / 网络监控 / 条件诱导 / Web 检查器均已落地并归档；Web 检查器为 tunnel-only（不经 DDI 门控）。剩余 Phase 2 候选：设备信息增强、DVT 截图、高级 trace；PCAP 见「5」（DEFERRED）。
+- **优先级**：Phase 1 ✅ 已完成（DDI 挂载 + 进程管理 + 虚拟定位）；**Phase 2 主体已完成并归档**：性能监控 / 网络监控 / 条件诱导（DVT 门控）+ Web 检查器 / PCAP 抓包（lockdown，非 DDI 门控）。剩余 Phase 2 候选：设备信息增强、DVT 截图、高级 trace。
 
-### 5. Network sniffing（PCAP 抓包，数据链路层）⏸ DEFERRED（暂缓）
-- **定位**：开发者工具子面板。边抓边落 `.pcap`（Wireshark 可读）+ 实时摘要表，进程/接口过滤、上限自动停。设计已成型（openspec change `devtools-pcap-capture-phase2`，含 `pcap-capture-op` delta）。
-- **依赖**：`pymobiledevice3.services.pcapd.PcapdService`（iOS 17+ 经 tunnel 的 `com.apple.pcapd.shim.remote`，**不需要 DDI**）。pcapd 提供**每包进程名/pid**（与网络监控不同）。
-- **暂缓原因（真机实测）**：唯一可测设备为 **iOS 26（beta）**，`pcapd.shim.remote` 被设备拒绝启动（`StartServiceError`）；同 tunnel 上 DVT/webinspector 正常 → pcapd 专属限制。网搜确认 iOS 17/18 支持，判定 iOS 26 回归。**待有 iOS 17/18（非 beta）设备复测可用后再实现**（change 的 tasks 0 为阻塞前置）。
-- **注意**：抓包涉及隐私/合规，UI 需明确提示用途与范围；只落地本地文件。
-- **优先级**：中（阻塞于设备验证）。
+### 5. Network sniffing（PCAP 抓包，数据链路层）✅ 已完成
+- **状态**：已实现并归档（`archive/2026-06-24-devtools-pcap-capture-phase2`，能力 `pcap-capture-op`）。开发者工具内「PCAP 抓包」子面板：抓包设置区（输出路径预填 + 浏览、进程/接口过滤、上限）→ Start/Stop + 状态统计 → 最新在顶的「最近 N 包」摘要表 + 合规提示。边抓边落 `.pcap`（Wireshark 可读），上限（包数/MB/秒）任一到自动停。真机 iOS 26 验证通过。
+- **依赖**：`pymobiledevice3.services.pcapd.PcapdService`，**经 usbmux lockdown 连接，不走 RSD/tunnel、不需要 DDI**。pcapd 提供**每包进程名/pid**（与网络监控 pid=-2 不同）。
+- **关键坑（已澄清）**：pcapd 经 **RSD/tunnel** 会被设备拒（`ServiceProhibited`，Apple 自 iOS 17/18 起的全局限制，见 pymobiledevice3 issue #1515）；必须走 usbmux。早期误用 RSD 导致一度判为「iOS 26 不可用」，实为传输用错。
+- **门控**：lockdown/usbmux，非 DDI 门控的独立卡片。
+- **说明**：不做逐层协议解析（交 Wireshark）。
 
 ### 6. WebInspector（Safari / 应用内 WebView 调试）✅ 已完成
 - **状态**：已实现并归档（`archive/2026-06-24-devtools-webinspector-phase2`，能力 `webinspector-op`）。开发者工具内「Web 检查器」子面板：枚举可调试页面（App/标题/URL）+ 一键 **CDP 桥接**（嵌入式 uvicorn，默认 `localhost:9222`，端口可改），用 **Chrome `chrome://inspect`** 获得完整 DevTools。
@@ -143,9 +143,8 @@
 
 | 优先级 | 项目 |
 |---|---|
-| ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09）；4 DDI/DVT 开发者工具 **Phase 1 + Phase 2 主体**（进程管理/虚拟定位/性能监控/网络监控/条件诱导/Web 检查器）；6 WebInspector |
+| ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09）；4 DDI/DVT 开发者工具 **Phase 1 + Phase 2 主体**（进程管理/虚拟定位/性能监控/网络监控/条件诱导）；5 PCAP 抓包；6 WebInspector |
 | 中 | 4 DDI/DVT 剩余 Phase 2（设备信息增强 / DVT 截图 / 高级 trace）、7 备份恢复、9 通知监听 |
-| ⏸ 暂缓 | 5 PCAP 抓包（iOS 26 上 pcapd 被拒，待 iOS 17/18 设备验证后实现） |
 | 中-低 | 10 SpringBoard 设置 |
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 

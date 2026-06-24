@@ -1205,6 +1205,37 @@ def open_network_stream(target: str):
     return handle
 
 
+def open_pcap_stream(target: str, out_path: str, process: str = None, interface: str = None,
+                     max_packets: int = 100000, max_bytes: int = 50 * 1024 * 1024,
+                     max_seconds: int = 600):
+    """Start a pcapd packet capture (over usbmux) writing to ``out_path``.
+
+    Returns a ``PcapStreamHandle`` for in-process desktop callers, or an error
+    envelope. pcapd goes over usbmux (no tunnel/DDI); not exposed via JSON CLI.
+    """
+    from .device import _dvt_exc_to_err
+
+    if not out_path:
+        return _err("BAD_TARGET", "out_path is required", code="PCAP_NO_OUT_PATH")
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    handle = device.open_pcap_stream(
+        out_path, process=process, interface=interface,
+        max_packets=max_packets, max_bytes=max_bytes, max_seconds=max_seconds,
+    )
+    open_err = handle.wait_ready(timeout=30)
+    if open_err is not None:
+        try:
+            handle.close()
+        except Exception:
+            pass
+        if isinstance(open_err, TimeoutError):
+            return _err("SUBPROCESS", str(open_err), code="PCAP_OPEN_TIMEOUT")
+        return _dvt_exc_to_err(open_err)
+    return handle
+
+
 def list_web_pages(target: str) -> dict:
     """List WebInspector-debuggable pages (Safari tabs / app WebViews)."""
     device, err = _prepare_device_basic(target)

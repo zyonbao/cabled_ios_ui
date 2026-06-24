@@ -2,9 +2,9 @@
 
 ### Requirement: 抓包会话与落盘
 
-平台层 SHALL 提供 `open_pcap_stream(target, process, interface, out_path, limits)`：基于 `pcapd`（lockdown 服务，iOS 17+ 经 tunnel，**不需要 DDI**）抓包，边抓边经 `write_to_pcap` 写入 `out_path`（pcapng，Wireshark 可读）。采集 MUST 在后台执行、不阻塞 UI；可按进程（`comm`）/接口过滤。上限（最大包数 / 最大文件大小 / 最长时长）任一达到 MUST 自动停止并 flush 关闭文件。句柄 MUST 与子面板窗口生命周期绑定：Start 创建、Stop/关窗回收并关闭文件，MUST NOT 残留孤儿采集任务。
+平台层 SHALL 提供 `open_pcap_stream(target, out_path, process, interface, limits)`：基于 `pcapd`（lockdown 服务），**MUST 经 usbmux lockdown 连接，MUST NOT 走 RSD/tunnel**（RSD 路径设备返回 `ServiceProhibited`，Apple 自 iOS 17/18 起的全局限制，见 issue #1515）；**不需要 tunnel、不需要 DDI**。边抓边经 `write_to_pcap` 写入 `out_path`（pcapng，Wireshark 可读）。采集 MUST 在后台执行、不阻塞 UI；可按进程（`comm`）/接口过滤。上限（最大包数 / 最大文件大小 / 最长时长）任一达到 MUST 自动停止并 flush 关闭文件。句柄 MUST 与子面板窗口生命周期绑定：Start 创建、Stop/关窗回收并关闭文件（含打断 idle 阻塞），MUST NOT 残留孤儿采集任务。
 
-> 实测约束：iOS 26（beta）上 `com.apple.pcapd.shim.remote` 启动被设备拒绝（`StartServiceError`）；iOS 17/18 经 tunnel 支持。失败 MUST 返回可读错误信封而非崩溃。
+> 实测（iOS 26）：usbmux 路径正常抓包，每包带真实 `comm`/`pid`。设备未配对/不可用等失败 MUST 返回可读错误信封而非崩溃。
 
 #### Scenario: 抓包落盘并被 Wireshark 打开
 
@@ -18,7 +18,7 @@
 
 #### Scenario: 服务不可用降级
 
-- **WHEN** 设备拒绝启动 pcapd（如 iOS 版本限制）
+- **WHEN** 设备未配对/信任或 pcapd 不可用
 - **THEN** 返回可读错误信封，不崩溃
 
 ### Requirement: 实时摘要与降级

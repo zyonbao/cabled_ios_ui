@@ -263,6 +263,8 @@
       "network_sub": "实时连接与吞吐（最多 10 分钟）",
       "webinspector_title": "Web 检查器",
       "webinspector_sub": "经 Chrome DevTools 调试 Safari / WebView 页面",
+      "pcap_title": "PCAP 抓包",
+      "pcap_sub": "抓取流量到 .pcap（用 Wireshark 打开）",
       "syslog": "系统日志\n实时 syslog / oslog（按版本，无需 DDI）"
     },
     "mount": {
@@ -786,6 +788,40 @@
     "bridge_stopped": "CDP 桥接已停止",
     "bridge_failed": "启动 CDP 桥接失败：{error}"
   },
+  "pcap": {
+    "title": "PCAP 抓包",
+    "compliance": "仅将设备流量抓取到本地 .pcap 文件。请合规使用，且只在你有权测试的设备上抓包。",
+    "status_label": "状态",
+    "stats": "{packets} 包 · {size} · {elapsed}s",
+    "start": "开始",
+    "stop": "停止",
+    "output_label": "输出文件",
+    "need_path": "请先选择输出 .pcap 路径",
+    "process_label": "进程",
+    "process_placeholder": "comm（可选）",
+    "interface_label": "接口",
+    "interface_placeholder": "如 en0",
+    "limit_packets": "最大包数",
+    "limit_mb": "最大 MB",
+    "limit_seconds": "最长秒",
+    "choose_path": "保存抓包为",
+    "pcap_filter": "PCAP (*.pcap)",
+    "starting": "正在启动抓包…",
+    "started": "抓包中…数据包写入所选 .pcap",
+    "stopped": "已停止抓包",
+    "stopped_limit": "已自动停止抓包（达到上限）",
+    "open_failed": "启动抓包失败：{error}",
+    "col_time": "时间",
+    "col_proc": "进程",
+    "col_pid": "PID",
+    "col_iface": "接口",
+    "col_proto": "协议族",
+    "col_len": "长度",
+    "state": {
+      "idle": "Idle",
+      "running": "Running"
+    }
+  },
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
@@ -931,6 +967,8 @@
     "WEBINSPECTOR_DISABLED": "设备未开启 Web 检查器（设置 → Safari → 高级 → Web 检查器）",
     "CDP_BRIDGE_TIMEOUT": "启动 CDP 桥接超时",
     "CDP_PORT_IN_USE": "端口 {port} 已被占用，请改用其它 CDP 端口",
+    "PCAP_NO_OUT_PATH": "未选择抓包输出路径",
+    "PCAP_OPEN_TIMEOUT": "启动抓包超时",
     "LOG_ARCHIVE_FAILED": "收集 .logarchive 失败：{exc}"
   }
 }

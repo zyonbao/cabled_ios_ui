@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections import deque
 import math
 import os
 import posixpath
@@ -122,6 +123,7 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.services.webinspector import (  # noqa: F401
         WebinspectorService,
     )
+    from pymobiledevice3.services.pcapd import PcapdService  # noqa: F401
     from pymobiledevice3.services.web_protocol.cdp_server import app as _cdp_app  # noqa: F401
     from pymobiledevice3.services.simulate_location import (  # noqa: F401
         DtSimulateLocation,
@@ -3396,6 +3398,15 @@ class iOSDevice:
         """Start a local CDP bridge server for Chrome DevTools."""
         return WebInspectorBridgeHandle(self, host=host, port=port)
 
+    def open_pcap_stream(self, out_path: str, process: "Optional[str]" = None,
+                         interface: "Optional[str]" = None, max_packets: int = 100000,
+                         max_bytes: int = 50 * 1024 * 1024, max_seconds: int = 600) -> "PcapStreamHandle":
+        """Start a pcapd packet capture (over usbmux) writing to ``out_path``."""
+        return PcapStreamHandle(
+            self, out_path, process=process, interface=interface,
+            max_packets=max_packets, max_bytes=max_bytes, max_seconds=max_seconds,
+        )
+
     def collect_logarchive(self, out_path: str) -> dict:
         """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
 
@@ -4365,6 +4376,127 @@ class WebInspectorBridgeHandle:
             self._server.should_exit = True
         if not self._done.wait(timeout=8.0):
             logger.warning("WebInspectorBridgeHandle.close: timed out waiting cleanup")
+
+
+class PcapStreamHandle:
+    """Live packet capture backed by pcapd over usbmux, writing a .pcap file.
+
+    pcapd MUST go over usbmux lockdown — Apple prohibits it over RSD/tunnel
+    (``ServiceProhibited``), so this needs neither tunnel nor DDI. A tee generator
+    feeds each packet to ``write_to_pcap`` (pcapng on disk) while recording a
+    bounded rolling summary + counters that the UI polls via ``snapshot``. Capture
+    auto-stops on any limit (packets / bytes / seconds); ``close()`` cancels the
+    background task to interrupt an idle ``watch`` and finalize the file.
+    """
+
+    MAX_SUMMARY = 500
+
+    def __init__(self, device: "iOSDevice", out_path: str, process: "Optional[str]" = None,
+                 interface: "Optional[str]" = None, max_packets: int = 100000,
+                 max_bytes: int = 50 * 1024 * 1024, max_seconds: int = 600) -> None:
+        self._device = device
+        self._out_path = out_path
+        self._process = process or None
+        self._interface = interface or None
+        self._max_packets = max_packets
+        self._max_bytes = max_bytes
+        self._max_seconds = max_seconds
+        self._closed = False
+        self._error: Optional[Exception] = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._done = threading.Event()
+        self._packets = 0
+        self._bytes = 0
+        self._start_ts = 0.0
+        self._stopped_reason: Optional[str] = None
+        self._summary: "deque[dict]" = deque(maxlen=self.MAX_SUMMARY)
+        logger.debug("PcapStreamHandle open: udid=%s out=%s", device.udid, out_path)
+        self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
+
+    async def _run(self) -> None:
+        try:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            from pymobiledevice3.services.pcapd import PcapdService
+
+            lockdown = await create_using_usbmux(serial=self._device.udid, autopair=False)
+            async with lockdown:
+                svc = PcapdService(lockdown=lockdown)
+                self._start_ts = time.time()
+                with open(self._out_path, "wb") as fh:
+                    self._ready.set()
+                    await svc.write_to_pcap(fh, self._tee(svc))
+        except asyncio.CancelledError:
+            logger.debug("PcapStreamHandle._run: cancelled (packets=%s)", self._packets)
+        except Exception as exc:
+            logger.warning("PcapStreamHandle._run: error: %s", exc, exc_info=True)
+            self._error = exc
+        finally:
+            self._ready.set()
+            self._done.set()
+
+    async def _tee(self, svc):
+        async for pkt in svc.watch(
+            packets_count=-1, process=self._process, interface_name=self._interface,
+        ):
+            if self._closed:
+                return
+            length = len(pkt.data)
+            try:
+                ts = float(pkt.seconds) + float(pkt.microseconds) / 1_000_000
+            except Exception:
+                ts = time.time()
+            with self._lock:
+                self._packets += 1
+                self._bytes += length
+                self._summary.append({
+                    "ts": ts,
+                    "comm": getattr(pkt, "comm", "") or "unknown",
+                    "pid": getattr(pkt, "pid", None),
+                    "iface": getattr(pkt, "interface_name", "") or "unknown",
+                    "proto": getattr(getattr(pkt, "protocol_family", None), "name", "unknown"),
+                    "length": length,
+                })
+            yield pkt
+            if self._limit_reached():
+                self._stopped_reason = "limit"
+                return
+
+    def _limit_reached(self) -> bool:
+        if self._max_packets and self._packets >= self._max_packets:
+            return True
+        if self._max_bytes and self._bytes >= self._max_bytes:
+            return True
+        if self._max_seconds and (time.time() - self._start_ts) >= self._max_seconds:
+            return True
+        return False
+
+    def wait_ready(self, timeout: float = 30.0) -> Optional[Exception]:
+        """Block until capture started (file open) or an error surfaced."""
+        if not self._ready.wait(timeout=timeout):
+            return TimeoutError("pcap capture start timed out")
+        return self._error
+
+    def snapshot(self) -> dict:
+        """Thread-safe copy of capture counters + recent packet summary."""
+        with self._lock:
+            return {
+                "running": not self._done.is_set() and self._error is None,
+                "packets": self._packets,
+                "bytes": self._bytes,
+                "elapsed": (time.time() - self._start_ts) if self._start_ts else 0.0,
+                "out_path": self._out_path,
+                "stopped_reason": self._stopped_reason,
+                "summary": list(self._summary),
+            }
+
+    def close(self) -> None:
+        """Stop capture, cancel the background task and finalize the file."""
+        self._closed = True
+        if self._future and not self._future.done():
+            _bg_loop.call_soon_threadsafe(self._future.cancel)
+        if not self._done.wait(timeout=5.0):
+            logger.warning("PcapStreamHandle.close: timed out waiting cleanup")
 
 
 _oslog_level_patched = False

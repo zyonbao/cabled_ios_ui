@@ -44,6 +44,7 @@ from ..syslog import LogDialog
 from .condition_inducer_dialog import ConditionInducerDialog
 from .location_dialog import LocationDialog
 from .network_monitor_dialog import NetworkMonitorDialog
+from .pcap_capture_dialog import PcapCaptureDialog
 from .performance_dialog import PerformanceDialog
 from .web_inspector_dialog import WebInspectorDialog
 from .process_dialog import ProcessDialog
@@ -194,12 +195,18 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         _wi_title = i18n.t("dev_tools.tile.webinspector_title")
         _wi_sub = i18n.t("dev_tools.tile.webinspector_sub")
         self.webinspector_tile = _FeatureTile(_wi_title, _wi_sub)
+        # PCAP capture is a lockdown service over usbmux: needs neither DDI nor
+        # tunnel, so it is not DDI-gated (not in _feature_buttons).
+        self.pcap_tile = _FeatureTile(
+            i18n.t("dev_tools.tile.pcap_title"), i18n.t("dev_tools.tile.pcap_sub")
+        )
         flow.addWidget(self.process_tile)
         flow.addWidget(self.location_tile)
         flow.addWidget(self.performance_tile)
         flow.addWidget(self.condition_tile)
         flow.addWidget(self.network_tile)
         flow.addWidget(self.webinspector_tile)
+        flow.addWidget(self.pcap_tile)
         # System log is a lockdown service: it needs neither DDI nor a tunnel, so
         # this tile stays enabled regardless of mount state (not in _feature_buttons).
         # The catalog value packs title + description on two lines; split it so the
@@ -244,6 +251,7 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.condition_tile.clicked.connect(self._open_condition)
         self.network_tile.clicked.connect(self._open_network)
         self.webinspector_tile.clicked.connect(self._open_webinspector)
+        self.pcap_tile.clicked.connect(self._open_pcap)
         self.syslog_tile.clicked.connect(self._open_syslog)
 
     # ------------------------------------------------------------- target
@@ -891,6 +899,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         logger.info("open web inspector: target=%s", target)
         self._open_subwindow(
             "webinspector", lambda: WebInspectorDialog(self.runner, target, self)
+        )
+
+    def _open_pcap(self) -> None:
+        target = self._get_target()
+        if not target:
+            return
+        logger.info("open pcap capture: target=%s", target)
+        self._open_subwindow(
+            "pcap", lambda: PcapCaptureDialog(self.runner, target, self)
         )
 
     def _open_syslog(self) -> None:

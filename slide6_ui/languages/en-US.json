@@ -263,6 +263,8 @@
       "network_sub": "Live connections & throughput (up to 10 minutes)",
       "webinspector_title": "Web Inspector",
       "webinspector_sub": "Debug Safari / WebView pages via Chrome DevTools",
+      "pcap_title": "PCAP Capture",
+      "pcap_sub": "Capture traffic to a .pcap (open in Wireshark)",
       "syslog": "System Logs\nLive syslog / oslog (by OS version, no DDI required)"
     },
     "mount": {
@@ -786,6 +788,40 @@
     "bridge_stopped": "CDP bridge stopped",
     "bridge_failed": "Failed to start CDP bridge: {error}"
   },
+  "pcap": {
+    "title": "PCAP Capture",
+    "compliance": "Captures device traffic to a local .pcap file only. Use responsibly and only on devices you are authorized to test.",
+    "status_label": "Status",
+    "stats": "{packets} pkts · {size} · {elapsed}s",
+    "start": "Start",
+    "stop": "Stop",
+    "output_label": "Output file",
+    "need_path": "Choose an output .pcap path first",
+    "process_label": "Process",
+    "process_placeholder": "comm (optional)",
+    "interface_label": "Interface",
+    "interface_placeholder": "e.g. en0",
+    "limit_packets": "Max pkts",
+    "limit_mb": "Max MB",
+    "limit_seconds": "Max sec",
+    "choose_path": "Save capture as",
+    "pcap_filter": "PCAP (*.pcap)",
+    "starting": "Starting capture…",
+    "started": "Capturing… packets are written to the chosen .pcap",
+    "stopped": "Capture stopped",
+    "stopped_limit": "Capture auto-stopped (limit reached)",
+    "open_failed": "Failed to start capture: {error}",
+    "col_time": "Time",
+    "col_proc": "Process",
+    "col_pid": "PID",
+    "col_iface": "Interface",
+    "col_proto": "Family",
+    "col_len": "Len",
+    "state": {
+      "idle": "Idle",
+      "running": "Running"
+    }
+  },
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
@@ -931,6 +967,8 @@
     "WEBINSPECTOR_DISABLED": "Web Inspector is disabled on the device (Settings → Safari → Advanced → Web Inspector)",
     "CDP_BRIDGE_TIMEOUT": "Starting the CDP bridge timed out",
     "CDP_PORT_IN_USE": "Port {port} is already in use; choose another CDP port",
+    "PCAP_NO_OUT_PATH": "No output path chosen for the capture",
+    "PCAP_OPEN_TIMEOUT": "Starting the packet capture timed out",
     "LOG_ARCHIVE_FAILED": "Failed to collect .logarchive: {exc}"
   }
 }
