@@ -8,33 +8,19 @@
 > - 设备**同一时刻仅允许一个活动条件**；已有活动条件时再次 enable 会被设备拒绝（`A condition is already active`）。
 > - 条件为**预定义 profile 选择**，无自定义参数（`enable` 仅接受 group/profile 两个标识）。
 > - 设备侧**无条件会话 id**；活动状态只在持有连接的进程内句柄中维护。
-
 ## Requirements
 ### Requirement: 条件模型枚举与连接作用域
 
-平台层 SHALL 提供 `open_condition_inducer(target)`：成功时返回与条件诱导窗口生命周期绑定的句柄（`ConditionInducerHandle`），失败时返回可读错误信封。句柄打开时 SHALL 通过 `availableConditionInducers` 枚举设备支持的条件组，每组含 `identifier / name / isDestructive / isInternal / activeProfile / profiles[{identifier, name, description}]`。UI MUST 过滤 `isInternal` 组/项，仅展示设备本次返回的可用模型（按设备能力动态渲染）。
-
-诱导条件 MUST 为连接作用域：实现 MUST 由单一长连接句柄持有 DVT 连接并维护活动状态，条件仅在该连接存活期间生效；连接断开时设备 MUST 自动恢复。实现 MUST NOT 以独立无状态调用查询或施加条件（新连接只会观测到 inactive）。
+平台层 SHALL 提供 `open_condition_inducer(target)`：成功返回与窗口生命周期绑定的句柄（`ConditionInducerHandle`），失败返回可读错误信封。句柄打开时通过 `availableConditionInducers` 枚举设备支持的条件组（`identifier/name/isDestructive/isInternal/activeProfile/profiles[{identifier,name,description}]`），UI MUST 过滤 `isInternal` 项。诱导条件 MUST 为连接作用域：由单一长连接句柄持有 DVT 连接并维护活动状态，连接断开设备 MUST 自动恢复；实现 MUST NOT 以无状态独立调用查询/施加条件。
 
 #### Scenario: 枚举可用条件模型
 
 - **WHEN** 用户进入条件诱导界面
-- **THEN** 展示设备返回的可用条件组与各组 profile（已过滤 internal 项），并显示当前是否有活动条件
+- **THEN** 展示设备返回的可用条件组与各组 profile（已过滤 internal），并显示当前是否有活动条件
 
 ### Requirement: 开始 / 切换 / 结束诱导（单一活动条件）
 
-设备 MUST 同一时刻仅允许一个活动条件。句柄 SHALL 提供：
-
-- `apply(group_id, profile_id)`：施加指定 profile。所选标识不存在 MUST 返回可读错误。若已有活动条件，MUST 先 `disableActiveCondition` 再 enable 新条件（切换语义），MUST NOT 因「已有活动条件」直接失败。
-- `clear()`：停止当前活动条件；无活动条件时 MUST 幂等成功，MUST NOT 抛异常导致 UI 失败。
-- `state()`：返回进程内维护的当前活动 `(group, profile)` 或 `inactive`（含条件名称/摘要）。
-
-开始诱导成功后 MUST 立即返回最新活动状态（含条件摘要），但 MUST NOT 依赖设备侧会话 id。
-
-#### Scenario: 启动条件成功
-
-- **WHEN** 用户选择合法 profile 并点击开始
-- **THEN** 返回最新状态 `{state: "active", group, profile, summary}`，且设备 `isActive` 置为该 profile
+设备 MUST 同一时刻仅允许一个活动条件（已有活动条件时再次 enable 会被设备拒绝）。句柄 SHALL 提供 `apply(group_id, profile_id)`（已有活动条件时先 `clear` 再 enable 切换；标识不存在返回可读错误）、`clear()`（无活动条件时幂等成功）与 `state()`（返回当前 `(group, profile)` 或 `inactive`）。MUST NOT 依赖设备侧会话 id。
 
 #### Scenario: 已有活动条件时切换
 
@@ -66,9 +52,10 @@ UI 层 SHALL 提供条件组/profile 选择入口、开始按钮、结束按钮�
 
 ### Requirement: 能力降级语义
 
-当设备未返回某类条件组（不同设备/系统版本可用模型不同）时，UI MUST 仅渲染设备本次返回的可用模型并保持其可操作，MUST NOT 因缺失某组而整页不可用。单个 profile 施加失败 MUST NOT 影响其它 profile 的选择与施加。
+当设备未返回某类条件组时，UI MUST 仅渲染设备本次返回的可用模型并保持可操作，MUST NOT 因缺失某组而整页不可用。
 
 #### Scenario: 设备仅返回部分条件组
 
-- **WHEN** 平台层仅枚举到部分条件组（例如无 GPU 组）
+- **WHEN** 平台层仅枚举到部分条件组
 - **THEN** 已返回的条件组正常展示并可施加，缺失组不显示
+
