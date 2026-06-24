@@ -257,6 +257,8 @@
       "location_sub": "设定 / 清除虚拟 GPS 坐标",
       "performance_title": "性能监控",
       "performance_sub": "CPU / 内存 / IO 趋势（最多 10 分钟）",
+      "condition_title": "条件诱导",
+      "condition_sub": "模拟弱网 / 热状态 / GPU 性能",
       "syslog": "系统日志\n实时 syslog / oslog（按版本，无需 DDI）"
     },
     "mount": {
@@ -651,6 +653,67 @@
       "paused": "Paused"
     }
   },
+  "condition": {
+    "title": "条件诱导",
+    "connecting": "正在连接条件诱导…",
+    "hint": "选择条件 profile 后点击开始。关闭本窗口时条件会自动恢复。",
+    "state_label": "当前条件",
+    "group_label": "条件组",
+    "profile_label": "Profile",
+    "start": "开始",
+    "switch": "切换",
+    "stop": "结束",
+    "no_models": "该设备未返回可用的条件模型",
+    "confirm_title": "应用条件？",
+    "confirm_body": "应用条件：{name}？\n这会改变设备的运行状态，直到你结束或关闭窗口。",
+    "confirm_destructive": "该条件被标记为破坏性，可能对设备造成较强影响。",
+    "applying": "正在应用：{name}…",
+    "applied": "条件已生效：{name}",
+    "stopping": "正在结束条件…",
+    "cleared": "条件已清除，设备已恢复",
+    "apply_failed": "操作失败：{error}",
+    "open_failed": "打开条件诱导失败：{error}",
+    "state": {
+      "inactive": "未启用",
+      "active": "已启用 — {name}"
+    },
+    "group": {
+      "slownetworkcondition": "网络链路",
+      "thermalcondition": "设备发热",
+      "gpuperformancestate": "GPU 性能档"
+    },
+    "profile": {
+      "slownetwork100pctloss": "100% 丢包",
+      "slownetworkverybadnetwork": "极差网络",
+      "slownetworkedgebad": "EDGE 网络 - 差",
+      "slownetworkedgeaverage": "EDGE 网络 - 一般",
+      "slownetworkedgegood": "EDGE 网络 - 良好",
+      "slownetworkedge": "EDGE 网络 - 最佳",
+      "slownetwork2grural": "2G 网络 - 差",
+      "slownetwork2gurban": "2G 网络 - 较好",
+      "slownetwork3gaverage": "3G 网络 - 一般",
+      "slownetwork3ggood": "3G 网络 - 良好",
+      "slownetwork3g": "3G 网络 - 最佳",
+      "slownetworklte": "LTE 网络",
+      "slownetworkwifi": "WiFi 网络",
+      "slownetworkwifi80211ac": "WiFi 网络 (802.11ac)",
+      "slownetworkdsl": "DSL 网络",
+      "slownetworkhighlatencydns": "高延迟 DNS",
+      "thermalfair": "轻度发热",
+      "thermalserious": "严重发热",
+      "thermalcritical": "临界发热",
+      "gpuperformancestatemin": "最低",
+      "gpuperformancestatemid": "中等",
+      "gpuperformancestatemax": "最高"
+    },
+    "label": {
+      "network": "网络",
+      "thermal": "设备发热",
+      "gpu": "GPU",
+      "cpu": "CPU",
+      "power": "功耗"
+    }
+  },
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
@@ -789,6 +852,9 @@
     "GPX_PARSE_FAILED": "解析 GPX 失败：{exc}",
     "GPX_NO_TRACKPOINTS": "GPX 文件中没有可用的轨迹点",
     "PERF_INTERVAL_OUT_OF_RANGE": "性能采样间隔超出范围（允许 200~2000ms）",
+    "CONDITION_UNKNOWN": "未知的条件 profile（不在设备可用模型中）",
+    "CONDITION_NOT_READY": "条件诱导未连接",
+    "CONDITION_OPEN_TIMEOUT": "打开条件诱导超时",
     "LOG_ARCHIVE_FAILED": "收集 .logarchive 失败：{exc}"
   }
 }

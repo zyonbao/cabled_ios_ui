@@ -110,11 +110,7 @@
 - **可行性**：**高**。observe/post 简单可靠；可做成共享服务 + 可选的调试浮层/日志。
 - **优先级**：中（作为底层能力，随需要它的 Tab 一起落地）。
 
-### 10. Querying and setting SpringBoard options（SpringBoard 查询/设置）
-- **定位**：无独立 Tab。设置类工具（如壁纸、图标状态、方向锁等可读写项），可嵌入「设备信息」或设置面板。
-- **依赖**：`pymobiledevice3.services.springboard.SpringBoardServicesService`（取图标状态/壁纸等）。不需要 WDA / tunnel（iOS 16-）。
-- **可行性**：**中-高**。读取类（图标布局、壁纸）可行；可写项较有限且随版本变化，需按设备验证。
-- **优先级**：中-低。
+
 
 ---
 
@@ -138,3 +134,8 @@
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 
 > 通用工程注意：所有需要 iOS 17+ 的服务复用现有 tunnel 生命周期；流式/大数据量能力（syslog/pcap/性能）一律后台线程采集 + 主线程限速渲染（参考 `mirror.py`）；破坏性操作（恢复/刷机/批量删除）统一走二次确认；密码/令牌等敏感信息严禁落日志（安全基线）。
+### 10. Querying and setting SpringBoard options（SpringBoard 查询/设置）
+- **定位**：无独立 Tab。设置类工具（如壁纸、图标状态、方向锁等可读写项），可嵌入「设备信息」或设置面板。
+- **依赖**：`pymobiledevice3.services.springboard.SpringBoardServicesService`（取图标状态/壁纸等）。不需要 WDA / tunnel（iOS 16-）。
+- **可行性**：**中-高**。读取类（图标布局、壁纸）可行；可写项较有限且随版本变化，需按设备验证。
+- **优先级**：中-低。

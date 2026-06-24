@@ -257,6 +257,8 @@
       "location_sub": "Set / clear simulated GPS coordinates",
       "performance_title": "Performance Monitor",
       "performance_sub": "CPU / memory / IO trends (up to 10 minutes)",
+      "condition_title": "Condition Inducer",
+      "condition_sub": "Simulate network / thermal / GPU conditions",
       "syslog": "System Logs\nLive syslog / oslog (by OS version, no DDI required)"
     },
     "mount": {
@@ -651,6 +653,67 @@
       "paused": "Paused"
     }
   },
+  "condition": {
+    "title": "Condition Inducer",
+    "connecting": "Connecting to condition inducer…",
+    "hint": "Select a condition profile and click Start. The condition reverts automatically when this window is closed.",
+    "state_label": "Current condition",
+    "group_label": "Condition group",
+    "profile_label": "Profile",
+    "start": "Start",
+    "switch": "Switch",
+    "stop": "Stop",
+    "no_models": "This device returned no available condition models",
+    "confirm_title": "Apply condition?",
+    "confirm_body": "Apply condition: {name}?\nThis changes how the device runs until you stop it or close the window.",
+    "confirm_destructive": "This condition is marked destructive and may strongly affect the device.",
+    "applying": "Applying: {name}…",
+    "applied": "Condition active: {name}",
+    "stopping": "Stopping condition…",
+    "cleared": "Condition cleared; device restored",
+    "apply_failed": "Operation failed: {error}",
+    "open_failed": "Failed to open condition inducer: {error}",
+    "state": {
+      "inactive": "Inactive",
+      "active": "Active — {name}"
+    },
+    "group": {
+      "slownetworkcondition": "Network Link",
+      "thermalcondition": "Thermal State",
+      "gpuperformancestate": "GPU Performance State"
+    },
+    "profile": {
+      "slownetwork100pctloss": "100% packet loss",
+      "slownetworkverybadnetwork": "Very poor network",
+      "slownetworkedgebad": "EDGE network - poor",
+      "slownetworkedgeaverage": "EDGE network - average",
+      "slownetworkedgegood": "EDGE network - good",
+      "slownetworkedge": "EDGE network - best",
+      "slownetwork2grural": "2G network - poor",
+      "slownetwork2gurban": "2G network - better",
+      "slownetwork3gaverage": "3G network - average",
+      "slownetwork3ggood": "3G network - good",
+      "slownetwork3g": "3G network - best",
+      "slownetworklte": "LTE network",
+      "slownetworkwifi": "WiFi network",
+      "slownetworkwifi80211ac": "WiFi network (802.11ac)",
+      "slownetworkdsl": "DSL network",
+      "slownetworkhighlatencydns": "High latency DNS",
+      "thermalfair": "Fair",
+      "thermalserious": "Serious",
+      "thermalcritical": "Critical",
+      "gpuperformancestatemin": "Minimum",
+      "gpuperformancestatemid": "Medium",
+      "gpuperformancestatemax": "Maximum"
+    },
+    "label": {
+      "network": "Network",
+      "thermal": "Thermal",
+      "gpu": "GPU",
+      "cpu": "CPU",
+      "power": "Power"
+    }
+  },
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
@@ -789,6 +852,9 @@
     "GPX_PARSE_FAILED": "Failed to parse GPX: {exc}",
     "GPX_NO_TRACKPOINTS": "The GPX file has no usable track points",
     "PERF_INTERVAL_OUT_OF_RANGE": "Performance sample interval is out of range (allowed: 200~2000ms)",
+    "CONDITION_UNKNOWN": "Unknown condition profile (not in the device's available models)",
+    "CONDITION_NOT_READY": "Condition inducer is not connected",
+    "CONDITION_OPEN_TIMEOUT": "Opening the condition inducer timed out",
     "LOG_ARCHIVE_FAILED": "Failed to collect .logarchive: {exc}"
   }
 }

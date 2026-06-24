@@ -1155,6 +1155,31 @@ def open_performance_stream(target: str, interval_ms: int = 500):
     return device.open_performance_stream(interval_ms=interval_ms)
 
 
+def open_condition_inducer(target: str):
+    """Open a connection-scoped DVT Condition Inducer session and return a handle.
+
+    Returns a ``ConditionInducerHandle`` (with models enumerated) for in-process
+    desktop callers, or an error envelope. Not exposed via the JSON CLI because
+    the condition is only active while the handle holds its DVT connection open.
+    """
+    from .device import _dvt_exc_to_err
+
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    handle = device.open_condition_inducer()
+    open_err = handle.wait_ready(timeout=45)
+    if open_err is not None:
+        try:
+            handle.close()
+        except Exception:
+            pass
+        if isinstance(open_err, TimeoutError):
+            return _err("SUBPROCESS", str(open_err), code="CONDITION_OPEN_TIMEOUT")
+        return _dvt_exc_to_err(open_err)
+    return handle
+
+
 def collect_logarchive(target: str, out_path: str):
     """Collect the device's system logs into a ``.logarchive`` at ``out_path``.
 

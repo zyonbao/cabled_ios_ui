@@ -113,6 +113,9 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.services.dvt.instruments.sysmontap import (  # noqa: F401
         Sysmontap,
     )
+    from pymobiledevice3.services.dvt.instruments.condition_inducer import (  # noqa: F401
+        ConditionInducer,
+    )
     from pymobiledevice3.services.simulate_location import (  # noqa: F401
         DtSimulateLocation,
     )
@@ -3305,6 +3308,10 @@ class iOSDevice:
         """Start a live DVT performance stream (CPU/GPU/memory metrics)."""
         return PerformanceStreamHandle(self, interval_ms=interval_ms)
 
+    def open_condition_inducer(self) -> "ConditionInducerHandle":
+        """Open a connection-scoped DVT Condition Inducer session."""
+        return ConditionInducerHandle(self)
+
     def collect_logarchive(self, out_path: str) -> dict:
         """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
 
@@ -3774,6 +3781,218 @@ class PerformanceStreamHandle:
             logger.warning(
                 "PerformanceStreamHandle.close: timed out waiting cleanup"
             )
+
+
+class ConditionInducerHandle:
+    """Connection-scoped DVT Condition Inducer session on the shared loop.
+
+    The induced condition is only active while the DVT connection lives; closing
+    the connection (or the handle) makes the device auto-revert. The device also
+    enforces a single active condition at a time, so switching profiles means
+    "disable then enable". A long-lived background coroutine holds the connection
+    open and parks on a stop event; ``apply``/``clear`` run their own coroutines
+    against the same captured ``ConditionInducer`` instance on the loop.
+    """
+
+    def __init__(self, device: "iOSDevice") -> None:
+        self._device = device
+        self._ci = None
+        self._models: list[dict] = []
+        self._active: Optional[dict] = None
+        self._error: Optional[Exception] = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._done = threading.Event()
+        self._stop_event: Optional[asyncio.Event] = None
+        logger.debug("ConditionInducerHandle open: udid=%s", self._device.udid)
+        self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
+
+    async def _run(self) -> None:
+        self._stop_event = asyncio.Event()
+        try:
+            from pymobiledevice3.services.dvt.instruments.condition_inducer import (
+                ConditionInducer,
+            )
+
+            async def _op(dvt) -> None:
+                async with ConditionInducer(dvt) as ci:
+                    self._ci = ci
+                    self._models = self._serialize_models(await ci.list())
+                    self._ready.set()
+                    await self._stop_event.wait()
+                    # Explicitly revert and confirm before dropping the connection:
+                    # disable is fire-and-forget and some conditions (e.g. thermal)
+                    # take ~1s to actually clear, so wait for isActive to settle.
+                    try:
+                        await self._clear_and_confirm()
+                    except Exception:
+                        pass
+
+            await self._device._with_dvt(_op)
+        except asyncio.CancelledError:
+            logger.debug("ConditionInducerHandle._run: cancelled")
+        except Exception as exc:
+            logger.warning(
+                "ConditionInducerHandle._run: error: %s", exc, exc_info=True
+            )
+            self._error = exc
+        finally:
+            self._ci = None
+            self._ready.set()
+            self._done.set()
+
+    @staticmethod
+    def _serialize_models(raw: object) -> list[dict]:
+        """Flatten sysmon condition groups, dropping internal-only entries."""
+        groups: list[dict] = []
+        for group in raw or []:
+            if not isinstance(group, dict) or group.get("isInternal"):
+                continue
+            profiles = []
+            for prof in group.get("profiles") or []:
+                if not isinstance(prof, dict) or not prof.get("identifier"):
+                    continue
+                profiles.append({
+                    "identifier": prof.get("identifier"),
+                    "name": prof.get("name") or prof.get("identifier"),
+                    "description": prof.get("description") or "",
+                })
+            if not profiles:
+                continue
+            groups.append({
+                "identifier": group.get("identifier"),
+                "name": group.get("name") or group.get("identifier"),
+                "is_destructive": bool(group.get("isDestructive")),
+                "profiles": profiles,
+            })
+        return groups
+
+    def wait_ready(self, timeout: float = 45.0) -> Optional[Exception]:
+        """Block until models are enumerated or the session fails.
+
+        ``_run``'s ``finally`` always sets ``_ready``, so a wait timeout means the
+        session genuinely hung (e.g. a stalled DVT/RSD call). Surface that as a
+        timeout error rather than a false success, so the caller closes the handle
+        (which cancels the hung task) instead of returning a half-open session.
+        """
+        if not self._ready.wait(timeout=timeout):
+            return TimeoutError("condition inducer open timed out")
+        return self._error
+
+    @property
+    def models(self) -> list[dict]:
+        return self._models
+
+    def state(self) -> Optional[dict]:
+        with self._lock:
+            return dict(self._active) if self._active else None
+
+    def _find(self, group_id: str, profile_id: str) -> Optional[dict]:
+        for group in self._models:
+            if group["identifier"] != group_id:
+                continue
+            for prof in group["profiles"]:
+                if prof["identifier"] == profile_id:
+                    return {
+                        "group": group_id,
+                        "group_name": group["name"],
+                        "profile": profile_id,
+                        "profile_name": prof["name"],
+                        "summary": prof.get("description") or prof["name"],
+                    }
+        return None
+
+    def apply(self, group_id: str, profile_id: str) -> dict:
+        """Apply a profile; switches by disabling any active condition first."""
+        from .toolkit_api import _ok, _err
+
+        meta = self._find(group_id, profile_id)
+        if meta is None:
+            return _err(
+                "BAD_TARGET",
+                f"unknown condition: {group_id}/{profile_id}",
+                code="CONDITION_UNKNOWN",
+            )
+        if self._ci is None:
+            return _err(
+                "SUBPROCESS",
+                "condition inducer not connected",
+                code="CONDITION_NOT_READY",
+            )
+        future = asyncio.run_coroutine_threadsafe(
+            self._apply_async(group_id, profile_id), _bg_loop
+        )
+        try:
+            future.result(timeout=30)
+        except Exception as exc:
+            return _dvt_exc_to_err(exc)
+        with self._lock:
+            self._active = meta
+        logger.info("condition applied: udid=%s %s/%s", self._device.udid, group_id, profile_id)
+        return _ok({"state": "active", **meta})
+
+    async def _apply_async(self, group_id: str, profile_id: str) -> None:
+        # Single active condition: the device rejects enable while ANY condition is
+        # active — including one we did not set (a stale session or another tool).
+        # Unconditionally disable+confirm first so enable never hits
+        # "A condition is already active"; it is idempotent and fast when none is set.
+        await self._clear_and_confirm()
+        await self._ci.service.enable_condition_with_identifier_profile_identifier_(
+            group_id, profile_id
+        )
+
+    async def _clear_and_confirm(self, attempts: int = 20, interval: float = 0.2) -> None:
+        """Disable the active condition and wait until the device reports none.
+
+        ``disableActiveCondition`` is fire-and-forget and the device may take ~1s
+        to actually revert (notably thermal), so poll ``list`` on the live
+        connection until nothing is active before returning.
+        """
+        if self._ci is None:
+            return
+        await self._ci.service.disable_active_condition()
+        for _ in range(attempts):
+            await asyncio.sleep(interval)
+            try:
+                groups = await self._ci.list()
+            except Exception:
+                return
+            if not any(isinstance(g, dict) and g.get("isActive") for g in groups):
+                return
+        logger.warning(
+            "ConditionInducerHandle: condition still active after disable (udid=%s)",
+            self._device.udid,
+        )
+
+    def clear(self) -> dict:
+        """Stop the active condition; idempotent when nothing is active."""
+        from .toolkit_api import _ok
+
+        if self._ci is None or self._active is None:
+            with self._lock:
+                self._active = None
+            return _ok({"state": "inactive", "already_inactive": True})
+        future = asyncio.run_coroutine_threadsafe(self._clear_and_confirm(), _bg_loop)
+        try:
+            future.result(timeout=30)
+        except Exception as exc:
+            return _dvt_exc_to_err(exc)
+        with self._lock:
+            self._active = None
+        logger.info("condition cleared: udid=%s", self._device.udid)
+        return _ok({"state": "inactive"})
+
+    def close(self) -> None:
+        """Revert the condition and tear down the held connection."""
+        if self._stop_event is not None and not self._done.is_set():
+            _bg_loop.call_soon_threadsafe(self._stop_event.set)
+        # Cleanup performs a confirm-poll revert (~up to 4s) before disconnecting.
+        if not self._done.wait(timeout=8.0):
+            if self._future and not self._future.done():
+                _bg_loop.call_soon_threadsafe(self._future.cancel)
+            logger.warning("ConditionInducerHandle.close: timed out waiting cleanup")
+        with self._lock:
+            self._active = None
 
 
 _oslog_level_patched = False
