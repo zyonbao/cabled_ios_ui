@@ -119,6 +119,10 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.services.dvt.instruments.network_monitor import (  # noqa: F401
         NetworkMonitor,
     )
+    from pymobiledevice3.services.webinspector import (  # noqa: F401
+        WebinspectorService,
+    )
+    from pymobiledevice3.services.web_protocol.cdp_server import app as _cdp_app  # noqa: F401
     from pymobiledevice3.services.simulate_location import (  # noqa: F401
         DtSimulateLocation,
     )
@@ -3319,6 +3323,79 @@ class iOSDevice:
         """Open a live DVT network monitor (connection flows + throughput)."""
         return NetworkStreamHandle(self)
 
+    @contextlib.asynccontextmanager
+    async def _lockdown_provider(self):
+        """Yield a connected lockdown service provider, torn down on exit.
+
+        RSD over tunnel on iOS 17+, else usbmux lockdown — each via its own async
+        context manager so cleanup is correct for both. For lockdown-only services
+        (WebInspector) that need neither DDI nor a DvtProvider, unlike :meth:`_with_dvt`.
+        """
+        if self._ios_major_version() >= 17:
+            rsd = _get_rsd_from_tunneld(self.udid)
+            if rsd is None:
+                raise _TunnelRequiredError(_TUNNEL_REQUIRED_MSG)
+            from pymobiledevice3.remote.remote_service_discovery import (
+                RemoteServiceDiscoveryService,
+            )
+
+            async with RemoteServiceDiscoveryService(rsd) as provider:
+                yield provider
+        else:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            lockdown = await create_using_usbmux(serial=self.udid, autopair=False)
+            async with lockdown:
+                yield lockdown
+
+    def list_web_pages(self) -> dict:
+        """Enumerate WebInspector-debuggable pages (Safari tabs / app WebViews)."""
+        from .toolkit_api import _ok, _err
+
+        async def _op() -> list[dict]:
+            from pymobiledevice3.services.webinspector import WebinspectorService
+
+            async with self._lockdown_provider() as provider:
+                wi = WebinspectorService(lockdown=provider)
+                try:
+                    await wi.connect()
+                    pages = await wi.get_open_application_pages(timeout=3)
+                    out = []
+                    for ap in pages:
+                        app, page = ap.application, ap.page
+                        out.append({
+                            "app": getattr(app, "name", "") or "",
+                            "bundle": getattr(app, "bundle", "") or "",
+                            "page_id": getattr(page, "id_", getattr(page, "id", None)),
+                            "title": getattr(page, "web_title", getattr(page, "title", "")) or "",
+                            "url": getattr(page, "web_url", getattr(page, "url", "")) or "",
+                        })
+                    return out
+                finally:
+                    try:
+                        await wi.close()
+                    except Exception:
+                        pass
+
+        future = asyncio.run_coroutine_threadsafe(_op(), _bg_loop)
+        try:
+            pages = future.result(timeout=30)
+            return _ok({"pages": pages})
+        except Exception as exc:
+            from pymobiledevice3.exceptions import WebInspectorNotEnabledError
+
+            if isinstance(exc, WebInspectorNotEnabledError):
+                return _err(
+                    "SUBPROCESS",
+                    "Web Inspector is disabled on the device",
+                    code="WEBINSPECTOR_DISABLED",
+                )
+            return _dvt_exc_to_err(exc)
+
+    def open_cdp_bridge(self, host: str = "127.0.0.1", port: int = 9222) -> "WebInspectorBridgeHandle":
+        """Start a local CDP bridge server for Chrome DevTools."""
+        return WebInspectorBridgeHandle(self, host=host, port=port)
+
     def collect_logarchive(self, out_path: str) -> dict:
         """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
 
@@ -4210,6 +4287,84 @@ class NetworkStreamHandle:
             _bg_loop.call_soon_threadsafe(self._future.cancel)
         if not self._done.wait(timeout=3.0):
             logger.warning("NetworkStreamHandle.close: timed out waiting cleanup")
+
+
+class WebInspectorBridgeHandle:
+    """Embedded CDP (Chrome DevTools Protocol) bridge for WebInspector.
+
+    Runs pymobiledevice3's CDP FastAPI app under a uvicorn server on a dedicated
+    thread/loop (the server owns its loop, so it does not use ``_bg_loop``). The
+    app's lifespan connects a ``WebinspectorService`` over the device's lockdown
+    provider (RSD/tunnel on 17+). ``close()`` flips uvicorn's ``should_exit`` so
+    the port is released. WebInspector is lockdown-only — no DDI required.
+    """
+
+    def __init__(self, device: "iOSDevice", host: str = "127.0.0.1", port: int = 9222) -> None:
+        self._device = device
+        self.host = host
+        self.port = port
+        self._server = None
+        self._error: Optional[Exception] = None
+        self._done = threading.Event()
+        logger.debug("WebInspectorBridgeHandle open: udid=%s %s:%s", device.udid, host, port)
+        self._thread = threading.Thread(target=self._run, daemon=True, name="cdp-bridge")
+        self._thread.start()
+
+    def _run(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._serve())
+        except Exception as exc:
+            logger.warning("WebInspectorBridgeHandle._run: error: %s", exc, exc_info=True)
+            self._error = exc
+        finally:
+            self._done.set()
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    async def _serve(self) -> None:
+        import uvicorn
+
+        from pymobiledevice3.services.web_protocol.cdp_server import app
+        from pymobiledevice3.services.webinspector import WebinspectorService
+
+        async with self._device._lockdown_provider() as provider:
+            # The CDP app's lifespan calls inspector.connect() on startup.
+            app.state.inspector = WebinspectorService(lockdown=provider)
+            config = uvicorn.Config(
+                app, host=self.host, port=self.port,
+                log_level="error", ws="wsproto", loop="none",
+            )
+            self._server = uvicorn.Server(config)
+            await self._server.serve()
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    def wait_ready(self, timeout: float = 20.0) -> Optional[Exception]:
+        """Block until the CDP server is serving, or surface an error/timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._error is not None:
+                return self._error
+            if self._server is not None and getattr(self._server, "started", False):
+                return None
+            if self._done.is_set():
+                # serve() returned before 'started' → startup failed
+                return self._error or RuntimeError("CDP bridge failed to start")
+            time.sleep(0.1)
+        return TimeoutError("CDP bridge start timed out")
+
+    def close(self) -> None:
+        """Stop the CDP server and release the port."""
+        if self._server is not None:
+            self._server.should_exit = True
+        if not self._done.wait(timeout=8.0):
+            logger.warning("WebInspectorBridgeHandle.close: timed out waiting cleanup")
 
 
 _oslog_level_patched = False

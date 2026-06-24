@@ -1,7 +1,7 @@
 # slide6-developer-tools Specification
 
 ## Purpose
-定义「开发者工具」页面的统一能力入口与交互约束：DDI 挂载状态与控制、iOS 17+ 的 XPC tunnel 面板、进程管理/虚拟定位/性能监控/网络监控/条件诱导能力卡、系统日志入口，以及相关门控、状态刷新和窗口行为规范。
+定义「开发者工具」页面的统一能力入口与交互约束：DDI 挂载状态与控制、iOS 17+ 的 XPC tunnel 面板、进程管理/虚拟定位/性能监控/网络监控/条件诱导能力卡、Web 检查器（tunnel-only，不经 DDI 门控）、系统日志入口，以及相关门控、状态刷新和窗口行为规范。
 ## Requirements
 ### Requirement: 开发者工具 Tab 入口
 
@@ -321,4 +321,30 @@ tunnel 状态变化后，面板标签、按钮组，以及依赖 tunnel 的功�
 
 - **WHEN** 用户清除定位或关闭虚拟定位窗口
 - **THEN** 停止进度轮询
+
+### Requirement: Web 检查器界面
+
+「开发者工具」Tab SHALL 提供「Web 检查器」功能卡片并打开子面板（非独立 sidebar Tab）。该能力为 lockdown 服务，**门控仅需 tunnel（iOS 17+），不需要 DDI**（区别于性能/网络/条件诱导等 DVT 卡片）。子面板 MUST 提供：可刷新的可调试页面列表（App / 标题 / URL）、启动/停止 CDP 桥接、以及连接入口提示（`chrome://inspect` 或 `localhost:<port>`，端口默认 9222 可改）。
+
+设备未开启「Web 检查器」开关时 MUST 显示明确引导（设置 → Safari → 高级 → Web 检查器），不报错弹窗；枚举到 0 页面时 MUST 提示打开 Safari 标签 / 含 WebView 的 App。CDP 桥接 MUST 与子面板窗口生命周期绑定，关闭窗口自动停止并释放端口。
+
+#### Scenario: 进入子面板列出页面
+
+- **WHEN** 设备已开启 Web 检查器且有可调试页面，用户点击「Web 检查器」卡片
+- **THEN** 子面板列出可调试页面（App / 标题 / URL）并可刷新
+
+#### Scenario: 启动 CDP 桥接
+
+- **WHEN** 用户启动 CDP 桥接
+- **THEN** 显示连接入口（`chrome://inspect` 或 `localhost:<port>`），用户可用 Chrome DevTools 连上调试
+
+#### Scenario: 未开启开关时引导
+
+- **WHEN** 设备未开启「Web 检查器」开关
+- **THEN** 子面板显示开启引导，不弹错误框
+
+#### Scenario: 关闭窗口回收桥接
+
+- **WHEN** 子面板窗口被关闭
+- **THEN** CDP 桥接自动停止、端口释放，无残留
 

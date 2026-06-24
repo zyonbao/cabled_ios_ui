@@ -261,6 +261,8 @@
       "condition_sub": "模拟弱网 / 热状态 / GPU 性能",
       "network_title": "网络监控",
       "network_sub": "实时连接与吞吐（最多 10 分钟）",
+      "webinspector_title": "Web 检查器",
+      "webinspector_sub": "经 Chrome DevTools 调试 Safari / WebView 页面",
       "syslog": "系统日志\n实时 syslog / oslog（按版本，无需 DDI）"
     },
     "mount": {
@@ -764,6 +766,26 @@
       "paused": "Paused"
     }
   },
+  "webinspector": {
+    "title": "Web 检查器",
+    "hint": "先列出可调试页面，再启动 CDP 桥接，然后在 Chrome 打开 chrome://inspect 进行调试。",
+    "refresh": "刷新页面",
+    "refreshing": "正在列出可调试页面…",
+    "pages_count": "{count} 个可调试页面",
+    "no_pages": "没有可调试页面。请在设备上打开一个 Safari 标签或含 WebView 的 App。",
+    "disabled_guide": "Web 检查器未开启。请在设备上打开：设置 → Safari → 高级 → Web 检查器。",
+    "open_failed": "列出页面失败：{error}",
+    "col_app": "App",
+    "col_title": "标题",
+    "col_url": "URL",
+    "port_label": "CDP 端口",
+    "start_bridge": "启动 CDP 桥接",
+    "stop_bridge": "停止 CDP 桥接",
+    "bridge_starting": "正在启动 CDP 桥接…",
+    "bridge_running": "CDP 桥接运行中：{url} —— 在 Chrome 打开 chrome://inspect（或 {url}/json）即可调试。",
+    "bridge_stopped": "CDP 桥接已停止",
+    "bridge_failed": "启动 CDP 桥接失败：{error}"
+  },
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
@@ -906,6 +928,9 @@
     "CONDITION_NOT_READY": "条件诱导未连接",
     "CONDITION_OPEN_TIMEOUT": "打开条件诱导超时",
     "NETWORK_OPEN_TIMEOUT": "打开网络监控超时",
+    "WEBINSPECTOR_DISABLED": "设备未开启 Web 检查器（设置 → Safari → 高级 → Web 检查器）",
+    "CDP_BRIDGE_TIMEOUT": "启动 CDP 桥接超时",
+    "CDP_PORT_IN_USE": "端口 {port} 已被占用，请改用其它 CDP 端口",
     "LOG_ARCHIVE_FAILED": "收集 .logarchive 失败：{exc}"
   }
 }

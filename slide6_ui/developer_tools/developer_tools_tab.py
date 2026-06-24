@@ -45,6 +45,7 @@ from .condition_inducer_dialog import ConditionInducerDialog
 from .location_dialog import LocationDialog
 from .network_monitor_dialog import NetworkMonitorDialog
 from .performance_dialog import PerformanceDialog
+from .web_inspector_dialog import WebInspectorDialog
 from .process_dialog import ProcessDialog
 from .tunnel_manager_dialog import TunnelManagerDialog
 
@@ -187,11 +188,18 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
             i18n.t("dev_tools.tile.network_title"),
             i18n.t("dev_tools.tile.network_sub"),
         )
+        # Web Inspector is a lockdown service: it needs tunnel (17+) but NOT a
+        # mounted DDI, so it is not DDI-gated (not in _feature_buttons); a missing
+        # tunnel surfaces as a readable error inside the dialog at runtime.
+        _wi_title = i18n.t("dev_tools.tile.webinspector_title")
+        _wi_sub = i18n.t("dev_tools.tile.webinspector_sub")
+        self.webinspector_tile = _FeatureTile(_wi_title, _wi_sub)
         flow.addWidget(self.process_tile)
         flow.addWidget(self.location_tile)
         flow.addWidget(self.performance_tile)
         flow.addWidget(self.condition_tile)
         flow.addWidget(self.network_tile)
+        flow.addWidget(self.webinspector_tile)
         # System log is a lockdown service: it needs neither DDI nor a tunnel, so
         # this tile stays enabled regardless of mount state (not in _feature_buttons).
         # The catalog value packs title + description on two lines; split it so the
@@ -235,6 +243,7 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.performance_tile.clicked.connect(self._open_performance)
         self.condition_tile.clicked.connect(self._open_condition)
         self.network_tile.clicked.connect(self._open_network)
+        self.webinspector_tile.clicked.connect(self._open_webinspector)
         self.syslog_tile.clicked.connect(self._open_syslog)
 
     # ------------------------------------------------------------- target
@@ -873,6 +882,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         logger.info("open network monitor: target=%s", target)
         self._open_subwindow(
             "network", lambda: NetworkMonitorDialog(self.runner, target, self)
+        )
+
+    def _open_webinspector(self) -> None:
+        target = self._get_target()
+        if not target:
+            return
+        logger.info("open web inspector: target=%s", target)
+        self._open_subwindow(
+            "webinspector", lambda: WebInspectorDialog(self.runner, target, self)
         )
 
     def _open_syslog(self) -> None:

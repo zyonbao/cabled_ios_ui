@@ -261,6 +261,8 @@
       "condition_sub": "Simulate network / thermal / GPU conditions",
       "network_title": "Network Monitor",
       "network_sub": "Live connections & throughput (up to 10 minutes)",
+      "webinspector_title": "Web Inspector",
+      "webinspector_sub": "Debug Safari / WebView pages via Chrome DevTools",
       "syslog": "System Logs\nLive syslog / oslog (by OS version, no DDI required)"
     },
     "mount": {
@@ -764,6 +766,26 @@
       "paused": "Paused"
     }
   },
+  "webinspector": {
+    "title": "Web Inspector",
+    "hint": "List debuggable pages, then start the CDP bridge and open chrome://inspect in Chrome to debug.",
+    "refresh": "Refresh pages",
+    "refreshing": "Listing debuggable pages…",
+    "pages_count": "{count} debuggable page(s)",
+    "no_pages": "No debuggable pages. Open a Safari tab or an app with a WebView on the device.",
+    "disabled_guide": "Web Inspector is off. Enable it on the device: Settings → Safari → Advanced → Web Inspector.",
+    "open_failed": "Failed to list pages: {error}",
+    "col_app": "App",
+    "col_title": "Title",
+    "col_url": "URL",
+    "port_label": "CDP port",
+    "start_bridge": "Start CDP bridge",
+    "stop_bridge": "Stop CDP bridge",
+    "bridge_starting": "Starting CDP bridge…",
+    "bridge_running": "CDP bridge running at {url} — open chrome://inspect (or {url}/json) in Chrome.",
+    "bridge_stopped": "CDP bridge stopped",
+    "bridge_failed": "Failed to start CDP bridge: {error}"
+  },
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
@@ -906,6 +928,9 @@
     "CONDITION_NOT_READY": "Condition inducer is not connected",
     "CONDITION_OPEN_TIMEOUT": "Opening the condition inducer timed out",
     "NETWORK_OPEN_TIMEOUT": "Opening the network monitor timed out",
+    "WEBINSPECTOR_DISABLED": "Web Inspector is disabled on the device (Settings → Safari → Advanced → Web Inspector)",
+    "CDP_BRIDGE_TIMEOUT": "Starting the CDP bridge timed out",
+    "CDP_PORT_IN_USE": "Port {port} is already in use; choose another CDP port",
     "LOG_ARCHIVE_FAILED": "Failed to collect .logarchive: {exc}"
   }
 }

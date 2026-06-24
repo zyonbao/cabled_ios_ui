@@ -1205,6 +1205,54 @@ def open_network_stream(target: str):
     return handle
 
 
+def list_web_pages(target: str) -> dict:
+    """List WebInspector-debuggable pages (Safari tabs / app WebViews)."""
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.list_web_pages()
+
+
+def open_cdp_bridge(target: str, host: str = "127.0.0.1", port: int = 9222):
+    """Start a local CDP bridge for Chrome DevTools and return a handle.
+
+    Returns a ``WebInspectorBridgeHandle`` for in-process desktop callers, or an
+    error envelope. Not exposed via the JSON CLI (long-lived local server).
+    """
+    import socket
+
+    from .device import _dvt_exc_to_err
+
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    # Fail fast with a friendly message if the port is already taken (e.g. a
+    # leftover bridge), rather than surfacing uvicorn's raw bind OSError.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError:
+        return _err(
+            "BAD_TARGET",
+            f"port {port} is already in use",
+            details={"port": port},
+            code="CDP_PORT_IN_USE",
+        )
+    finally:
+        probe.close()
+    handle = device.open_cdp_bridge(host=host, port=port)
+    open_err = handle.wait_ready(timeout=20)
+    if open_err is not None:
+        try:
+            handle.close()
+        except Exception:
+            pass
+        if isinstance(open_err, TimeoutError):
+            return _err("SUBPROCESS", str(open_err), code="CDP_BRIDGE_TIMEOUT")
+        return _dvt_exc_to_err(open_err)
+    return handle
+
+
 def collect_logarchive(target: str, out_path: str):
     """Collect the device's system logs into a ``.logarchive`` at ``out_path``.
 
