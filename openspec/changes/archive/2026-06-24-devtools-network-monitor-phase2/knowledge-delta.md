@@ -12,13 +12,14 @@ slide6-developer-tools / dvt-network-op
 
 ## 架构变更
 
-- 增加网络采样句柄层（平台）与子面板渲染层（UI）的双层分离。
-- 复用性能监控中的后台采样队列模型，新增连接流数据模型。
+- 增加网络事件流句柄层（平台）与子面板渲染层（UI）的双层分离。
+- 基于 `NetworkMonitor`（事件推送、无设备采样间隔）：复用性能监控的后台 loop + 队列 + 生命周期范式，但去掉采样间隔语义；新增「连接按 `connection_serial` 聚合」「吞吐由连接 update 字节增量聚合」「按远端 IP/接口聚合 TopN」「后台有界队列」。真机确认 `kind` 1=TCP/2=UDP、`pid` 恒为 -2（取消进程维度）。
 
 ## 接口变更
 
-- 新增 `open_network_stream(target, interval_ms)`（toolkit 层）。
-- 会话控制语义与性能监控对齐：Start/Stop/Pause/Clear。
+- 新增 `open_network_stream(target)`（toolkit 层，返回事件流句柄/错误信封；无设备采样间隔、不做频率校验）。
+- 会话控制语义：Start/Stop/Pause/Clear（Pause 仅暂停渲染）。
+- 字段映射：协议=kind(1=TCP/2=UDP) 推导、方向=启发式推导、端点=IP:port、错误=tx_retx/rx_dups；不可判定降级 `unknown`。进程维度取消（pid 不可用）。
 
 ## 代码路径变更
 

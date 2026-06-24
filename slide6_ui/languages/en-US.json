@@ -259,6 +259,8 @@
       "performance_sub": "CPU / memory / IO trends (up to 10 minutes)",
       "condition_title": "Condition Inducer",
       "condition_sub": "Simulate network / thermal / GPU conditions",
+      "network_title": "Network Monitor",
+      "network_sub": "Live connections & throughput (up to 10 minutes)",
       "syslog": "System Logs\nLive syslog / oslog (by OS version, no DDI required)"
     },
     "mount": {
@@ -714,6 +716,54 @@
       "power": "Power"
     }
   },
+  "network": {
+    "title": "Network Monitor",
+    "connecting": "Connecting to network monitor…",
+    "hint": "Per-flow process attribution is unavailable on modern iOS; the left panel groups by remote IP / interface.",
+    "status_label": "Status",
+    "stats": "{conns} conns · {err} errors · ↓{rx} ↑{tx} KB/s · dropped {dropped}",
+    "start": "Start",
+    "stop": "Stop",
+    "pause": "Pause",
+    "resume": "Resume",
+    "clear": "Clear",
+    "autoscroll": "Auto-scroll",
+    "export": "Export",
+    "started": "Monitoring started",
+    "stopped": "Monitoring stopped",
+    "paused": "View paused (collection continues)",
+    "resumed": "View resumed",
+    "cleared": "Cleared current view",
+    "stream_end": "Network stream ended",
+    "open_failed": "Failed to open network monitor: {error}",
+    "group_by": "Group by",
+    "group_remote": "Remote IP",
+    "group_iface": "Interface",
+    "group_all": "All",
+    "protocol": "Protocol",
+    "search_placeholder": "Filter by IP:port / keyword",
+    "active_only": "Active only",
+    "col_group": "Remote / Interface",
+    "col_conns": "Conns",
+    "col_bytes": "Bytes",
+    "col_time": "Time",
+    "col_proto": "Proto",
+    "col_dir": "Dir",
+    "col_local": "Local",
+    "col_remote": "Remote",
+    "no_selection": "Select a connection to see details",
+    "detail": "Protocol: {proto}  Direction: {direction}  Interface: {iface}\nLocal: {local}\nRemote: {remote}\nRx: {rx}  Tx: {tx}  Retx: {retx}  Dups: {dups}  avgRTT: {rtt}",
+    "export_csv": "CSV (*.csv)",
+    "export_json": "JSON (*.json)",
+    "export_empty": "Nothing to export yet",
+    "export_done": "Exported {count} connections to {path}",
+    "export_failed": "Export failed: {error}",
+    "state": {
+      "idle": "Idle",
+      "running": "Running",
+      "paused": "Paused"
+    }
+  },
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
@@ -855,6 +905,7 @@
     "CONDITION_UNKNOWN": "Unknown condition profile (not in the device's available models)",
     "CONDITION_NOT_READY": "Condition inducer is not connected",
     "CONDITION_OPEN_TIMEOUT": "Opening the condition inducer timed out",
+    "NETWORK_OPEN_TIMEOUT": "Opening the network monitor timed out",
     "LOG_ARCHIVE_FAILED": "Failed to collect .logarchive: {exc}"
   }
 }

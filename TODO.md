@@ -124,6 +124,17 @@
 
 ---
 
+## 四、技术债 / 重构（backlog）
+
+1. **DVT stream-handle 基类抽取（DRY）**：`ios_toolkit/device.py` 现有 4 个事件流句柄
+   `LogStreamHandle` / `PerformanceStreamHandle` / `ConditionInducerHandle` / `NetworkStreamHandle`
+   共享大量生命周期样板：`asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)`、
+   `_ready`/`_done` Event、`close()` 的 `call_soon_threadsafe(self._future.cancel)` + `_done.wait(timeout)`、
+   以及 `_with_dvt` 包裹。建议提取 `_DvtStreamHandle` 基类统一这套样板，子类只实现各自的事件归一化与
+   `snapshot`/`queue`。**因涉及多个已上线 handle，单独作为一次纯重构推进，避免与功能改动混在一起提交。**
+
+---
+
 ## 优先级汇总（建议）
 
 | 优先级 | 项目 |

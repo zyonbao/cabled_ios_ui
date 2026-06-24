@@ -259,6 +259,8 @@
       "performance_sub": "CPU / 内存 / IO 趋势（最多 10 分钟）",
       "condition_title": "条件诱导",
       "condition_sub": "模拟弱网 / 热状态 / GPU 性能",
+      "network_title": "网络监控",
+      "network_sub": "实时连接与吞吐（最多 10 分钟）",
       "syslog": "系统日志\n实时 syslog / oslog（按版本，无需 DDI）"
     },
     "mount": {
@@ -714,6 +716,54 @@
       "power": "功耗"
     }
   },
+  "network": {
+    "title": "网络监控",
+    "connecting": "正在连接网络监控…",
+    "hint": "现代 iOS 无法获取连接的进程归属；左栏改为按远端 IP / 接口聚合。",
+    "status_label": "状态",
+    "stats": "{conns} 连接 · {err} 错误 · ↓{rx} ↑{tx} KB/s · 丢弃 {dropped}",
+    "start": "开始",
+    "stop": "停止",
+    "pause": "暂停",
+    "resume": "继续",
+    "clear": "清空",
+    "autoscroll": "自动滚动",
+    "export": "导出",
+    "started": "已开始监控",
+    "stopped": "已停止监控",
+    "paused": "已暂停视图（后台采集继续）",
+    "resumed": "已恢复视图",
+    "cleared": "已清空当前视图",
+    "stream_end": "网络流已结束",
+    "open_failed": "打开网络监控失败：{error}",
+    "group_by": "分组",
+    "group_remote": "远端 IP",
+    "group_iface": "接口",
+    "group_all": "全部",
+    "protocol": "协议",
+    "search_placeholder": "按 IP:端口 / 关键词过滤",
+    "active_only": "仅活跃",
+    "col_group": "远端 / 接口",
+    "col_conns": "连接数",
+    "col_bytes": "字节",
+    "col_time": "时间",
+    "col_proto": "协议",
+    "col_dir": "方向",
+    "col_local": "本地",
+    "col_remote": "远端",
+    "no_selection": "选择一条连接查看详情",
+    "detail": "协议：{proto}  方向：{direction}  接口：{iface}\n本地：{local}\n远端：{remote}\nRx：{rx}  Tx：{tx}  重传：{retx}  重复：{dups}  平均RTT：{rtt}",
+    "export_csv": "CSV (*.csv)",
+    "export_json": "JSON (*.json)",
+    "export_empty": "暂无可导出的数据",
+    "export_done": "已导出 {count} 条连接到 {path}",
+    "export_failed": "导出失败：{error}",
+    "state": {
+      "idle": "Idle",
+      "running": "Running",
+      "paused": "Paused"
+    }
+  },
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
@@ -855,6 +905,7 @@
     "CONDITION_UNKNOWN": "未知的条件 profile（不在设备可用模型中）",
     "CONDITION_NOT_READY": "条件诱导未连接",
     "CONDITION_OPEN_TIMEOUT": "打开条件诱导超时",
+    "NETWORK_OPEN_TIMEOUT": "打开网络监控超时",
     "LOG_ARCHIVE_FAILED": "收集 .logarchive 失败：{exc}"
   }
 }

@@ -43,6 +43,7 @@ from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
 from .condition_inducer_dialog import ConditionInducerDialog
 from .location_dialog import LocationDialog
+from .network_monitor_dialog import NetworkMonitorDialog
 from .performance_dialog import PerformanceDialog
 from .process_dialog import ProcessDialog
 from .tunnel_manager_dialog import TunnelManagerDialog
@@ -182,10 +183,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
             i18n.t("dev_tools.tile.condition_title"),
             i18n.t("dev_tools.tile.condition_sub"),
         )
+        self.network_tile = self._make_tile(
+            i18n.t("dev_tools.tile.network_title"),
+            i18n.t("dev_tools.tile.network_sub"),
+        )
         flow.addWidget(self.process_tile)
         flow.addWidget(self.location_tile)
         flow.addWidget(self.performance_tile)
         flow.addWidget(self.condition_tile)
+        flow.addWidget(self.network_tile)
         # System log is a lockdown service: it needs neither DDI nor a tunnel, so
         # this tile stays enabled regardless of mount state (not in _feature_buttons).
         # The catalog value packs title + description on two lines; split it so the
@@ -228,6 +234,7 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.location_tile.clicked.connect(self._open_location)
         self.performance_tile.clicked.connect(self._open_performance)
         self.condition_tile.clicked.connect(self._open_condition)
+        self.network_tile.clicked.connect(self._open_network)
         self.syslog_tile.clicked.connect(self._open_syslog)
 
     # ------------------------------------------------------------- target
@@ -857,6 +864,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         logger.info("open condition inducer: target=%s", target)
         self._open_subwindow(
             "condition", lambda: ConditionInducerDialog(self.runner, target, self)
+        )
+
+    def _open_network(self) -> None:
+        target = self._get_target()
+        if not target:
+            return
+        logger.info("open network monitor: target=%s", target)
+        self._open_subwindow(
+            "network", lambda: NetworkMonitorDialog(self.runner, target, self)
         )
 
     def _open_syslog(self) -> None:

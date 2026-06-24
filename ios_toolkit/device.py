@@ -116,6 +116,9 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.services.dvt.instruments.condition_inducer import (  # noqa: F401
         ConditionInducer,
     )
+    from pymobiledevice3.services.dvt.instruments.network_monitor import (  # noqa: F401
+        NetworkMonitor,
+    )
     from pymobiledevice3.services.simulate_location import (  # noqa: F401
         DtSimulateLocation,
     )
@@ -3312,6 +3315,10 @@ class iOSDevice:
         """Open a connection-scoped DVT Condition Inducer session."""
         return ConditionInducerHandle(self)
 
+    def open_network_stream(self) -> "NetworkStreamHandle":
+        """Open a live DVT network monitor (connection flows + throughput)."""
+        return NetworkStreamHandle(self)
+
     def collect_logarchive(self, out_path: str) -> dict:
         """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
 
@@ -3993,6 +4000,216 @@ class ConditionInducerHandle:
             logger.warning("ConditionInducerHandle.close: timed out waiting cleanup")
         with self._lock:
             self._active = None
+
+
+class NetworkStreamHandle:
+    """Live network monitor backed by DVT NetworkMonitor on the shared loop.
+
+    Event-driven (no device sample interval): the device pushes interface /
+    connection-detection / connection-update events. The handle maintains a
+    thread-safe model — connections keyed by ``connection_serial`` plus a global
+    cumulative rx/tx counter for throughput — that the UI polls via ``snapshot``.
+    Connections are pruned to a ring-buffer cap and a 10-minute window. Per-flow
+    pid is not available on modern iOS (always -2), so there is no process model.
+    """
+
+    WINDOW_S = 600.0
+    MAX_CONNS = 4000
+
+    def __init__(self, device: "iOSDevice") -> None:
+        self._device = device
+        self._closed = False
+        self._error: Optional[Exception] = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._done = threading.Event()
+        self._conns: dict = {}
+        self._ifaces: dict = {}
+        self._cum_rx = 0.0
+        self._cum_tx = 0.0
+        self._events = 0
+        self._dropped = 0
+        self._prune_counter = 0
+        logger.debug("NetworkStreamHandle open: udid=%s", self._device.udid)
+        self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
+
+    async def _run(self) -> None:
+        try:
+            from pymobiledevice3.services.dvt.instruments.network_monitor import (
+                ConnectionDetectionEvent,
+                ConnectionUpdateEvent,
+                InterfaceDetectionEvent,
+                NetworkMonitor,
+            )
+
+            async def _op(dvt) -> None:
+                async with NetworkMonitor(dvt) as nm:
+                    self._ready.set()
+                    async for event in nm:
+                        if self._closed:
+                            break
+                        if event is None:
+                            continue
+                        try:
+                            self._handle_event(
+                                event,
+                                InterfaceDetectionEvent,
+                                ConnectionDetectionEvent,
+                                ConnectionUpdateEvent,
+                            )
+                        except Exception:
+                            self._dropped += 1
+
+            await self._device._with_dvt(_op)
+        except asyncio.CancelledError:
+            logger.debug("NetworkStreamHandle._run: cancelled (events=%s)", self._events)
+        except Exception as exc:
+            logger.warning("NetworkStreamHandle._run: error: %s", exc, exc_info=True)
+            self._error = exc
+        finally:
+            self._ready.set()
+            self._done.set()
+
+    @staticmethod
+    def _proto(kind: object) -> str:
+        # Verified on-device: kind 1 = TCP, 2 = UDP.
+        return {1: "TCP", 2: "UDP"}.get(kind, "unknown")
+
+    @staticmethod
+    def _endpoint(addr: object) -> tuple[str, int]:
+        try:
+            ip = str(addr.data.address)
+            port = int(addr.port)
+            return ip, port
+        except Exception:
+            return "unknown", 0
+
+    @staticmethod
+    def _direction(local_port: int, remote_port: int) -> str:
+        # No explicit field; derive heuristically (device usually initiates).
+        if not remote_port:
+            return "unknown"
+        if remote_port <= local_port:
+            return "out"
+        return "in"
+
+    @staticmethod
+    def _blank_record(serial: object, now: float) -> dict:
+        return {
+            "serial": serial, "proto": "unknown", "direction": "unknown",
+            "local": "unknown", "remote": "unknown", "remote_ip": "unknown",
+            "iface": "unknown", "rx_bytes": 0.0, "tx_bytes": 0.0,
+            "rx_pkts": 0, "tx_pkts": 0, "retx": 0, "dups": 0,
+            "avg_rtt": 0, "first_ts": now, "last_ts": now, "seen": False,
+        }
+
+    def _handle_event(self, event, IfaceCls, DetCls, UpdCls) -> None:
+        now = time.time()
+        self._events += 1
+        if isinstance(event, IfaceCls):
+            with self._lock:
+                self._ifaces[event.interface_index] = event.name
+            return
+        if isinstance(event, DetCls):
+            lip, lport = self._endpoint(event.local_address)
+            rip, rport = self._endpoint(event.remote_address)
+            with self._lock:
+                rec = self._blank_record(event.serial_number, now)
+                rec.update(
+                    proto=self._proto(event.kind),
+                    direction=self._direction(lport, rport),
+                    local=f"{lip}:{lport}",
+                    remote=f"{rip}:{rport}",
+                    remote_ip=rip,
+                    iface=self._ifaces.get(event.interface_index, str(event.interface_index)),
+                )
+                self._conns[event.serial_number] = rec
+                self._prune_locked(now)
+            return
+        if isinstance(event, UpdCls):
+            with self._lock:
+                rec = self._conns.get(event.connection_serial)
+                if rec is None:
+                    rec = self._conns[event.connection_serial] = self._blank_record(
+                        event.connection_serial, now
+                    )
+                # Verified on-device: update fields are PER-INTERVAL deltas, and a
+                # connection's FIRST update carries its pre-monitoring accumulated
+                # total (can be hundreds of MB). Seed the first update as a baseline
+                # (counts toward the connection total but NOT live throughput), then
+                # accumulate subsequent deltas.
+                d_rx = float(getattr(event, "rx_bytes", 0) or 0)
+                d_tx = float(getattr(event, "tx_bytes", 0) or 0)
+                d_rxp = int(getattr(event, "rx_packets", 0) or 0)
+                d_txp = int(getattr(event, "tx_packets", 0) or 0)
+                d_retx = int(getattr(event, "tx_retx", 0) or 0)
+                d_dups = int(getattr(event, "rx_dups", 0) or 0)
+                if rec.get("seen"):
+                    self._cum_rx += max(0.0, d_rx)
+                    self._cum_tx += max(0.0, d_tx)
+                    rec["rx_bytes"] += d_rx
+                    rec["tx_bytes"] += d_tx
+                    rec["rx_pkts"] += d_rxp
+                    rec["tx_pkts"] += d_txp
+                    rec["retx"] += d_retx
+                    rec["dups"] += d_dups
+                else:
+                    rec["seen"] = True
+                    rec["rx_bytes"] = d_rx
+                    rec["tx_bytes"] = d_tx
+                    rec["rx_pkts"] = d_rxp
+                    rec["tx_pkts"] = d_txp
+                    rec["retx"] = d_retx
+                    rec["dups"] = d_dups
+                rec["avg_rtt"] = int(getattr(event, "avg_rtt", 0) or 0)
+                rec["last_ts"] = now
+                self._prune_locked(now)
+
+    def _prune_locked(self, now: float) -> None:
+        # Amortized prune: scanning all connections every event is O(n^2) under a
+        # connection storm, so only prune when over the hard cap or every N events
+        # (for window expiry). When over the cap, drop to a low-water mark so the
+        # next prune is N events away instead of every event.
+        self._prune_counter += 1
+        over = len(self._conns) > self.MAX_CONNS
+        if not over and self._prune_counter < 512:
+            return
+        self._prune_counter = 0
+        cutoff = now - self.WINDOW_S
+        kept = [r for r in self._conns.values() if r["last_ts"] >= cutoff]
+        if len(kept) > self.MAX_CONNS:
+            kept.sort(key=lambda r: r["last_ts"])
+            target = int(self.MAX_CONNS * 0.9)
+            self._dropped += len(kept) - target
+            kept = kept[len(kept) - target:]
+        if len(kept) != len(self._conns):
+            self._conns = {r["serial"]: r for r in kept}
+
+    def wait_ready(self, timeout: float = 45.0) -> Optional[Exception]:
+        """Block until monitoring started, or surface a timeout/error."""
+        if not self._ready.wait(timeout=timeout):
+            return TimeoutError("network monitor open timed out")
+        return self._error
+
+    def snapshot(self) -> dict:
+        """Thread-safe copy of the current model for UI rendering."""
+        with self._lock:
+            return {
+                "running": not self._closed and self._error is None,
+                "cum_rx": self._cum_rx,
+                "cum_tx": self._cum_tx,
+                "timestamp": time.time(),
+                "connections": [dict(r) for r in self._conns.values()],
+                "dropped": self._dropped,
+            }
+
+    def close(self) -> None:
+        """Stop monitoring and tear down the connection."""
+        self._closed = True
+        if self._future and not self._future.done():
+            _bg_loop.call_soon_threadsafe(self._future.cancel)
+        if not self._done.wait(timeout=3.0):
+            logger.warning("NetworkStreamHandle.close: timed out waiting cleanup")
 
 
 _oslog_level_patched = False

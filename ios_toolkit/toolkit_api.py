@@ -1180,6 +1180,31 @@ def open_condition_inducer(target: str):
     return handle
 
 
+def open_network_stream(target: str):
+    """Open a live network monitor (connection flows + throughput) and return a handle.
+
+    Returns a ``NetworkStreamHandle`` for in-process desktop callers, or an error
+    envelope. Event-driven (no device sample interval); not exposed via the JSON
+    CLI because it is a long-lived stream.
+    """
+    from .device import _dvt_exc_to_err
+
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    handle = device.open_network_stream()
+    open_err = handle.wait_ready(timeout=45)
+    if open_err is not None:
+        try:
+            handle.close()
+        except Exception:
+            pass
+        if isinstance(open_err, TimeoutError):
+            return _err("SUBPROCESS", str(open_err), code="NETWORK_OPEN_TIMEOUT")
+        return _dvt_exc_to_err(open_err)
+    return handle
+
+
 def collect_logarchive(target: str, out_path: str):
     """Collect the device's system logs into a ``.logarchive`` at ``out_path``.
 

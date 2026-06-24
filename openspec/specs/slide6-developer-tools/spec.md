@@ -159,15 +159,15 @@ GPX 文件回放 SHALL 提供以下时间节奏控件与联动规则：
 
 ### Requirement: 网络监控界面
 
-「网络监控」能力 SHALL 作为「开发者工具」Tab 内的功能卡片入口，点击后进入同一 Tab 下的 Network Monitor 子面板，MUST NOT 新增独立 sidebar Tab。子面板顶部 MUST 提供状态条，至少展示采集状态（Idle/Running/Paused）与缓存占用，并提供 Start/Stop 控制。主内容区 SHOULD 使用三栏布局：左侧进程列表（TopN + bundle id 搜索）、中间连接流列表（时间/协议/方向/本地-远端/字节）、右侧详情与趋势图（Rx/Tx 速率、连接数、错误数）。网络缓存 MUST 最多保留最近 10 分钟数据，超过 10 分钟的历史记录 MUST 丢弃；趋势图等可视化 MUST 仅展示该 10 分钟窗口并实时显示当前上下载速度；连接流字段按可获取能力降级显示。
+「网络监控」能力 SHALL 作为「开发者工具」Tab 内的功能卡片入口，点击后进入同一 Tab 下的 Network Monitor 子面板，MUST NOT 新增独立 sidebar Tab。子面板顶部 MUST 提供状态条，至少展示采集状态（Idle/Running/Paused）与缓存占用，并提供 Start/Stop 控制。主内容区 SHOULD 使用三栏布局：左侧按「远端 IP/接口」聚合的 TopN（按字节/连接数）与 `IP:port` 搜索（进程归属不可用，故不提供进程列表）、中间连接流列表（时间/协议/方向/本地-远端 `IP:port`/字节）、右侧详情与趋势图（Rx/Tx 速率、连接数、错误数）。网络缓存 MUST 最多保留最近 10 分钟数据，超过 10 分钟的历史记录 MUST 丢弃；趋势图等可视化 MUST 仅展示该 10 分钟窗口并实时显示当前上下载速度；连接流字段按可获取能力降级显示（详见 `dvt-network-op`）。
 
-网络监控 MUST 提供高频控制栏：Start/Stop、Pause、Clear、Auto-scroll、Export（CSV/JSON）；Export 能力 SHOULD 预留与后续 PCAP 关联扩展点。过滤器 MUST 支持按进程、协议（TCP/UDP）、方向（in/out）、host/port、时间窗口、关键词筛选，并支持「仅显示活跃连接」。
+网络监控 MUST 提供高频控制栏：Start/Stop、Pause、Clear、Auto-scroll、Export（CSV/JSON）；Export 能力 SHOULD 预留与后续 PCAP 关联扩展点。过滤器 MUST 支持按协议（TCP/UDP/unknown）、host/port（`IP:port` 子串）、时间窗口、关键词筛选，并支持「仅显示活跃连接」；方向（in/out）过滤 MAY 提供，基于推导值。进程过滤不提供（进程归属不可用）。
 
-网络采集与渲染 MUST 采用后台线程采集 + 主线程限速渲染；UI 刷新 SHOULD 采用 200~500ms 批量节流。实现 MUST 使用 ring buffer 控制最大记录数，避免高吞吐场景下内存增长和 UI 卡顿。
+网络采集为事件推送式（无设备侧采样间隔），MUST 采用后台采集 + 主线程限速渲染；UI 刷新 SHOULD 采用 200~500ms 批量节流（仅前端刷新/速率聚合，非设备采样频率）。实现 MUST 使用 ring buffer 控制最大记录数，且后台事件队列 MUST 设上限并溢出丢弃最旧事件，避免高吞吐场景下内存增长和 UI 卡顿。
 
 网络监控后台采集线程/进程 MUST 与 Network Monitor 子面板窗口生命周期绑定：点击 Start 时创建并启动；点击 Stop 时停止并回收；用户关闭该子面板窗口时 MUST 自动停止并回收，MUST NOT 遗留孤儿线程/进程。
 
-网络监控采样频率默认 SHOULD 为 `500ms`，允许范围 MUST 为 `200ms~2000ms`。Export（CSV/JSON）默认 MUST 导出当前过滤条件下、最近 10 分钟缓存窗口数据。字段缺失或部分能力不可用时 MUST 明确显示 `unsupported`/`unknown`，且不得中断整场会话。
+Export（CSV/JSON）默认 MUST 导出当前过滤条件下、最近 10 分钟缓存窗口数据。字段缺失或部分能力不可用时 MUST 明确显示 `unsupported`/`unknown`，且不得中断整场会话。
 
 #### Scenario: 趋势与实时速率
 
