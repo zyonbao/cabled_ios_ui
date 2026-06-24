@@ -1136,6 +1136,25 @@ def open_log_stream(
     )
 
 
+def open_performance_stream(target: str, interval_ms: int = 500):
+    """Open a live performance stream (CPU/GPU/memory) and return a handle.
+
+    Returns a ``PerformanceStreamHandle`` for in-process desktop callers. This is
+    intentionally not exposed via the JSON CLI because it is a long-lived stream.
+    """
+    if interval_ms < 200 or interval_ms > 2000:
+        return _err(
+            "BAD_TARGET",
+            f"interval_ms out of range: {interval_ms}",
+            details={"min": 200, "max": 2000, "interval_ms": interval_ms},
+            code="PERF_INTERVAL_OUT_OF_RANGE",
+        )
+    device, err = _prepare_device_basic(target)
+    if err:
+        return err
+    return device.open_performance_stream(interval_ms=interval_ms)
+
+
 def collect_logarchive(target: str, out_path: str):
     """Collect the device's system logs into a ``.logarchive`` at ``out_path``.
 

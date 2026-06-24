@@ -1,31 +1,37 @@
 # dvt-performance-op Specification
 
 ## Purpose
-定义基于 DVT instruments 的性能监控能力：采集并展示 CPU / GPU / Memory 等可获取指标，统一实时采样、10 分钟滚动窗口绘图与导出数据结构。
+定义基于 DVT `sysmontap` 的性能监控能力：采集并展示 **CPU 信息 / 内存信息 / 网络与磁盘 IO 信息** 三类指标，统一实时采样、10 分钟滚动窗口绘图与导出数据结构。
 
 ## Requirements
 ### Requirement: 性能采样会话
 
-平台层 SHALL 提供 `start_performance_session(target, metrics, sample_interval_ms)` 与 `stop_performance_session(target)`。采样 MUST 在后台线程执行，不阻塞 UI；重复启动 MUST 先关闭旧会话再创建新会话。`metrics` 为请求指标集合（如 CPU/GPU/Memory），平台层 MUST 按设备可用能力返回实际生效指标并显式标记不可用项。采样失败 MUST 返回可读错误信封，而非崩溃。
+平台层 SHALL 提供 `open_performance_stream(target, interval_ms)`：成功时返回与窗口生命周期绑定的实时采样流句柄（`PerformanceStreamHandle`，经 `close()` 停止并回收），失败时返回可读错误信封。采样 MUST 在后台线程/事件循环执行，不阻塞 UI。UI 层 MUST 防止同一窗口并发开启多个采样流（采样进行中禁用 Start，Stop / 关闭窗口时经 `close()` 回收句柄）。采样源为 `sysmontap`，至少应产出以下三类可视化输入（按设备可用能力降级）：
 
-性能采样后台线程/进程 MUST 与性能监控窗口生命周期绑定：调用 `start` 时创建并启动；调用 `stop` 时停止并回收；窗口被关闭时 MUST 自动执行停止与回收。实现 MUST NOT 保留脱离窗口生命周期的后台采样任务。
+- CPU 信息：`SystemCPUUsage.CPU_TotalLoad` 按活动核数（`EnabledCPUs`/`CPUCount`）归一化到 0~100%，降级时用 `PerCPUUsage` 每核均值或进程 `cpuUsage`；
+- 内存信息：系统已用内存（active + wired + compressed，按 16KB 页换算）与设备物理内存容量（`physMemSize`）；
+- 网络与磁盘 IO：累计字节计数（如 `netBytesIn/Out`、`diskBytesRead/Written`）及其速率换算输入。
+
+采样失败 MUST 返回可读错误信封，而非崩溃。
+
+采样流 MUST 与性能监控窗口生命周期绑定：Start 时经 `open_performance_stream` 创建并启动；Stop 时经句柄 `close()` 停止并回收；窗口被关闭时 MUST 自动 `close()` 回收。实现 MUST NOT 保留脱离窗口生命周期的后台采样任务。
 
 采样频率 `sample_interval_ms` 默认值 SHOULD 为 `500ms`；允许范围 MUST 为 `200ms~2000ms`。超出范围的请求 MUST 被拒绝并返回可读参数错误，MUST NOT 静默回退到未知值。
 
-#### Scenario: 启动采样并返回生效指标
+#### Scenario: 启动采样并返回采样流
 
 - **WHEN** 用户请求开始性能采样
-- **THEN** 返回 `{ok, data:{session_id, enabled_metrics, unsupported_metrics}}`
+- **THEN** 平台层返回实时采样流句柄，UI 据此开始绘制；采样无法启动时返回可读错误信封
 
-#### Scenario: 重复启动覆盖旧会话
+#### Scenario: 采样进行中禁止重复开启
 
-- **WHEN** 已有采样会话时再次启动
-- **THEN** 平台层先停止旧会话，再启动新会话并返回新会话标识
+- **WHEN** 性能监控窗口已在采样
+- **THEN** Start 处于禁用态，不会创建第二个采样流；再次点击功能位仅前置已有窗口
 
-#### Scenario: 关闭窗口回收采样会话
+#### Scenario: 关闭窗口回收采样流
 
 - **WHEN** 用户关闭性能监控窗口
-- **THEN** 平台层自动停止并回收该窗口绑定的后台采样线程/进程
+- **THEN** 平台层自动 `close()` 停止并回收该窗口绑定的采样流
 
 #### Scenario: 非法采样频率
 
@@ -48,7 +54,13 @@
 
 ### Requirement: 图表渲染与状态反馈
 
-UI 层 SHALL 将性能指标以折线图展示，并显示采样状态（运行中/已停止）、采样频率、最后更新时间。高频采样下 MUST 采用限速渲染（例如固定 FPS 或节流刷新）以避免主线程卡顿。
+UI 层 SHALL 以三个图表展示三类指标：
+
+- CPU 图表（单或多线）；
+- 内存图表（以内存使用量为主，坐标轴上限绑定设备物理内存）；
+- 网络与磁盘 IO 图表（同图多线展示入/出网速与磁盘读/写速率）。
+
+同一图表内 MAY 通过不同颜色区分多条指标线。UI MUST 显示采样状态（运行中/已停止）、采样频率、最后更新时间。高频采样下 MUST 采用限速渲染（例如固定 FPS 或节流刷新）以避免主线程卡顿。
 
 控制语义 MUST 明确：`Pause` 仅暂停图表刷新而不停止后台采样；`Stop` 停止采样并回收后台任务；`Clear` 清空当前可视缓存并重置图表显示。`Stop` 后 SHOULD 保留最后一次有效快照用于只读查看，直到用户执行 `Clear` 或重新 `Start`。
 
@@ -64,10 +76,10 @@ UI 层 SHALL 将性能指标以折线图展示，并显示采样状态（运行�
 
 ### Requirement: 性能能力降级与错误语义
 
-当部分指标不可用（例如设备不支持 GPU 指标）时，平台层与 UI MUST 以 `unsupported` 明确标识该指标，并继续展示其他可用指标。单指标失败 MUST NOT 导致整场会话失败；仅在采样会话整体不可启动时才返回全局失败。
+当部分指标不可用时，平台层与 UI MUST 以隐藏子线方式降级，并继续展示其他可用指标。单指标失败 MUST NOT 导致整场会话失败；仅在采样会话整体不可启动时才返回全局失败。
 
-#### Scenario: 单指标不可用降级
+#### Scenario: 子线缺失降级
 
-- **WHEN** 用户请求 CPU/GPU/Memory 但设备仅支持 CPU/Memory
-- **THEN** 会话成功启动，GPU 标记为 `unsupported`，CPU/Memory 正常展示
+- **WHEN** 设备未返回某类子线（例如 GPU）
+- **THEN** 会话成功启动，已返回的 CPU/内存/IO 指标正常展示，缺失子线以隐藏方式处理
 

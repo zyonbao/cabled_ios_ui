@@ -255,6 +255,8 @@
       "process_sub": "查看进程列表 / 启动 / 结束 / 明细",
       "location_title": "虚拟定位",
       "location_sub": "设定 / 清除虚拟 GPS 坐标",
+      "performance_title": "性能监控",
+      "performance_sub": "CPU / 内存 / IO 趋势（最多 10 分钟）",
       "syslog": "系统日志\n实时 syslog / oslog（按版本，无需 DDI）"
     },
     "mount": {
@@ -623,6 +625,32 @@
     "clear_failed_detail": "清除失败: {error}",
     "cleared": "已清除虚拟定位，恢复真实 GPS"
   },
+  "performance": {
+    "title": "性能监控",
+    "hint": "点击开始后采集性能指标。缓存与图表最多保留最近 10 分钟。",
+    "status_label": "状态",
+    "cache_label": "缓存样本数",
+    "updated_label": "最后更新",
+    "updated_never": "--",
+    "interval_label": "采样间隔",
+    "start": "开始",
+    "stop": "停止",
+    "pause": "暂停",
+    "resume": "继续",
+    "clear": "清空",
+    "started": "已开始采集（{interval}ms）",
+    "stopped": "已停止采集",
+    "paused": "已暂停图表刷新（后台采样继续）",
+    "resumed": "已恢复图表刷新",
+    "cleared": "已清空当前缓存与图表",
+    "stream_error": "性能流异常：{error}",
+    "stream_end": "性能流已结束",
+    "state": {
+      "idle": "Idle",
+      "running": "Running",
+      "paused": "Paused"
+    }
+  },
   "readiness": {
     "ready": "已就绪",
     "missing_tunnel": "请先启用 XPC tunnel（开发者工具顶部「启动」）",
@@ -760,6 +788,7 @@
     "GPX_FILE_NOT_FOUND": "GPX 文件不存在：{path}",
     "GPX_PARSE_FAILED": "解析 GPX 失败：{exc}",
     "GPX_NO_TRACKPOINTS": "GPX 文件中没有可用的轨迹点",
+    "PERF_INTERVAL_OUT_OF_RANGE": "性能采样间隔超出范围（允许 200~2000ms）",
     "LOG_ARCHIVE_FAILED": "收集 .logarchive 失败：{exc}"
   }
 }

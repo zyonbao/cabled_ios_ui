@@ -110,6 +110,9 @@ if False:  # noqa: SIM223 - Nuitka static-include hint, not runtime code
     from pymobiledevice3.services.dvt.instruments.location_simulation import (  # noqa: F401
         LocationSimulation,
     )
+    from pymobiledevice3.services.dvt.instruments.sysmontap import (  # noqa: F401
+        Sysmontap,
+    )
     from pymobiledevice3.services.simulate_location import (  # noqa: F401
         DtSimulateLocation,
     )
@@ -3298,6 +3301,10 @@ class iOSDevice:
             message_filter=message_filter, stream_flags=stream_flags,
         )
 
+    def open_performance_stream(self, interval_ms: int = 500) -> "PerformanceStreamHandle":
+        """Start a live DVT performance stream (CPU/GPU/memory metrics)."""
+        return PerformanceStreamHandle(self, interval_ms=interval_ms)
+
     def collect_logarchive(self, out_path: str) -> dict:
         """Collect device logs into a ``.logarchive`` at ``out_path`` (one-shot).
 
@@ -3502,6 +3509,271 @@ class LogStreamHandle:
             logger.debug("LogStreamHandle.close: relay released")
         else:
             logger.warning("LogStreamHandle.close: timed out waiting for relay release")
+
+
+class PerformanceStreamHandle:
+    """Live performance stream backed by DVT sysmontap on the shared loop."""
+
+    LINE = "line"
+    ERROR = "error"
+    EOF = "eof"
+    # All 64-bit Apple devices use 16KB VM pages; sysmontap page counters
+    # (physMemSize, vm*Count) are expressed in these pages.
+    _PAGE_SIZE = 16384
+
+    def __init__(self, device: "iOSDevice", interval_ms: int = 500) -> None:
+        import queue as _queue
+
+        self._device = device
+        self.interval_ms = int(interval_ms)
+        self.queue: "_queue.Queue[tuple[str, object]]" = _queue.Queue(maxsize=5000)
+        self._closed = False
+        self._samples = 0
+        self._done = threading.Event()
+        self._last_system: dict = {}
+        self._last_process_entries: list[dict] = []
+        self._last_per_cpu: list[dict] = []
+        self._last_system_cpu: dict = {}
+        self._cpu_count = 0
+        # sysmontap's first frame carries uninitialized CPU values (a spurious 0
+        # or 100 with EnabledCPUs=0), so the first valid sample is dropped.
+        self._first_sample_skipped = False
+        logger.debug(
+            "PerformanceStreamHandle open: udid=%s interval_ms=%s",
+            self._device.udid,
+            self.interval_ms,
+        )
+        self._future = asyncio.run_coroutine_threadsafe(self._run(), _bg_loop)
+
+    async def _run(self) -> None:
+        tap = None
+        try:
+            from pymobiledevice3.services.dvt.instruments.sysmontap import Sysmontap
+
+            async def _stream(dvt) -> None:
+                nonlocal tap
+                tap = await Sysmontap.create(dvt, interval=self.interval_ms)
+                async with tap:
+                    async for row in tap:
+                        if self._closed:
+                            break
+                        sample = self._normalize_row(tap, row)
+                        if sample is None:
+                            continue
+                        if not self._first_sample_skipped:
+                            self._first_sample_skipped = True
+                            continue
+                        self._put(self.LINE, sample)
+
+            await self._device._with_dvt(_stream)
+            self._put(self.EOF, None)
+        except asyncio.CancelledError:
+            logger.debug(
+                "PerformanceStreamHandle._run: cancelled (samples=%s)",
+                self._samples,
+            )
+        except Exception as exc:
+            logger.warning(
+                "PerformanceStreamHandle._run: error after %s samples: %s",
+                self._samples,
+                exc,
+                exc_info=True,
+            )
+            self._put(self.ERROR, str(exc))
+        finally:
+            self._done.set()
+
+    def _normalize_row(self, tap, row: object) -> dict | None:
+        import dataclasses
+
+        payload = row if isinstance(row, dict) else {}
+        system = payload.get("System")
+        processes = payload.get("Processes")
+        per_cpu = payload.get("PerCPUUsage")
+        system_cpu = payload.get("SystemCPUUsage")
+
+        # sysmontap emits ~2000 raw rows/sec but only refreshes metric blocks
+        # once per sample interval; rows without any metric block carry no new
+        # data, so ignore them instead of re-emitting cached values.
+        if not (
+            isinstance(system, (list, tuple))
+            or isinstance(system_cpu, dict)
+            or isinstance(per_cpu, list)
+            or isinstance(processes, dict)
+        ):
+            return None
+
+        cpu_count = payload.get("EnabledCPUs") or payload.get("CPUCount")
+        if isinstance(cpu_count, (int, float)) and cpu_count > 0:
+            self._cpu_count = int(cpu_count)
+
+        system_dict: dict = {}
+        if isinstance(system, (list, tuple)):
+            try:
+                system_dict = dataclasses.asdict(tap.system_attributes_cls(*system))
+            except Exception:
+                system_dict = {}
+
+        process_entries: list[dict] = []
+        if isinstance(processes, dict):
+            for proc_values in processes.values():
+                if not isinstance(proc_values, (list, tuple)):
+                    continue
+                try:
+                    process_entries.append(
+                        dataclasses.asdict(tap.process_attributes_cls(*proc_values))
+                    )
+                except Exception:
+                    continue
+
+        if isinstance(per_cpu, list):
+            self._last_per_cpu = [p for p in per_cpu if isinstance(p, dict)]
+        if isinstance(system_cpu, dict):
+            self._last_system_cpu = system_cpu
+        if system_dict:
+            self._last_system = system_dict
+        if process_entries:
+            self._last_process_entries = process_entries
+
+        # The System block (carrying CPU + memory + IO counters together) arrives
+        # once per sample interval; emit exactly one sample per such frame. Other
+        # rows (e.g. Processes-only) only refresh caches above.
+        if not system_dict:
+            return None
+
+        system_view = self._last_system
+        process_view = self._last_process_entries
+        per_cpu_view = self._last_per_cpu
+
+        cpu_count = self._cpu_count or len(per_cpu_view)
+        cpu = self._extract_cpu_percent(
+            self._last_system_cpu, cpu_count, per_cpu_view, process_view
+        )
+        physical_mem_mb = self._extract_physical_mem_mb(system_view)
+        mem_used_mb = self._extract_system_used_mb(system_view)
+        net_in = self._extract_counter(system_view, "netBytesIn")
+        net_out = self._extract_counter(system_view, "netBytesOut")
+        disk_read = self._extract_counter(system_view, "diskBytesRead")
+        disk_write = self._extract_counter(system_view, "diskBytesWritten")
+        if (
+            cpu is None
+            and mem_used_mb is None
+            and net_in is None
+            and net_out is None
+            and disk_read is None
+            and disk_write is None
+        ):
+            return None
+        sample = {
+            "timestamp": time.time(),
+            "cpu_percent": cpu,
+            "memory_used_mb": mem_used_mb,
+            "physical_mem_mb": physical_mem_mb,
+            "net_bytes_in": net_in,
+            "net_bytes_out": net_out,
+            "disk_bytes_read": disk_read,
+            "disk_bytes_written": disk_write,
+        }
+        return sample
+
+    @staticmethod
+    def _extract_cpu_percent(
+        system_cpu: object,
+        cpu_count: int,
+        per_cpu: object,
+        process_entries: list[dict],
+    ) -> float | None:
+        # sysmontap CPU loads are percentages summed across cores (0~100*nCores);
+        # negative values are uninitialized sentinels (-1) and are ignored. We
+        # report device-wide utilization on a 0~100 scale.
+        cores = cpu_count if cpu_count and cpu_count > 0 else 1
+
+        # Primary: the SystemCPUUsage aggregate (what pymobiledevice3's own CLI
+        # uses), normalized by active core count.
+        if isinstance(system_cpu, dict):
+            total = system_cpu.get("CPU_TotalLoad")
+            if isinstance(total, (int, float)) and total >= 0:
+                return max(0.0, min(100.0, float(total) / cores))
+
+        # Fallback: average the per-core CPU_TotalLoad values (each already 0~100).
+        if isinstance(per_cpu, list):
+            values = [
+                float(item["CPU_TotalLoad"])
+                for item in per_cpu
+                if isinstance(item, dict)
+                and isinstance(item.get("CPU_TotalLoad"), (int, float))
+                and item["CPU_TotalLoad"] >= 0
+            ]
+            if values:
+                return max(0.0, min(100.0, sum(values) / len(values)))
+
+        # Last resort: sum per-process cpuUsage, normalized by core count.
+        cpu_usage_values = [
+            float(proc["cpuUsage"])
+            for proc in process_entries
+            if isinstance(proc, dict)
+            and isinstance(proc.get("cpuUsage"), (int, float))
+            and proc["cpuUsage"] >= 0
+        ]
+        if cpu_usage_values:
+            return max(0.0, min(100.0, sum(cpu_usage_values) / cores))
+        return None
+
+    @staticmethod
+    def _extract_physical_mem_mb(system_dict: dict) -> float | None:
+        """Total physical memory (MB). ``physMemSize`` is a 16KB-page count."""
+        raw = system_dict.get("physMemSize")
+        if not isinstance(raw, (int, float)) or raw <= 0:
+            return None
+        mb = (float(raw) * PerformanceStreamHandle._PAGE_SIZE) / (1024 * 1024)
+        return mb if mb > 0 else None
+
+    @staticmethod
+    def _extract_system_used_mb(system_dict: dict) -> float | None:
+        """System used memory (MB) ≈ iOS "Memory Used": active + wired + compressed.
+
+        Reclaimable inactive/purgeable cache is excluded so the value tracks real
+        pressure instead of sitting near the physical ceiling. VM counters are
+        16KB-page counts.
+        """
+        pages = 0.0
+        seen = False
+        for key in ("vmActiveCount", "vmWireCount", "vmCompressorPageCount"):
+            value = system_dict.get(key)
+            if isinstance(value, (int, float)) and value >= 0:
+                pages += float(value)
+                seen = True
+        if not seen:
+            return None
+        mb = (pages * PerformanceStreamHandle._PAGE_SIZE) / (1024 * 1024)
+        return mb if mb > 0 else None
+
+    @staticmethod
+    def _extract_counter(system_dict: dict, key: str) -> float | None:
+        value = system_dict.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            return float(value)
+        return None
+
+    def _put(self, kind: str, payload: object) -> None:
+        if self._closed:
+            return
+        if kind == self.LINE:
+            self._samples += 1
+        try:
+            self.queue.put_nowait((kind, payload))
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Stop the stream and wait for coroutine cleanup."""
+        self._closed = True
+        if self._future and not self._future.done():
+            _bg_loop.call_soon_threadsafe(self._future.cancel)
+        if not self._done.wait(timeout=3.0):
+            logger.warning(
+                "PerformanceStreamHandle.close: timed out waiting cleanup"
+            )
 
 
 _oslog_level_patched = False

@@ -255,6 +255,8 @@
       "process_sub": "List / launch / kill / details",
       "location_title": "Virtual Location",
       "location_sub": "Set / clear simulated GPS coordinates",
+      "performance_title": "Performance Monitor",
+      "performance_sub": "CPU / memory / IO trends (up to 10 minutes)",
       "syslog": "System Logs\nLive syslog / oslog (by OS version, no DDI required)"
     },
     "mount": {
@@ -623,6 +625,32 @@
     "clear_failed_detail": "Clear failed: {error}",
     "cleared": "Virtual location cleared; real GPS restored"
   },
+  "performance": {
+    "title": "Performance Monitor",
+    "hint": "Click Start to collect performance metrics. Cache and charts keep only the latest 10 minutes.",
+    "status_label": "Status",
+    "cache_label": "Cached samples",
+    "updated_label": "Last updated",
+    "updated_never": "--",
+    "interval_label": "Sample interval",
+    "start": "Start",
+    "stop": "Stop",
+    "pause": "Pause",
+    "resume": "Resume",
+    "clear": "Clear",
+    "started": "Sampling started ({interval}ms)",
+    "stopped": "Sampling stopped",
+    "paused": "Chart rendering paused (background sampling continues)",
+    "resumed": "Chart rendering resumed",
+    "cleared": "Cleared current cache and charts",
+    "stream_error": "Performance stream error: {error}",
+    "stream_end": "Performance stream ended",
+    "state": {
+      "idle": "Idle",
+      "running": "Running",
+      "paused": "Paused"
+    }
+  },
   "readiness": {
     "ready": "Ready",
     "missing_tunnel": "Enable the XPC tunnel first (Developer Tools, top “Start”).",
@@ -760,6 +788,7 @@
     "GPX_FILE_NOT_FOUND": "GPX file not found: {path}",
     "GPX_PARSE_FAILED": "Failed to parse GPX: {exc}",
     "GPX_NO_TRACKPOINTS": "The GPX file has no usable track points",
+    "PERF_INTERVAL_OUT_OF_RANGE": "Performance sample interval is out of range (allowed: 200~2000ms)",
     "LOG_ARCHIVE_FAILED": "Failed to collect .logarchive: {exc}"
   }
 }

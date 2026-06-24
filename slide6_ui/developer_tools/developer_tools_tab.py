@@ -42,6 +42,7 @@ from ..common import readiness, tunnel
 from ..common.workers import AsyncRunner
 from ..syslog import LogDialog
 from .location_dialog import LocationDialog
+from .performance_dialog import PerformanceDialog
 from .process_dialog import ProcessDialog
 from .tunnel_manager_dialog import TunnelManagerDialog
 
@@ -172,8 +173,13 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.location_tile = self._make_tile(
             i18n.t("dev_tools.tile.location_title"), i18n.t("dev_tools.tile.location_sub")
         )
+        self.performance_tile = self._make_tile(
+            i18n.t("dev_tools.tile.performance_title"),
+            i18n.t("dev_tools.tile.performance_sub"),
+        )
         flow.addWidget(self.process_tile)
         flow.addWidget(self.location_tile)
+        flow.addWidget(self.performance_tile)
         # System log is a lockdown service: it needs neither DDI nor a tunnel, so
         # this tile stays enabled regardless of mount state (not in _feature_buttons).
         # The catalog value packs title + description on two lines; split it so the
@@ -214,6 +220,7 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self.tunnel_manage_btn.clicked.connect(self._open_tunnel_manager)
         self.process_tile.clicked.connect(self._open_process)
         self.location_tile.clicked.connect(self._open_location)
+        self.performance_tile.clicked.connect(self._open_performance)
         self.syslog_tile.clicked.connect(self._open_syslog)
 
     # ------------------------------------------------------------- target
@@ -825,6 +832,15 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         logger.info("open virtual location: target=%s", target)
         self._open_subwindow(
             "location", lambda: LocationDialog(self.runner, target, self)
+        )
+
+    def _open_performance(self) -> None:
+        target = self._get_target()
+        if not target:
+            return
+        logger.info("open performance monitor: target=%s", target)
+        self._open_subwindow(
+            "performance", lambda: PerformanceDialog(self.runner, target, self)
         )
 
     def _open_syslog(self) -> None:
