@@ -8,9 +8,9 @@
 
 ### Phase 3 多设备设备管理器
 
-Phase 3 引入 `ios_toolkit/device.py`，用 `iOSDevicesManager` 单例维护 UDID 到 `iOSDevice` 的注册表。`device.py` 在模块加载时创建后台 `asyncio` event loop 和 daemon thread，每个 `iOSDevice` 注册时启动一个持久 usbmux 端口转发任务，设备操作直接访问对应 `local_port` 上的 WDA HTTP 服务。来源：`openspec/archive/executor-ios-phase3-device-manager/`
+Phase 3 引入 `ios_toolkit/device.py`，用 `iOSDevicesManager` 单例维护 UDID 到 `iOSDevice` 的注册表。`device.py` 在模块加载时创建后台 `asyncio` event loop 和 daemon thread，每个 `iOSDevice` 注册时启动一个持久 usbmux 端口转发任务，设备操作直接访问对应 `local_port` 上的 WDA HTTP 服务。来源：`openspec/changes/archive/2026-06-03-executor-ios-phase3-device-manager/`
 
-`toolkit_api.py` 通过 `_get_manager()` 延迟导入 `_manager`，公开操作统一执行：解析设备、必要时 `do_prepare()` 启动 WDA、委托 `iOSDevice` 方法。这样保留同步 API 形态，同时移除 Phase 1 的 `asyncio.run()` 和每次操作临时转发模式。来源：`openspec/archive/executor-ios-phase3-device-manager/`
+`toolkit_api.py` 通过 `_get_manager()` 延迟导入 `_manager`，公开操作统一执行：解析设备、必要时 `do_prepare()` 启动 WDA、委托 `iOSDevice` 方法。这样保留同步 API 形态，同时移除 Phase 1 的 `asyncio.run()` 和每次操作临时转发模式。来源：`openspec/changes/archive/2026-06-03-executor-ios-phase3-device-manager/`
 
 ## 接口说明
 
@@ -26,7 +26,7 @@ Phase 3 引入 `ios_toolkit/device.py`，用 `iOSDevicesManager` 单例维护 UD
 
 ### 平台操作接口
 
-`iOSDevice` 提供 `screenshot`、`dump_ui`、`tap`、`swipe`、`input_text`、`key_event`、`launch_app`、`kill_app` 方法，返回值沿用 `toolkit_api.py` 的 `_ok` / `_err` 结构。需要 WDA session 的操作会通过 `_ensure_session()` 复用缓存，并在 `invalid session id` 后清空缓存、重建 session、重试一次。来源：`openspec/archive/executor-ios-phase3-device-manager/`
+`iOSDevice` 提供 `screenshot`、`dump_ui`、`tap`、`swipe`、`input_text`、`key_event`、`launch_app`、`kill_app` 方法，返回值沿用 `toolkit_api.py` 的 `_ok` / `_err` 结构。需要 WDA session 的操作会通过 `_ensure_session()` 复用缓存，并在 `invalid session id` 后清空缓存、重建 session、重试一次。来源：`openspec/changes/archive/2026-06-03-executor-ios-phase3-device-manager/`
 
 ## 代码路径
 
