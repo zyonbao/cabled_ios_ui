@@ -1,7 +1,7 @@
 # slide6-developer-tools Specification
 
 ## Purpose
-定义「开发者工具」页面的统一能力入口与交互约束：DDI 挂载状态与控制、iOS 17+ 的 XPC tunnel 面板、进程管理与虚拟定位能力卡、系统日志入口，以及相关门控、状态刷新和窗口行为规范。
+定义「开发者工具」页面的统一能力入口与交互约束：DDI 挂载状态与控制、iOS 17+ 的 XPC tunnel 面板、进程管理/虚拟定位/性能监控/网络监控/条件诱导能力卡、系统日志入口，以及相关门控、状态刷新和窗口行为规范。
 ## Requirements
 ### Requirement: 开发者工具 Tab 入口
 
@@ -47,17 +47,17 @@ iOS 17+ 下，DDI 已挂载但 XPC tunnel 未启动时，应用 MUST NOT 继续�
 
 ### Requirement: 功能位 grid 与 DDI 门控
 
-「开发者工具」Tab SHALL 以功能位 grid 展示「进程管理」「虚拟定位」两个能力卡片（布局便于后续扩展）。功能位的可用性 MUST 由统一的设备就绪前置检查（见 `slide6-device-readiness`）驱动，采用**禁用式门控**：就绪检查未通过时对应功能位 MUST 置为 Disabled，并以 tooltip 说明缺失项（缺 tunnel / 缺 DDI / RSD 服务不工作）；全部就绪后 MUST 自动 enable。按钮态 MUST 在设备切换、tunnel 面板操作完成、DDI 状态变化时重算刷新。
+「开发者工具」Tab SHALL 以功能位 grid 展示「进程管理」「虚拟定位」「性能监控」「网络监控」「条件诱导」五个能力卡片（布局便于后续扩展）。功能位的可用性 MUST 由统一的设备就绪前置检查（见 `slide6-device-readiness`）驱动，采用**禁用式门控**：就绪检查未通过时对应功能位 MUST 置为 Disabled，并以 tooltip 说明缺失项（缺 tunnel / 缺 DDI / RSD 服务不工作）；全部就绪后 MUST 自动 enable。按钮态 MUST 在设备切换、tunnel 面板操作完成、DDI 状态变化时重算刷新。
 
 #### Scenario: 未就绪禁用并 tooltip 说明
 
 - **WHEN** 就绪检查未通过（如 DDI 未挂载、或 iOS 17+ 缺 tunnel / RSD 服务不工作）
-- **THEN** 进程管理、虚拟定位功能位置为 Disabled，tooltip 说明缺失的具体前置（需挂载 DDI / 需启用 tunnel / 需重挂 DDI 或重启 tunnel）
+- **THEN** 进程管理、虚拟定位、性能监控、网络监控、条件诱导功能位置为 Disabled，tooltip 说明缺失的具体前置（需挂载 DDI / 需启用 tunnel / 需重挂 DDI 或重启 tunnel）
 
 #### Scenario: 就绪后启用
 
 - **WHEN** 全部前置就绪
-- **THEN** 进程管理、虚拟定位功能位自动变为可用
+- **THEN** 进程管理、虚拟定位、性能监控、网络监控、条件诱导功能位自动变为可用
 
 #### Scenario: 状态变化后刷新按钮态
 
@@ -111,6 +111,73 @@ iOS 17+ 下，DDI 已挂载但 XPC tunnel 未启动时，应用 MUST NOT 继续�
 
 - **WHEN** 用户点击清除
 - **THEN** 应用恢复真实 GPS（含中止轨迹回放），状态提示已清除
+
+### Requirement: 性能监控界面
+
+「性能监控」功能位 SHALL 提供实时指标监控界面，展示 CPU / GPU / Memory 等可获取性能指标；MUST 以折线图形式展示趋势；每条趋势图的可视窗口 MUST 限制在最近 10 分钟（滚动窗口）。当采集时间超过 10 分钟时，缓存 MUST 丢弃 10 分钟之前的数据，仅保留最近 10 分钟用于绘制；折线图等可视化 MUST 仅展示该 10 分钟缓存窗口。开始采集后 MUST 提供运行状态、采样频率与最后更新时间；停止采集后 MUST 停止后台采样并保持当前可视结果。图表更新 MUST 采用限速渲染，避免高频重绘阻塞主线程。
+
+性能监控采样频率默认 SHOULD 为 `500ms`，允许范围 MUST 为 `200ms~2000ms`。控制语义 MUST 明确：Pause 仅暂停渲染、Stop 停止采样并回收任务、Clear 清空可视缓存。部分指标不可用时 MUST 显示为 `unsupported`，并保持其余指标正常工作。
+
+#### Scenario: 最近 10 分钟趋势窗口
+
+- **WHEN** 性能监控持续采样超过 10 分钟
+- **THEN** 折线图仅展示最近 10 分钟的数据窗口
+
+#### Scenario: 启停采集
+
+- **WHEN** 用户点击开始 / 停止采集
+- **THEN** 应用分别启动 / 停止后台采样线程并更新运行状态文案
+
+### Requirement: 网络监控界面
+
+「网络监控」能力 SHALL 作为「开发者工具」Tab 内的功能卡片入口，点击后进入同一 Tab 下的 Network Monitor 子面板，MUST NOT 新增独立 sidebar Tab。子面板顶部 MUST 提供状态条，至少展示采集状态（Idle/Running/Paused）与缓存占用，并提供 Start/Stop 控制。主内容区 SHOULD 使用三栏布局：左侧进程列表（TopN + bundle id 搜索）、中间连接流列表（时间/协议/方向/本地-远端/字节）、右侧详情与趋势图（Rx/Tx 速率、连接数、错误数）。网络缓存 MUST 最多保留最近 10 分钟数据，超过 10 分钟的历史记录 MUST 丢弃；趋势图等可视化 MUST 仅展示该 10 分钟窗口并实时显示当前上下载速度；连接流字段按可获取能力降级显示。
+
+网络监控 MUST 提供高频控制栏：Start/Stop、Pause、Clear、Auto-scroll、Export（CSV/JSON）；Export 能力 SHOULD 预留与后续 PCAP 关联扩展点。过滤器 MUST 支持按进程、协议（TCP/UDP）、方向（in/out）、host/port、时间窗口、关键词筛选，并支持「仅显示活跃连接」。
+
+网络采集与渲染 MUST 采用后台线程采集 + 主线程限速渲染；UI 刷新 SHOULD 采用 200~500ms 批量节流。实现 MUST 使用 ring buffer 控制最大记录数，避免高吞吐场景下内存增长和 UI 卡顿。
+
+网络监控后台采集线程/进程 MUST 与 Network Monitor 子面板窗口生命周期绑定：点击 Start 时创建并启动；点击 Stop 时停止并回收；用户关闭该子面板窗口时 MUST 自动停止并回收，MUST NOT 遗留孤儿线程/进程。
+
+网络监控采样频率默认 SHOULD 为 `500ms`，允许范围 MUST 为 `200ms~2000ms`。Export（CSV/JSON）默认 MUST 导出当前过滤条件下、最近 10 分钟缓存窗口数据。字段缺失或部分能力不可用时 MUST 明确显示 `unsupported`/`unknown`，且不得中断整场会话。
+
+#### Scenario: 趋势与实时速率
+
+- **WHEN** 网络监控正在运行
+- **THEN** 趋势视图实时更新上/下行折线，并显示当前上下载速度
+
+#### Scenario: 连接视图切换
+
+- **WHEN** 用户切换到连接视图
+- **THEN** 应用展示当前可获取的连接信息，并可按进程筛选
+
+#### Scenario: 功能卡片进入子面板
+
+- **WHEN** 用户在「开发者工具」Tab 点击网络监控功能卡片
+- **THEN** 进入同一 Tab 下的 Network Monitor 子面板（非独立新 Tab）
+
+#### Scenario: 顶部状态条与控制栏
+
+- **WHEN** 用户查看 Network Monitor 子面板
+- **THEN** 顶部状态条显示采集状态与缓存占用，且控制栏提供 Start/Stop、Pause、Clear、Auto-scroll、Export 操作
+
+#### Scenario: 关闭窗口自动回收采集任务
+
+- **WHEN** Network Monitor 子面板窗口被关闭
+- **THEN** 绑定的后台采集线程/进程自动停止并回收，不残留孤儿任务
+
+### Requirement: 条件诱导界面
+
+「条件诱导」功能位 SHALL 提供条件模板或参数化入口，用于设置并应用设备诱导条件（如弱网、温度/功耗相关条件，按底层可用能力呈现）。界面 MUST 显示当前诱导状态（未启用 / 已启用 + 条件摘要）；用户 MUST 可开始诱导与结束诱导。开始诱导前 SHOULD 显示条件确认；结束诱导后 MUST 刷新状态并清理会话资源。
+
+#### Scenario: 开始诱导
+
+- **WHEN** 用户选择条件并点击开始
+- **THEN** 应用应用该条件并显示「已启用」状态及条件摘要
+
+#### Scenario: 结束诱导
+
+- **WHEN** 条件诱导已启用且用户点击结束
+- **THEN** 应用停止诱导并恢复「未启用」状态
 
 ### Requirement: 系统日志区块入口
 

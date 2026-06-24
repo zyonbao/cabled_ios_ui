@@ -36,9 +36,9 @@
 
 ### 4. DDI / DVT developer tooling（开发者工具，需挂载 DeveloperDiskImage）
 - **定位**：独立「开发者工具」Tab，聚合多种 DVT/instruments 工具，采用「DDI 状态栏 + 功能位 grid」布局，DDI 挂载后逐步解锁能力。
-- **⚠️ 待续验收（DDI mount）**：Phase 1 代码已实现并归档（`archive/2026-06-10-add-developer-tools-tab-phase1`，含虚拟定位轨迹回放 + 带地址栏的文件选择器），但 **DDI 挂载（mount/unmount）尚未通过真机验收**。当前排查效率低（缺执行日志），**先实现日志系统（见下方 openspec change `add-logging-system`），待日志完善后再回头排查 DDI 挂载并完成验收**。进程管理 / 虚拟定位（含轨迹回放）功能本身可在 DDI 已挂载（外部预挂载）时验证。
+- **✅ Phase 1 已通过真机验收（含 DDI mount/unmount）**：Phase 1 代码已实现并归档（`archive/2026-06-10-add-developer-tools-tab-phase1`，含 DDI 挂载/卸载、进程管理、虚拟定位轨迹回放 + 带地址栏的文件选择器）。后续重点转入 Phase 2（性能监控 / 网络监控 / 条件诱导等能力位）按排期逐步叠加。
 - **分期实施**：
-  - **Phase 1（代码已归档，DDI mount 验收待续）**：DDI 挂载/卸载/状态 + 进程管理 + 虚拟定位（含 GPX/手动轨迹回放）。三项组成最小闭环：先把 DDI 挂载状态机与 DVT 连接底座打通，再落地两个高价值 DVT 工具。
+  - **Phase 1（已归档并完成验收）**：DDI 挂载/卸载/状态 + 进程管理 + 虚拟定位（含 GPX/手动轨迹回放）。三项组成最小闭环：先把 DDI 挂载状态机与 DVT 连接底座打通，再落地两个高价值 DVT 工具。
     - **DDI**：Tab 顶部展示挂载状态；未挂载提供「挂载」（弹窗可选多种 `pymobiledevice3` 挂载方式：自动按版本 / 个性化镜像(17+) / 开发者镜像(<17) / 手动选本地镜像文件），已挂载提供「卸载」。挂载/卸载/状态走 usbmux lockdown（17+ 也不需 tunnel）。
     - **进程管理**：`device_info.DeviceInfo.proclist` 进程列表 + 按名筛选；`process_control.ProcessControl.launch` 按 bundle id 启动；`process_control.kill` 杀进程；选中查看进程明细（只读，不支持改）。
     - **虚拟定位**：<17 走 `simulate_location.DtSimulateLocation`（设完即生效）；17+ 走 DVT `location_simulation.LocationSimulation`，但模拟仅在 DTX 连接存活期间有效，需后台常驻定位会话，清除时取消会话。
@@ -133,7 +133,7 @@
 | 优先级 | 项目 |
 |---|---|
 | ✅ 已完成 | 1 描述文件管理、2 Crash 导出、3 Syslog/oslog 流（archive 2026-06-09） |
-| 中 | 4 DDI/DVT 开发者工具（Phase 1 代码已归档，**DDI mount 验收待续**，待日志系统完善后排查；Phase 2 排期）、5 PCAP 抓包、7 备份恢复、9 通知监听 |
+| 中 | 4 DDI/DVT 开发者工具（**Phase 1 已验收完成**，Phase 2 排期）、5 PCAP 抓包、7 备份恢复、9 通知监听 |
 | 中-低 | 6 WebInspector、10 SpringBoard 设置 |
 | 低（高风险） | 8 固件升级 + Recovery/DFU |
 
