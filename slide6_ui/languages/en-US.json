@@ -364,10 +364,7 @@
     "read_failed": "Read failed",
     "read_failed_detail": "Read failed: {error}",
     "count": "{count} items",
-    "copied": "Copied: {text}",
-    "copy_field": "Copy field name",
-    "copy_value": "Copy value",
-    "copy_pair": "Copy field=value"
+    "copied": "Copied: {text}"
   },
   "crash": {
     "filter_placeholder": "Filter by file name (case-insensitive)",

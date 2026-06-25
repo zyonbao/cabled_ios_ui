@@ -364,10 +364,7 @@
     "read_failed": "读取失败",
     "read_failed_detail": "读取失败: {error}",
     "count": "共 {count} 项",
-    "copied": "已复制: {text}",
-    "copy_field": "复制字段名",
-    "copy_value": "复制值",
-    "copy_pair": "复制 字段=值"
+    "copied": "已复制: {text}"
   },
   "crash": {
     "filter_placeholder": "按文件名过滤（大小写不敏感）",

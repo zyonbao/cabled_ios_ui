@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -30,6 +28,7 @@ from PySide6.QtWidgets import (
 from ios_toolkit import toolkit_api as api
 
 from .. import i18n
+from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.workers import AsyncRunner
 
@@ -93,10 +92,9 @@ class DeviceInfoTab(QWidget):
 
         self.refresh_btn.clicked.connect(self.reload_info)
         self.search_input.textChanged.connect(self._render)
-        # Double-click a cell copies it; right-click offers key/value copy.
+        # Double-click a cell copies it; right-click copies the cell under cursor.
         self.table.itemDoubleClicked.connect(self._copy_cell)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        install_table_copy_menu(self.table, on_copied=self._flash_copied)
 
     # ------------------------------------------------------------- loading
 
@@ -160,23 +158,9 @@ class DeviceInfoTab(QWidget):
 
     # ------------------------------------------------------------- copying
 
-    def _to_clipboard(self, text: str) -> None:
-        QApplication.clipboard().setText(text)
+    def _flash_copied(self, text: str) -> None:
         self.status.setText(i18n.t("device_info.copied", text=text[:60]))
 
     def _copy_cell(self, item: QTableWidgetItem) -> None:
-        self._to_clipboard(item.text())
-
-    def _show_context_menu(self, _pos) -> None:
-        vp_pos = self.table.viewport().mapFromGlobal(QCursor.pos())
-        item = self.table.itemAt(vp_pos)
-        if item is None:
-            return
-        row = item.row()
-        key = self.table.item(row, 0).text()
-        value = self.table.item(row, 1).text()
-        menu = QMenu(self)
-        menu.addAction(i18n.t("device_info.copy_field"), lambda: self._to_clipboard(key))
-        menu.addAction(i18n.t("device_info.copy_value"), lambda: self._to_clipboard(value))
-        menu.addAction(i18n.t("device_info.copy_pair"), lambda: self._to_clipboard(f"{key} = {value}"))
-        menu.exec(QCursor.pos())
+        QApplication.clipboard().setText(item.text())
+        self._flash_copied(item.text())
