@@ -15,8 +15,8 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QIODevice, QSettings, QStandardPaths, QTimer, Qt, Signal
-from PySide6.QtGui import QImage, QPixmap, QTransform
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QPoint, QSettings, QStandardPaths, QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -326,6 +326,104 @@ class _SetPasteboardDialog(QDialog):
         return ("text", self.text_edit.toPlainText())
 
 
+class _KeyboardInputPopup(QWidget):
+    """Floating, draggable keyboard-capture window over the keymouse tab.
+
+    A single compact row — capture field + close (✕) — with an opaque
+    background, sized to (and shown covering) the entry button. It is a child of
+    the tab so it can be constrained to the tab's bounds while dragging, and
+    floats above the mirror/sidebar via raise_(). Clicking the field types;
+    pressing the background (margins/gap) drags the window. Dragging is clamped
+    so no part of the window ever leaves the tab.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        # Opaque rounded panel is hand-painted in paintEvent. A stylesheet
+        # border would be folded into the box model and unbalance the row's
+        # top/bottom margins, so it is intentionally not used here.
+        self.setCursor(Qt.SizeAllCursor)
+        self._press_global: QPoint | None = None
+        self._start_pos = QPoint()
+        # Re-clamp into view when the tab resizes (window shrink / sidebar width
+        # change), otherwise a once-placed popup can end up partly off-screen.
+        parent.installEventFilter(self)
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(4)
+        # Field + close button on one row. No forced heights and no per-item
+        # alignment: the row takes the taller control's height, the popup is
+        # that height + symmetric margins, and Qt vertically centers the shorter
+        # field. (Passing Qt.AlignVCenter here actually breaks it — the field
+        # then top-aligns and leaves extra space at the bottom — so rely on the
+        # default behavior.)
+        self.capture = KeyboardCapture()
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedWidth(24)
+        self.close_btn.setToolTip(i18n.t("keymouse.kbd_exit_tip"))
+        row.addWidget(self.capture, 1)
+        row.addWidget(self.close_btn)
+
+    def show_over(self, anchor: QWidget) -> None:
+        """Show over the entry button: button width, natural (symmetric) height."""
+        parent = self.parentWidget()
+        # Width follows the button; height is the row's natural height (max of
+        # field/button) plus margins, keeping the contents vertically centered.
+        # Use sizeHint directly — adjustSize() takes a different layout path that
+        # top-aligns the shorter field and unbalances the margins.
+        self.resize(anchor.width(), self.sizeHint().height())
+        top_left = anchor.mapTo(parent, anchor.rect().topLeft())
+        self.move(self._clamped(top_left))
+        self.show()
+        self.raise_()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Only background presses reach here (the field / ✕ consume their own).
+        if event.button() == Qt.LeftButton:
+            self._press_global = event.globalPosition().toPoint()
+            self._start_pos = self.pos()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._press_global is not None:
+            # Parent isn't scaled, so a global delta equals a parent-local delta.
+            delta = event.globalPosition().toPoint() - self._press_global
+            self.move(self._clamped(self._start_pos + delta))
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt override
+        was_dragging = self._press_global is not None
+        self._press_global = None
+        # The IME caches the candidate-window position from when the field
+        # gained focus, and a plain micro-focus update does NOT refresh it. After
+        # a drag, re-focus the field so the IME re-queries the field's new
+        # position — the same effect as manually switching focus away and back.
+        if was_dragging and self.capture.hasFocus():
+            self.capture.clearFocus()
+            self.capture.setFocus()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Hand-paint an opaque rounded background + border (no stylesheet) so the
+        # panel has no see-through gaps and the layout margins stay symmetric.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(self.palette().window())
+        painter.setPen(QPen(self.palette().mid().color(), 1))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 4, 4)
+
+    def _clamped(self, pos: QPoint) -> QPoint:
+        # Keep the whole window inside the tab: x∈[0, W-w], y∈[0, H-h].
+        parent = self.parentWidget()
+        max_x = max(0, parent.width() - self.width())
+        max_y = max(0, parent.height() - self.height())
+        return QPoint(min(max(0, pos.x()), max_x), min(max(0, pos.y()), max_y))
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt override
+        # When the tab resizes, pull a shown popup back inside the new bounds.
+        if obj is self.parentWidget() and event.type() == QEvent.Type.Resize and not self.isHidden():
+            self.move(self._clamped(self.pos()))
+        return super().eventFilter(obj, event)
+
+
 class KeymouseTab(GatedTabMixin, QWidget):
     """Live mirror + gesture/keyboard/action controls for the selected device.
 
@@ -418,24 +516,19 @@ class KeymouseTab(GatedTabMixin, QWidget):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(6)
 
-        # Keyboard area: the toggle button and the active-capture row share the
-        # same slot. When keyboard mirroring is on, the button is hidden and the
-        # capture field + exit (✕) button take its place; toggling off restores
-        # the button.
+        # Keyboard entry button: a fixed-position toggle whose text flips between
+        # "off" and "on". The capture field itself lives in a separate floating
+        # popup (see _KeyboardInputPopup), so toggling never resizes this row.
         self.kbd_btn.setEnabled(False)
         input_layout.addWidget(self.kbd_btn)
 
-        self.kbd_capture = KeyboardCapture()
-        self.kbd_close_btn = QPushButton("✕")
-        self.kbd_close_btn.setToolTip(i18n.t("keymouse.kbd_exit_tip"))
-        self.kbd_close_btn.setFixedWidth(36)
-        self.kbd_active_row = QWidget()
-        kbd_row = QHBoxLayout(self.kbd_active_row)
-        kbd_row.setContentsMargins(0, 0, 0, 0)
-        kbd_row.addWidget(self.kbd_capture, 1)
-        kbd_row.addWidget(self.kbd_close_btn)
-        self.kbd_active_row.setVisible(False)
-        input_layout.addWidget(self.kbd_active_row)
+        # Keyboard capture lives in a draggable popup over the tab (not inline),
+        # so toggling it never changes the sidebar height. The entry button's
+        # text toggles instead (Off / On).
+        self.kbd_popup = _KeyboardInputPopup(self)
+        self.kbd_capture = self.kbd_popup.capture
+        self.kbd_close_btn = self.kbd_popup.close_btn
+        self.kbd_popup.hide()
 
         # Text send row: a standalone field + send button, independent of the
         # keyboard-mirroring capture above. The field is multi-line and grows
@@ -907,18 +1000,17 @@ class KeymouseTab(GatedTabMixin, QWidget):
     def _set_keyboard(self, on: bool) -> None:
         self.kbd_on = on and self.mirror_thread is not None
         if self.kbd_on:
-            # In-place swap: hide the toggle button, reveal capture field + exit.
-            self.kbd_btn.setVisible(False)
-            self.kbd_active_row.setVisible(True)
             self.kbd_sender.set_target(self.target)
             if not self.kbd_sender.isRunning():
                 self.kbd_sender.start()
             self.kbd_capture.clear()
+            # Float the capture popup over the entry button, then focus it.
+            self.kbd_popup.show_over(self.kbd_btn)
             self.kbd_capture.setFocus()
+            self.kbd_btn.setText(i18n.t("keymouse.kbd_on"))
         else:
             self.kbd_capture.clearFocus()
-            self.kbd_active_row.setVisible(False)
-            self.kbd_btn.setVisible(True)
+            self.kbd_popup.hide()
             self.kbd_btn.setText(i18n.t("keymouse.kbd_off"))
 
     def _refocus_keyboard(self) -> None:

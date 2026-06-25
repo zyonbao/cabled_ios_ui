@@ -480,6 +480,7 @@
     "home": "Home (HOME)",
     "input_group": "Input",
     "kbd_off": "Keyboard input: Off",
+    "kbd_on": "Keyboard input: On",
     "screenshot": "Capture & Save",
     "clipboard_group": "Clipboard",
     "ui_xml_group": "UI XML",
