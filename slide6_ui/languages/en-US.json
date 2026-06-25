@@ -363,8 +363,7 @@
     "reading": "Reading device info…",
     "read_failed": "Read failed",
     "read_failed_detail": "Read failed: {error}",
-    "count": "{count} items",
-    "copied": "Copied: {text}"
+    "count": "{count} items"
   },
   "crash": {
     "filter_placeholder": "Filter by file name (case-insensitive)",

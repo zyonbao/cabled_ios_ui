@@ -14,9 +14,9 @@
     "select_device_first": "请先选择一个设备",
     "default": "默认",
     "default_prefix": "默认:{path}",
-    "copy_value": "复制值",
-    "copy_line": "复制本行",
-    "copied": "已复制: {text}"
+    "copy_value": "拷贝",
+    "copy_line": "拷贝",
+    "copied": "已拷贝: {text}"
   },
   "main_window": {
     "device": "设备",
@@ -161,9 +161,9 @@
         }
       },
       "auto_copy": {
-        "group": "读取后复制到本机",
-        "pasteboard": "读取设备剪贴板后不弹窗，直接复制到本机系统剪贴板",
-        "ui_xml": "获取 UI XML 后不弹窗，直接复制到本机系统剪贴板"
+        "group": "读取后拷贝到本机",
+        "pasteboard": "读取设备剪贴板后不弹窗，直接拷贝到本机系统剪贴板",
+        "ui_xml": "获取 UI XML 后不弹窗，直接拷贝到本机系统剪贴板"
       }
     }
   },
@@ -363,8 +363,7 @@
     "reading": "正在读取设备信息…",
     "read_failed": "读取失败",
     "read_failed_detail": "读取失败: {error}",
-    "count": "共 {count} 项",
-    "copied": "已复制: {text}"
+    "count": "共 {count} 项"
   },
   "crash": {
     "filter_placeholder": "按文件名过滤（大小写不敏感）",
@@ -558,9 +557,9 @@
     "pb_read_ok": "已读取设备剪贴板",
     "pb_empty": "剪贴板为空或为非文本内容",
     "pb_dialog_title": "设备剪贴板",
-    "pb_empty_detail": "剪贴板为空或为非文本内容，无法显示/复制\n（请确认设备上已复制文本）",
-    "pb_copy_to_host": "复制到本机",
-    "pb_copied": "已复制到本机剪贴板",
+    "pb_empty_detail": "剪贴板为空或为非文本内容，无法显示/拷贝\n（请确认设备上已拷贝文本）",
+    "pb_copy_to_host": "拷贝到本机",
+    "pb_copied": "已拷贝到本机剪贴板",
     "ui_xml_loading": "正在读取 UI XML…",
     "ui_xml_failed_detail": "读取 UI XML 失败: {error}",
     "ui_xml_failed": "读取 UI XML 失败",

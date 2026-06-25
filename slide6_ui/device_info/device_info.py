@@ -159,7 +159,7 @@ class DeviceInfoTab(QWidget):
     # ------------------------------------------------------------- copying
 
     def _flash_copied(self, text: str) -> None:
-        self.status.setText(i18n.t("device_info.copied", text=text[:60]))
+        self.status.setText(i18n.t("common.copied", text=text[:60]))
 
     def _copy_cell(self, item: QTableWidgetItem) -> None:
         QApplication.clipboard().setText(item.text())

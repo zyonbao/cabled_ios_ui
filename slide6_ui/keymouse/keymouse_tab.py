@@ -1264,7 +1264,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         # Setting on: skip the display dialog and copy text straight to the host.
         if get_pasteboard_auto_copy_host(QSettings()):
             if is_text:
-                self._copy_to_host(text)  # flashes "已复制到本机"
+                self._copy_to_host(text)  # flashes "已拷贝到本机"
             else:
                 self._flash(i18n.t("keymouse.pb_empty"))
             self._refocus_keyboard()
@@ -1322,7 +1322,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         # Setting on: skip the viewer dialog and copy the XML straight to host.
         if get_ui_xml_auto_copy_host(QSettings()):
             if raw:
-                self._copy_to_host(raw)  # flashes "已复制到本机"
+                self._copy_to_host(raw)  # flashes "已拷贝到本机"
             else:
                 self._flash(i18n.t("keymouse.ui_xml_ready"))
             self._refocus_keyboard()
