@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -359,7 +360,8 @@ class _KeyboardInputPopup(QWidget):
         # then top-aligns and leaves extra space at the bottom — so rely on the
         # default behavior.)
         self.capture = KeyboardCapture()
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton()
+        self.close_btn.setIcon(self.style().standardIcon(QStyle.SP_TitleBarCloseButton))
         self.close_btn.setFixedWidth(24)
         self.close_btn.setToolTip(i18n.t("keymouse.kbd_exit_tip"))
         row.addWidget(self.capture, 1)
