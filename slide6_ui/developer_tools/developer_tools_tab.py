@@ -806,8 +806,30 @@ class DeveloperToolsTab(GatedTabMixin, QWidget):
         self._refresh_features()
 
     def _on_refresh_tunnel(self) -> None:
-        """Re-read the tunnel running state and update the status label + tiles."""
+        """Re-read the tunnel state and re-evaluate the RSD-gated feature tiles.
+
+        Feature tiles gate on tunnel + DDI + RSD. Repainting from the cached
+        ``_dvt_ready`` alone would miss a tunnel that came up since the last
+        probe, so when the tunnel is running with a mounted DDI (iOS 17+),
+        re-probe RSD — mirroring the DDI refresh — instead of only repainting
+        from stale state.
+        """
         self._refresh_tunnel_panel()
+        target = self._get_target()
+        needs_tunnel = tunnel.needs_tunnel(self._get_os_version())
+        if (
+            needs_tunnel and self._mounted and tunnel.is_tunnel_running()
+            and target and not self._ready_probing
+        ):
+            self._dvt_ready = False
+            self._refresh_features()
+            self._set_status(i18n.t("dev_tools.ddi.mounted_probing"))
+            self._probe_rsd(target)
+            return
+        if needs_tunnel and self._mounted and not tunnel.is_tunnel_running():
+            # No tunnel ⇒ RSD cannot be available; drop stale readiness so the
+            # tiles reflect the missing precondition.
+            self._dvt_ready = False
         self._refresh_features()
         self._set_status(i18n.t("dev_tools.tunnel.refreshed"))
 
