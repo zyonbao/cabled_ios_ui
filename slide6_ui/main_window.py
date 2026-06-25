@@ -320,21 +320,46 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
 
         suppress_auto_focus(dlg)
-        # Size the dialog to the tallest tab so switching tabs never squeezes a
-        # page's rows. QTabWidget.sizeHint only reflects the current page, so take
-        # the max of every page's natural height and add room for the chrome.
-        content_h = max(
-            general_tab.sizeHint().height(),
-            ddi_tab.sizeHint().height(),
-            keymouse_tab.sizeHint().height(),
-        )
-        chrome_h = (
-            tabs.tabBar().sizeHint().height()
-            + buttons.sizeHint().height()
-            + 2 * layout.contentsMargins().top()
-            + 24
-        )
-        dlg.resize(560, content_h + chrome_h)
+
+        pages = (general_tab, ddi_tab, keymouse_tab)
+
+        def relayout(widget) -> None:
+            # Bottom-up invalidate+activate so a just-changed deep child (e.g. the
+            # gesture table inside a group box) is reflected in the page sizeHint
+            # synchronously — a top-level activate alone leaves nested layout
+            # caches stale until the next event loop pass.
+            page_layout = widget.layout()
+            if page_layout is None:
+                return
+            for i in range(page_layout.count()):
+                child = page_layout.itemAt(i).widget()
+                if child is not None:
+                    relayout(child)
+            page_layout.invalidate()
+            page_layout.activate()
+
+        def fit_height() -> None:
+            # Size the dialog to the tallest tab so switching tabs never squeezes
+            # a page's rows. QTabWidget.sizeHint only reflects the current page,
+            # so take the max of every page's natural height plus the chrome.
+            # Re-fitting on every height-change signal makes growing AND shrinking
+            # both resize the window.
+            for page in pages:
+                relayout(page)
+            content_h = max(p.sizeHint().height() for p in pages)
+            chrome_h = (
+                tabs.tabBar().sizeHint().height()
+                + buttons.sizeHint().height()
+                + 2 * layout.contentsMargins().top()
+                + 24
+            )
+            dlg.resize(560, content_h + chrome_h)
+
+        # Dynamic pages announce height changes so the dialog re-fits on add and
+        # remove alike (generic hook; any page can expose the same signal).
+        if hasattr(keymouse_tab, "content_height_changed"):
+            keymouse_tab.content_height_changed.connect(fit_height)
+        fit_height()
         dlg.exec()
 
     def _build_general_tab(self, parent: QWidget) -> QWidget:

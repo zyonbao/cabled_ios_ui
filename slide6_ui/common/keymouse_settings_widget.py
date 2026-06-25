@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -107,7 +107,17 @@ class _DeviceIdDialog(QDialog):
         )
 
 
+# Cap the gesture table to this many visible rows; beyond it the table keeps a
+# fixed height and scrolls internally so the Preferences dialog never grows past
+# the screen.
+_MAX_VISIBLE_GESTURE_ROWS = 3
+
+
 class KeyMouseSettingsWidget(QWidget):
+    # Emitted whenever this page's natural height may have changed (e.g. the
+    # gesture table grew/shrank), so the host (Preferences dialog) can resize.
+    content_height_changed = Signal()
+
     def __init__(
         self,
         settings,
@@ -318,21 +328,26 @@ class KeyMouseSettingsWidget(QWidget):
         self._fit_table_height()
 
     def _fit_table_height(self) -> None:
-        """Pin the table to exactly the height its rows need.
+        """Pin the table to the height of up to ``_MAX_VISIBLE_GESTURE_ROWS`` rows.
 
         The default QTableWidget sizeHint is a fixed ~192px regardless of row
         count, which makes the Preferences dialog (sized to the tallest tab)
-        either waste space or clip rows behind a scrollbar. Sizing to content —
-        header + per-row heights + frame — lets the dialog "just fit" the page.
+        either waste space or clip rows. Size to content — header + per-row
+        heights + frame — so the dialog "just fits"; cap at a few rows so a long
+        list scrolls internally instead of growing the window past the screen.
+        Emits ``content_height_changed`` so the host can re-fit its height.
         """
         table = self.table
+        rows = table.rowCount()
+        visible = min(rows, _MAX_VISIBLE_GESTURE_ROWS) if rows else 1
         total = table.horizontalHeader().sizeHint().height() + 2 * table.frameWidth()
         default_row = table.verticalHeader().defaultSectionSize()
-        for row in range(table.rowCount()):
-            total += table.rowHeight(row) or default_row
+        for row in range(visible):
+            total += (table.rowHeight(row) or default_row) if rows else default_row
         if table.horizontalScrollBar().isVisible():
             total += table.horizontalScrollBar().sizeHint().height()
         table.setFixedHeight(total)
+        self.content_height_changed.emit()
 
     def _persist_rows(self, *, select_device_id: str | None = None) -> None:
         save_bottom_edge_gesture_rows(self.state["rows"], self.settings)
