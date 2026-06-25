@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import sys
 from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QBuffer, QEvent, QIODevice, QPoint, QSettings, QStandardPaths, QTimer, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QTransform
+from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QPoint, QSettings, QStandardPaths, QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QTransform, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -113,6 +114,100 @@ def _orient_label(orientation: "str | None") -> str:
     return i18n.t(key) if key else "—"
 
 
+def _html_to_plain_text_with_image_refs(html: str) -> str:
+    """Convert HTML to plain text, keeping image srcs as text references."""
+    sanitized = re.sub(
+        r'<img[^>]+src=(?P<quote>["\'])(?P<src>.*?)(?P=quote)[^>]*>',
+        lambda match: match.group("src"),
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    doc = QTextDocument()
+    doc.setHtml(sanitized)
+    return doc.toPlainText().strip("\r\n")
+
+
+def _html_contains_only_images(html: str) -> bool:
+    no_images = re.sub(r'<img[^>]*>', '', html, flags=re.IGNORECASE | re.DOTALL)
+    no_tags = re.sub(r'<[^>]+>', '', no_images)
+    return not no_tags.strip()
+
+
+def _text_from_mime_data(mime: "QMimeData") -> str | None:
+    if mime.hasHtml():
+        if not _html_contains_only_images(mime.html()):
+            text = _html_to_plain_text_with_image_refs(mime.html())
+            if text:
+                return text
+    if mime.hasText():
+        text = mime.text().strip("\r\n")
+        if text:
+            return text
+    if mime.hasUrls():
+        urls = [url.toLocalFile() if url.isLocalFile() else url.toString() for url in mime.urls()]
+        text = "\n".join(urls).strip()
+        if text:
+            return text
+    return None
+
+
+def _mime_image_paths(mime: "QMimeData") -> list[str]:
+    paths: list[str] = []
+    if not mime.hasUrls():
+        return paths
+    for url in mime.urls():
+        if not url.isLocalFile():
+            continue
+        path = url.toLocalFile()
+        if path.lower().endswith(_IMAGE_EXTS) and os.path.isfile(path):
+            paths.append(path)
+    return paths
+
+
+def _mime_contains_image_only_html(mime: "QMimeData") -> bool:
+    return mime.hasHtml() and _html_contains_only_images(mime.html())
+
+
+def _mime_image_bytes(mime: "QMimeData", text: str | None) -> bytes | None:
+    """Image bytes for an image paste, or None to paste ``text`` instead.
+
+    An image file (dropped/copied as a URL) always wins. Raw image data is used
+    only when it is the whole payload — an image-only HTML fragment, or a bitmap
+    with no accompanying text — so a rich copy carrying both text and a rendered
+    image still pastes as text.
+    """
+    image_paths = _mime_image_paths(mime)
+    if image_paths:
+        try:
+            with open(image_paths[0], "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    if not mime.hasImage():
+        return None
+    if text is not None and not _mime_contains_image_only_html(mime):
+        return None
+
+    image_data = mime.imageData()
+    if isinstance(image_data, QPixmap):
+        image = image_data.toImage()
+    elif isinstance(image_data, QImage):
+        image = image_data
+    elif isinstance(image_data, QByteArray):
+        image = QImage.fromData(bytes(image_data))
+    elif isinstance(image_data, bytes):
+        image = QImage.fromData(image_data)
+    else:
+        return None
+    if image.isNull():
+        return None
+    buffer = QBuffer()
+    buffer.open(QIODevice.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
 class SendTextEdit(QTextEdit):
     """Multi-line text-send box for the device.
 
@@ -185,7 +280,7 @@ class _SetPasteboardDialog(QDialog):
 
         # Text and image occupy the same region via a stacked widget.
         self.stack = QStackedWidget()
-        self.text_edit = QPlainTextEdit()
+        self.text_edit = _PasteAwarePlainTextEdit(self)
         self.text_edit.setPlaceholderText(i18n.t("keymouse.pb_input_placeholder"))
         # The editor accepts file drops by default and would paste the URL as
         # text; disable on both the widget and its viewport (the real drop
@@ -286,6 +381,9 @@ class _SetPasteboardDialog(QDialog):
                 i18n.t("keymouse.pb_image_read_failed", error=exc),
             )
             return
+        self._load_image_from_bytes(data)
+
+    def _load_image_from_bytes(self, data: bytes) -> None:
         pixmap = QPixmap()
         if not pixmap.loadFromData(data):
             QMessageBox.warning(
@@ -325,6 +423,32 @@ class _SetPasteboardDialog(QDialog):
         if self._image_bytes is not None:
             return ("image", self._image_bytes)
         return ("text", self.text_edit.toPlainText())
+
+
+class _PasteAwarePlainTextEdit(QPlainTextEdit):
+    def __init__(self, dialog: "_SetPasteboardDialog", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._dialog = dialog
+
+    def insertFromMimeData(self, source) -> None:  # noqa: N802 - Qt override
+        text = _text_from_mime_data(source)
+        image_bytes = _mime_image_bytes(source, text)
+
+        if image_bytes is not None:
+            if not self._dialog._confirm_replace_text():
+                return
+            self._dialog._load_image_from_bytes(image_bytes)
+            return
+
+        if text:
+            self.insertPlainText(text)
+            return
+
+        QMessageBox.warning(
+            self._dialog,
+            i18n.t("keymouse.pb_set_title"),
+            i18n.t("keymouse.pb_paste_not_supported"),
+        )
 
 
 class _KeyboardInputPopup(QWidget):
