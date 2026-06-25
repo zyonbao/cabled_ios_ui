@@ -53,6 +53,7 @@ GUI_MAIN="$REPO_ROOT/CablediOS.py"
 # tunneld entry is a top-level launcher (repo root) so ios_toolkit/ never becomes
 # a top-level import root; its basename becomes the multidist dispatch name.
 TUNNELD_MAIN="$REPO_ROOT/cabled_ios_tunnel.py"
+PYMOBILEDEVICE3_RES_DIR=""
 
 # Prefer the project venv interpreter (it has the runtime deps installed).
 if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
@@ -82,8 +83,13 @@ preflight() {
     command -v iconutil >/dev/null 2>&1 || warn "iconutil not found; icon generation may fail."
     command -v sips >/dev/null 2>&1 || warn "sips not found; icon generation may fail."
 
+    PYMOBILEDEVICE3_RES_DIR="$("$PY" -c 'import pathlib, pymobiledevice3; print(pathlib.Path(pymobiledevice3.__file__).resolve().parent / "resources")')"
+    [[ -d "$PYMOBILEDEVICE3_RES_DIR" ]] || die "pymobiledevice3 resources directory not found: $PYMOBILEDEVICE3_RES_DIR"
+    [[ -f "$PYMOBILEDEVICE3_RES_DIR/webinspector/find_nodes.js" ]] || die "pymobiledevice3 Web Inspector resource missing: $PYMOBILEDEVICE3_RES_DIR/webinspector/find_nodes.js"
+
     log "Interpreter: $PY"
     log "Nuitka:      $("$PY" -m nuitka --version 2>/dev/null | head -n1)"
+    log "pymobiledevice3 resources: $PYMOBILEDEVICE3_RES_DIR"
 }
 
 # --- Icon generation (PNG -> .icns) -----------------------------------------
@@ -162,6 +168,7 @@ run_nuitka_multidist() {
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
         --include-package=ios_toolkit \
+        --include-data-dir="$PYMOBILEDEVICE3_RES_DIR=pymobiledevice3/resources" \
         --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
         --include-data-dir="$REPO_ROOT/slide6_ui/languages=slide6_ui/languages" \
@@ -253,6 +260,7 @@ build_fallback() {
         --enable-plugin=pyside6 \
         --include-package=pymobiledevice3 \
         --include-package=ios_toolkit \
+        --include-data-dir="$PYMOBILEDEVICE3_RES_DIR=pymobiledevice3/resources" \
         --include-data-files="$REPO_ROOT/ios_toolkit/ddi_image_index.json=ios_toolkit/ddi_image_index.json" \
         --include-package=slide6_ui \
         --include-data-dir="$REPO_ROOT/slide6_ui/languages=slide6_ui/languages" \
@@ -266,6 +274,7 @@ build_fallback() {
         --standalone \
         --include-package=pymobiledevice3 \
         --include-package=ios_toolkit \
+        --include-data-dir="$PYMOBILEDEVICE3_RES_DIR=pymobiledevice3/resources" \
         "${COMMON_FLAGS[@]}" \
         "$TUNNELD_MAIN" >&2
 
@@ -328,6 +337,9 @@ verify_bundle() {
     [[ -d "$app" ]] || die "App bundle missing: $app"
     [[ -e "$app/Contents/MacOS/cabled_ios_tunnel" ]] || die "cabled_ios_tunnel entry missing in $app."
     log "Verified: $app/Contents/MacOS/cabled_ios_tunnel present."
+    [[ -f "$app/Contents/MacOS/pymobiledevice3/resources/webinspector/find_nodes.js" ]] \
+        || die "Web Inspector resource missing in app bundle: $app/Contents/MacOS/pymobiledevice3/resources/webinspector/find_nodes.js"
+    log "Verified: Web Inspector resource bundled."
     if [[ -n "$ICON_FLAG" ]]; then
         # Use a glob expansion (globs do not expand inside [[ ... ]]).
         if compgen -G "$app/Contents/Resources/*.icns" >/dev/null; then

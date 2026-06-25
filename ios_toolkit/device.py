@@ -1140,47 +1140,62 @@ class iOSDevice:
         except Exception:
             pass  # best-effort restore; never fail the pasteboard op over this
 
-    def set_pasteboard(self, text: str) -> dict:
-        """Write plaintext to the device pasteboard via WDA.
+    def set_pasteboard(self, content, content_type: str = "plaintext") -> dict:
+        """Write content to the device pasteboard via WDA.
 
-        WDA's ``/wda/setPasteboard`` expects the content Base64-encoded and a
-        ``contentType`` of ``plaintext``. Apple only allows pasteboard access
-        while WDA is foreground, so this momentarily activates WDA, writes, then
-        restores the previously foreground app.
+        ``content_type`` is one of ``plaintext`` / ``url`` / ``image`` (matching
+        WDA ``FBPasteboard``). For ``plaintext`` / ``url`` ``content`` is a
+        string sent as UTF-8; for ``image`` ``content`` is the raw image bytes
+        (PNG/JPEG). WDA's ``/wda/setPasteboard`` expects the content
+        Base64-encoded and the ``contentType`` passed through. Apple only allows
+        pasteboard access while WDA is foreground, so this momentarily activates
+        WDA, writes, then restores the previously foreground app.
         """
         import base64
 
         from .toolkit_api import _ok, _err
 
         try:
-            content = base64.b64encode(text.encode("utf-8")).decode("ascii")
+            ctype = (content_type or "plaintext").lower()
+            if ctype == "image":
+                raw = bytes(content) if not isinstance(content, (bytes, bytearray)) else bytes(content)
+                payload = base64.b64encode(raw).decode("ascii")
+                length = len(raw)
+            else:
+                text = content if isinstance(content, str) else bytes(content).decode("utf-8")
+                payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
+                length = len(text)
             prev = self._active_bundle_id()
             self._foreground_wda()
             try:
                 self._post_with_session_retry(
                     "/session/{sid}/wda/setPasteboard",
-                    {"content": content, "contentType": "plaintext"},
+                    {"content": payload, "contentType": ctype},
                 )
             finally:
                 self._restore_app(prev)
-            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"length": len(text)}})
+            return _ok({"exitCode": 0, "stdout": "", "stderr": "", "extra": {"length": length}})
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 
-    def get_pasteboard(self) -> dict:
-        """Read the device pasteboard as plaintext via WDA.
+    def get_pasteboard(self, content_type: str = "plaintext") -> dict:
+        """Read the device pasteboard via WDA for the given ``content_type``.
 
-        Returns ``data = {"text": <str>, "isText": <bool>}``. ``isText`` is
-        False when the pasteboard is empty or holds non-text (e.g. image)
-        content that cannot be decoded as a non-empty UTF-8 string. Apple only
-        allows pasteboard access while WDA is foreground, so this momentarily
-        activates WDA, reads once, then restores the previously foreground app
-        (the system pasteboard persists across the app switch).
+        Returns ``data`` containing ``contentType`` (the actual content kind:
+        ``plaintext`` / ``image`` / ``empty``). For ``plaintext`` reads ``data``
+        has ``text`` (decoded string) and ``isText``; ``isText`` is False when
+        the pasteboard is empty or holds non-text content that cannot be decoded
+        as a non-empty UTF-8 string. For ``image`` reads ``data`` has ``image``
+        (PNG Base64) when present. Apple only allows pasteboard access while WDA
+        is foreground, so this momentarily activates WDA, reads once, then
+        restores the previously foreground app (the system pasteboard persists
+        across the app switch).
 
         Note: iOS 16+ shows a "Allow Paste" prompt the first time WDA reads
         another app's pasteboard, and the read returns empty until the user
         taps it. This does a single read and reports empty in that case — the
-        user dismisses the prompt and reads again.
+        user dismisses the prompt and reads again. To avoid triggering the
+        prompt twice, this never probes a second content type automatically.
         """
         import base64
         import binascii
@@ -1188,16 +1203,21 @@ class iOSDevice:
         from .toolkit_api import _ok, _err
 
         try:
+            ctype = (content_type or "plaintext").lower()
             prev = self._active_bundle_id()
             self._foreground_wda()
             try:
                 resp = self._post_with_session_retry(
                     "/session/{sid}/wda/getPasteboard",
-                    {"contentType": "plaintext"},
+                    {"contentType": ctype},
                 )
             finally:
                 self._restore_app(prev)
             b64 = resp.get("value") or ""
+            if ctype == "image":
+                if isinstance(b64, str) and b64:
+                    return _ok({"contentType": "image", "image": b64, "text": "", "isText": False})
+                return _ok({"contentType": "empty", "image": "", "text": "", "isText": False})
             text = ""
             is_text = False
             if isinstance(b64, str) and b64:
@@ -1208,7 +1228,11 @@ class iOSDevice:
                 if decoded:
                     text = decoded
                     is_text = True
-            return _ok({"text": text, "isText": is_text})
+            return _ok({
+                "contentType": "plaintext" if is_text else "empty",
+                "text": text,
+                "isText": is_text,
+            })
         except Exception as exc:
             return _err("SUBPROCESS", str(exc))
 

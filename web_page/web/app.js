@@ -654,12 +654,26 @@ function closeModal() {
   modalMode = null;
 }
 
+// A trimmed string that is a single token with a URL scheme+host is sent as a
+// `url` pasteboard item; anything with internal whitespace stays plaintext.
+function looksLikeUrl(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  try {
+    const u = new URL(trimmed);
+    return !!u.protocol && !!u.host;
+  } catch (_err) {
+    return false;
+  }
+}
+
 async function onModalConfirm() {
   if (modalMode === "set") {
     const text = els.modalText.value;
+    const contentType = looksLikeUrl(text) ? "url" : "plaintext";
     els.modalConfirm.disabled = true;
     try {
-      await postJson("/api/set_pasteboard", { target: state.target, text });
+      await postJson("/api/set_pasteboard", { target: state.target, contentType, text });
       closeModal();
       flashOk("已设置设备剪贴板");
     } catch (err) {

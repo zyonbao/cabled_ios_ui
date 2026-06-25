@@ -236,28 +236,43 @@ def key_chord(target: str, key: str, modifiers: list) -> dict:
 
 
 _PASTEBOARD_MAX_BYTES = 65536
+_PASTEBOARD_IMAGE_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB; images far exceed the text cap
 
 
-def set_pasteboard(target: str, text: str) -> dict:
-    """Write plaintext to the device's pasteboard."""
-    if len(text.encode("utf-8")) > _PASTEBOARD_MAX_BYTES:
-        return _err("BAD_TARGET", f"Text exceeds {_PASTEBOARD_MAX_BYTES} bytes")
+def set_pasteboard(target: str, content, content_type: str = "plaintext") -> dict:
+    """Write content to the device's pasteboard.
+
+    ``content_type`` is ``plaintext`` / ``url`` / ``image``. For text/URL
+    ``content`` is a string (size-capped at ``_PASTEBOARD_MAX_BYTES``); for
+    image ``content`` is the raw image bytes (capped at
+    ``_PASTEBOARD_IMAGE_MAX_BYTES``).
+    """
+    ctype = (content_type or "plaintext").lower()
+    if ctype == "image":
+        raw = content if isinstance(content, (bytes, bytearray)) else bytes(content)
+        if len(raw) > _PASTEBOARD_IMAGE_MAX_BYTES:
+            return _err("BAD_TARGET", f"Image exceeds {_PASTEBOARD_IMAGE_MAX_BYTES} bytes")
+    else:
+        text = content if isinstance(content, str) else bytes(content).decode("utf-8")
+        if len(text.encode("utf-8")) > _PASTEBOARD_MAX_BYTES:
+            return _err("BAD_TARGET", f"Text exceeds {_PASTEBOARD_MAX_BYTES} bytes")
     device, err = _prepare_device(target)
     if err:
         return err
-    return device.set_pasteboard(text)
+    return device.set_pasteboard(content, ctype)
 
 
-def get_pasteboard(target: str) -> dict:
-    """Read the device's pasteboard as plaintext.
+def get_pasteboard(target: str, content_type: str = "plaintext") -> dict:
+    """Read the device's pasteboard for the given ``content_type``.
 
-    data = {"text": <str>, "isText": <bool>}; isText is False for empty or
-    non-text (e.g. image) pasteboard content.
+    data includes ``contentType`` (``plaintext`` / ``image`` / ``empty``). For
+    plaintext reads data has ``text`` and ``isText`` (False for empty/non-text);
+    for image reads data has ``image`` (PNG Base64) when present.
     """
     device, err = _prepare_device(target)
     if err:
         return err
-    return device.get_pasteboard()
+    return device.get_pasteboard(content_type)
 
 
 # ---------------------------------------------------------------------------

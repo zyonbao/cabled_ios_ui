@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import binascii
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -83,7 +84,15 @@ class ChordBody(BaseModel):
 
 class PasteboardSetBody(BaseModel):
     target: str
-    text: str
+    # plaintext / url use `text`; image uses `image` (Base64 of the raw bytes).
+    contentType: str = "plaintext"
+    text: str = ""
+    image: str = ""
+
+
+class PasteboardGetBody(BaseModel):
+    target: str
+    contentType: str = "plaintext"
 
 
 class StreamConfigBody(BaseModel):
@@ -204,14 +213,24 @@ def chord(body: ChordBody) -> dict:
 
 @app.post("/api/set_pasteboard")
 def set_pasteboard(body: PasteboardSetBody) -> dict:
-    """Write plaintext to the device's pasteboard."""
-    return _raise_if_error(api.set_pasteboard(body.target, body.text))["data"]
+    """Write content to the device's pasteboard (plaintext / url / image)."""
+    ctype = (body.contentType or "plaintext").lower()
+    if ctype == "image":
+        try:
+            # validate=True rejects any non-alphabet bytes instead of silently
+            # discarding them, so malformed payloads surface as a 400.
+            content = base64.b64decode(body.image or "", validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail="invalid base64 image")
+    else:
+        content = body.text
+    return _raise_if_error(api.set_pasteboard(body.target, content, ctype))["data"]
 
 
 @app.post("/api/get_pasteboard")
-def get_pasteboard(body: TargetBody) -> dict:
-    """Read the device's pasteboard as plaintext (data: {text, isText})."""
-    return _raise_if_error(api.get_pasteboard(body.target))["data"]
+def get_pasteboard(body: PasteboardGetBody) -> dict:
+    """Read the device's pasteboard (data: {contentType, text, isText[, image]})."""
+    return _raise_if_error(api.get_pasteboard(body.target, body.contentType))["data"]
 
 
 class LaunchBody(BaseModel):

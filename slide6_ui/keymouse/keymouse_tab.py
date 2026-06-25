@@ -16,17 +16,18 @@ from collections.abc import Callable
 from datetime import datetime
 
 from PySide6.QtCore import QBuffer, QIODevice, QSettings, QStandardPaths, QTimer, Qt, Signal
-from PySide6.QtGui import QImage, QTransform
+from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -36,7 +37,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
-from ..common.file_dialogs import save_file
+from ..common.file_dialogs import open_existing_file, save_file
 from ..common.gate_overlay import GatedTabMixin
 from ..common.keymouse_settings import (
     SWIPE_UP_BOTTOM,
@@ -44,6 +45,8 @@ from ..common.keymouse_settings import (
     SWIPE_UP_DISABLED,
     SWIPE_UP_HOLD_APP_SWITCHER,
     SWIPE_UP_HOLD_DISABLED,
+    get_pasteboard_auto_copy_host,
+    get_ui_xml_auto_copy_host,
     resolve_bottom_edge_gesture_row,
 )
 from ..common import readiness
@@ -65,6 +68,29 @@ _FPS_CHOICES = [5, 10, 15, 20]
 _DEFAULT_FPS = 10
 _MJPEG_SCALING = 60
 _MJPEG_QUALITY = 70
+
+# Image file extensions accepted for pasteboard image writes (drag-drop / picker).
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif", ".tiff", ".tif")
+# Soft threshold above which writing an image is confirmed (it is slow over WDA).
+_PASTEBOARD_IMAGE_WARN_BYTES = 10 * 1024 * 1024
+
+
+def _looks_like_url(text: str) -> bool:
+    """A trimmed single token with a scheme + host is treated as a URL.
+
+    Anything with internal whitespace/newlines stays plaintext so long text
+    that merely contains a URL is not misclassified.
+    """
+    trimmed = (text or "").strip()
+    if not trimmed or any(ch.isspace() for ch in trimmed):
+        return False
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(trimmed)
+    except ValueError:
+        return False
+    return bool(parts.scheme and parts.netloc)
 
 _ORIENT_KEYS = {
     "PORTRAIT": "keymouse.orient.portrait",
@@ -135,6 +161,169 @@ class SendTextEdit(QTextEdit):
         one_line = line_h + chrome
         max_h = line_h * self._MAX_LINES + chrome
         self.setFixedHeight(int(min(max(content, one_line), max_h)))
+
+
+class _SetPasteboardDialog(QDialog):
+    """Set-pasteboard input: text OR image, mutually exclusive.
+
+    Text and image share a single content area (a stacked widget): the text
+    editor is shown in text mode and the image preview replaces it in image
+    mode. An image can be added via the button or by dropping an image file on
+    the dialog; adding one while text is present clears the text after a
+    confirmation. "Remove image" returns to text mode.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.t("keymouse.pb_set_title"))
+        self.setAcceptDrops(True)
+        self._image_bytes: bytes | None = None
+        self._pixmap_full: QPixmap | None = None
+
+        layout = QVBoxLayout(self)
+
+        # Text and image occupy the same region via a stacked widget.
+        self.stack = QStackedWidget()
+        self.text_edit = QPlainTextEdit()
+        self.text_edit.setPlaceholderText(i18n.t("keymouse.pb_input_placeholder"))
+        # The editor accepts file drops by default and would paste the URL as
+        # text; disable on both the widget and its viewport (the real drop
+        # target for a scroll area) so image drops bubble up to the dialog.
+        self.text_edit.setAcceptDrops(False)
+        self.text_edit.viewport().setAcceptDrops(False)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumHeight(200)
+        self.image_label.setAcceptDrops(False)
+        self.stack.addWidget(self.text_edit)   # index 0: text
+        self.stack.addWidget(self.image_label)  # index 1: image
+        layout.addWidget(self.stack, 1)
+
+        # Bottom row: add/remove image left-aligned, Cancel/OK right-aligned.
+        bottom = QHBoxLayout()
+        self.add_image_btn = QPushButton(i18n.t("keymouse.pb_add_image"))
+        self.remove_image_btn = QPushButton(i18n.t("keymouse.pb_remove_image"))
+        self.remove_image_btn.setVisible(False)
+        bottom.addWidget(self.add_image_btn)
+        bottom.addWidget(self.remove_image_btn)
+        bottom.addStretch(1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bottom.addWidget(buttons)
+        layout.addLayout(bottom)
+
+        self.add_image_btn.clicked.connect(self._on_add_image)
+        self.remove_image_btn.clicked.connect(self._remove_image)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.resize(440, 380)
+
+    # -- drag & drop into the dialog --------------------------------------
+
+    def _first_image_drop(self, mime) -> str:
+        if not mime.hasUrls():
+            return ""
+        for url in mime.urls():
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(_IMAGE_EXTS):
+                return url.toLocalFile()
+        return ""
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._first_image_drop(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._first_image_drop(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
+        path = self._first_image_drop(event.mimeData())
+        if path:
+            event.acceptProposedAction()
+            self._load_image_from_path(path)
+        else:
+            event.ignore()
+
+    # -- image handling ----------------------------------------------------
+
+    def _confirm_replace_text(self) -> bool:
+        """Confirm clearing entered text before loading an image (Yes/No)."""
+        if not self.text_edit.toPlainText().strip():
+            return True
+        answer = QMessageBox.question(
+            self,
+            i18n.t("keymouse.pb_set_title"),
+            i18n.t("keymouse.pb_image_replaces_text"),
+        )
+        return answer == QMessageBox.Yes
+
+    def _on_add_image(self) -> None:
+        # Button path: confirm the text-clearing BEFORE opening the picker so the
+        # user is not made to choose a file only to then be asked to discard it.
+        if not self._confirm_replace_text():
+            return
+        path = open_existing_file(
+            self, i18n.t("keymouse.pb_pick_image"), [i18n.t("keymouse.image_filter")]
+        )
+        if path:
+            self._load_image_from_path(path, confirm_replace=False)
+
+    def _load_image_from_path(self, path: str, confirm_replace: bool = True) -> None:
+        # Drop path passes confirm_replace=True (cannot ask before the drop);
+        # the button path confirms earlier and passes False.
+        if confirm_replace and not self._confirm_replace_text():
+            return
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            QMessageBox.warning(
+                self, i18n.t("keymouse.pb_set_title"),
+                i18n.t("keymouse.pb_image_read_failed", error=exc),
+            )
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            QMessageBox.warning(
+                self, i18n.t("keymouse.pb_set_title"), i18n.t("keymouse.pb_not_image")
+            )
+            return
+        self._image_bytes = data
+        self._pixmap_full = pixmap
+        self.text_edit.clear()
+        self._rescale_preview()
+        self.stack.setCurrentWidget(self.image_label)
+        self.remove_image_btn.setVisible(True)
+
+    def _remove_image(self) -> None:
+        self._image_bytes = None
+        self._pixmap_full = None
+        self.image_label.clear()
+        self.stack.setCurrentWidget(self.text_edit)
+        self.remove_image_btn.setVisible(False)
+        self.text_edit.setFocus()
+
+    def _rescale_preview(self) -> None:
+        if self._pixmap_full is None:
+            return
+        area = self.image_label.size()
+        self.image_label.setPixmap(
+            self._pixmap_full.scaled(area, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if self._image_bytes is not None:
+            self._rescale_preview()
+
+    def result_content(self) -> "tuple[str, object]":
+        """Return ``("image", bytes)`` or ``("text", str)``."""
+        if self._image_bytes is not None:
+            return ("image", self._image_bytes)
+        return ("text", self.text_edit.toPlainText())
 
 
 class KeymouseTab(GatedTabMixin, QWidget):
@@ -314,6 +503,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.screen.long_press.connect(self.on_long_press)
         self.screen.swipe.connect(self.on_swipe)
         self.screen.gesture_finished.connect(self._refocus_keyboard)
+        self.screen.file_dropped.connect(self.on_file_dropped)
 
         self.kbd_capture.text_typed.connect(self.kbd_sender.enqueue_text)
         self.kbd_capture.key_pressed.connect(self.kbd_sender.enqueue_key)
@@ -579,6 +769,8 @@ class KeymouseTab(GatedTabMixin, QWidget):
             btn.setEnabled(True)
         self.send_input.setEnabled(True)
         self.kbd_capture.setEnabled(True)
+        # Device ready: allow dropping an image onto the mirror to set pasteboard.
+        self.screen.set_drop_enabled(True)
 
         self.mirror_thread = MjpegThread("127.0.0.1", port, self)
         self.mirror_thread.frame_ready.connect(self.screen.on_frame)
@@ -597,6 +789,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
             self.mirror_thread = None
         self.screen.clear_frame()
         self._set_keyboard(False)
+        self.screen.set_drop_enabled(False)
         for btn in self._connected_buttons():
             btn.setEnabled(False)
         self.send_input.setEnabled(False)
@@ -769,15 +962,61 @@ class KeymouseTab(GatedTabMixin, QWidget):
     def on_set_pasteboard(self) -> None:
         if not self.target:
             return
-        text, ok = QInputDialog.getMultiLineText(
-            self, i18n.t("keymouse.pb_set_title"), i18n.t("keymouse.pb_content_label"), ""
-        )
-        if not ok:
+        dlg = _SetPasteboardDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            self._refocus_keyboard()
             return
+        kind, payload = dlg.result_content()
+        if kind == "image":
+            self._send_image_pasteboard(payload)
+            return
+        text = payload
+        if not text:
+            self._refocus_keyboard()
+            return
+        # A bare URL is written as a `url` pasteboard item; otherwise plaintext.
+        content_type = "url" if _looks_like_url(text) else "plaintext"
         target = self.target
         self._set_status(i18n.t("keymouse.pb_setting"))
         self.runner.submit(
-            lambda: api.set_pasteboard(target, text),
+            lambda: api.set_pasteboard(target, text, content_type),
+            on_done=lambda r: self._flash(i18n.t("keymouse.pb_set_ok")) if r.get("ok")
+            else self._flash(i18n.t("keymouse.pb_set_failed") + ": " + localize_error(r.get("error"))),
+            on_error=lambda e: self._flash(i18n.t("keymouse.pb_set_failed_detail", error=e)),
+        )
+        self._refocus_keyboard()
+
+    def on_file_dropped(self, path: str) -> None:
+        # Drag-to-pasteboard only makes sense once the device is connected; the
+        # tab validates image-ness here so non-image drops get a clear hint.
+        if not self.target or self.mirror_thread is None:
+            return
+        if not path.lower().endswith(_IMAGE_EXTS):
+            self._flash(i18n.t("keymouse.pb_drop_not_image"))
+            return
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            self._flash(i18n.t("keymouse.pb_image_read_failed", error=exc))
+            return
+        self._send_image_pasteboard(data)
+
+    def _send_image_pasteboard(self, data: bytes) -> None:
+        if not self.target or not data:
+            self._refocus_keyboard()
+            return
+        if len(data) > _PASTEBOARD_IMAGE_WARN_BYTES:
+            answer = QMessageBox.question(
+                self, i18n.t("keymouse.pb_set_title"), i18n.t("keymouse.pb_image_too_large")
+            )
+            if answer != QMessageBox.Yes:
+                self._refocus_keyboard()
+                return
+        target = self.target
+        self._set_status(i18n.t("keymouse.pb_setting"))
+        self.runner.submit(
+            lambda: api.set_pasteboard(target, data, "image"),
             on_done=lambda r: self._flash(i18n.t("keymouse.pb_set_ok")) if r.get("ok")
             else self._flash(i18n.t("keymouse.pb_set_failed") + ": " + localize_error(r.get("error"))),
             on_error=lambda e: self._flash(i18n.t("keymouse.pb_set_failed_detail", error=e)),
@@ -802,12 +1041,22 @@ class KeymouseTab(GatedTabMixin, QWidget):
             return
         data = result.get("data", {})
         is_text = bool(data.get("isText"))
+        text = data.get("text", "")
+
+        # Setting on: skip the display dialog and copy text straight to the host.
+        if get_pasteboard_auto_copy_host(QSettings()):
+            if is_text:
+                self._copy_to_host(text)  # flashes "已复制到本机"
+            else:
+                self._flash(i18n.t("keymouse.pb_empty"))
+            self._refocus_keyboard()
+            return
+
         self._flash(i18n.t("keymouse.pb_read_ok") if is_text else i18n.t("keymouse.pb_empty"))
 
         dlg = QDialog(self)
         dlg.setWindowTitle(i18n.t("keymouse.pb_dialog_title"))
         layout = QVBoxLayout(dlg)
-        text = data.get("text", "")
         if is_text:
             view = QPlainTextEdit()
             view.setPlainText(text)
@@ -851,6 +1100,16 @@ class KeymouseTab(GatedTabMixin, QWidget):
             return
 
         raw = (result.get("data") or {}).get("raw", "")
+
+        # Setting on: skip the viewer dialog and copy the XML straight to host.
+        if get_ui_xml_auto_copy_host(QSettings()):
+            if raw:
+                self._copy_to_host(raw)  # flashes "已复制到本机"
+            else:
+                self._flash(i18n.t("keymouse.ui_xml_ready"))
+            self._refocus_keyboard()
+            return
+
         self._flash(i18n.t("keymouse.ui_xml_ready"))
 
         dlg = QDialog(self)

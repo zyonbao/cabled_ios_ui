@@ -159,6 +159,11 @@
           "need_device_id": "Enter a Device ID.",
           "duplicate_device_id": "That Device ID already exists."
         }
+      },
+      "auto_copy": {
+        "group": "Copy to Host After Reading",
+        "pasteboard": "After reading the device clipboard, skip the dialog and copy straight to the host clipboard",
+        "ui_xml": "After fetching the UI XML, skip the dialog and copy straight to the host clipboard"
       }
     }
   },
@@ -533,7 +538,17 @@
     "send_failed_detail": "Send failed: {error}",
     "send_failed_msg": "Send failed: {msg}",
     "pb_set_title": "Set Device Clipboard",
-    "pb_content_label": "Content:",
+    "pb_input_placeholder": "Type text, or click “Add Image…” / drop an image",
+    "pb_add_image": "Add Image…",
+    "pb_remove_image": "Remove Image",
+    "drop_overlay": "Drop here to send the image to the device clipboard",
+    "pb_pick_image": "Choose Image",
+    "image_filter": "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.heic *.heif *.tiff *.tif)",
+    "pb_image_replaces_text": "Adding an image clears the entered text. Continue?",
+    "pb_not_image": "The selected file is not a recognizable image",
+    "pb_image_read_failed": "Failed to read image: {error}",
+    "pb_image_too_large": "The image is larger than 10MB; sending to the device may take a while. Continue?",
+    "pb_drop_not_image": "Only image files can be dropped here",
     "pb_setting": "Setting clipboard…",
     "pb_set_ok": "Device clipboard set",
     "pb_set_failed": "Failed to set clipboard",

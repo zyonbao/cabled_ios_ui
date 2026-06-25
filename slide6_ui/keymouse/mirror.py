@@ -14,7 +14,7 @@ import socket
 import sys
 
 from PySide6.QtCore import QPoint, QRect, Qt, QThread, Signal
-from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QWidget
 
 from .. import i18n
@@ -119,9 +119,13 @@ class ScreenView(QWidget):
     long_press = Signal(int, int, int)
     swipe = Signal(int, int, int, int, int)
     gesture_finished = Signal()
+    # A local file dropped onto the screen area (path); the tab decides whether
+    # it is an image and writes it to the device pasteboard.
+    file_dropped = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setAcceptDrops(True)
         self._pixmap: QPixmap | None = None
         self._win_w = 0
         self._win_h = 0
@@ -137,6 +141,10 @@ class ScreenView(QWidget):
         # (pairing / tunnel / DDI) use the tab's full-tab gate overlay instead.
         self._overlay_text = i18n.t("common.select_device_first")
         self._gate_blocked = False
+        # Image drop-to-pasteboard: only enabled once the device is ready
+        # (streaming); `_drag_hover` drives the drop hint overlay.
+        self._drop_enabled = False
+        self._drag_hover = False
         self.setMinimumSize(240, 320)
         self.setMouseTracking(False)
 
@@ -159,6 +167,14 @@ class ScreenView(QWidget):
     def set_gate_blocked(self, blocked: bool) -> None:
         self._gate_blocked = bool(blocked)
         self.update()
+
+    def set_drop_enabled(self, enabled: bool) -> None:
+        # Image drop is gated on device readiness (streaming). Disabling also
+        # clears any in-progress hover so the hint cannot linger.
+        self._drop_enabled = bool(enabled)
+        if not self._drop_enabled and self._drag_hover:
+            self._drag_hover = False
+            self.update()
 
     def clear_frame(self) -> None:
         self._pixmap = None
@@ -232,6 +248,52 @@ class ScreenView(QWidget):
         if self._overlay_text and not self._gate_blocked:
             painter.setPen(Qt.white)
             painter.drawText(self.rect(), Qt.AlignCenter, self._overlay_text)
+        # Drop hint: a dark translucent scrim with white guidance text while an
+        # image file is dragged over the ready mirror.
+        if self._drag_hover:
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 150))
+            painter.setPen(Qt.white)
+            painter.drawText(self.rect(), Qt.AlignCenter, i18n.t("keymouse.drop_overlay"))
+
+    # -- drag & drop -------------------------------------------------------
+
+    def _has_local_file(self, mime) -> bool:
+        return mime.hasUrls() and any(u.isLocalFile() for u in mime.urls())
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt override
+        # Only when the device is ready; accept any local-file drag (the tab
+        # validates image-ness on drop so non-image files get a clear hint).
+        if self._drop_enabled and self._has_local_file(event.mimeData()):
+            event.acceptProposedAction()
+            self._drag_hover = True
+            self.update()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._drop_enabled and self._has_local_file(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._drag_hover:
+            self._drag_hover = False
+            self.update()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._drag_hover = False
+        self.update()
+        if not self._drop_enabled:
+            event.ignore()
+            return
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                event.acceptProposedAction()
+                self.file_dropped.emit(url.toLocalFile())
+                return
+        event.ignore()
 
     # -- gestures ----------------------------------------------------------
 

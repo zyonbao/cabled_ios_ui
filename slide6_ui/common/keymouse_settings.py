@@ -33,10 +33,38 @@ WDA_BUNDLE_ID_KEY = "settings/keymouse_wda_bundle_id"
 WDA_PORT_KEY = "settings/keymouse_wda_port"
 WDA_MJPEG_PORT_KEY = "settings/keymouse_wda_mjpeg_port"
 BOTTOM_EDGE_GESTURES_KEY = "settings/keymouse_bottom_edge_gestures"
+# After a successful read, skip the display dialog and copy straight to the host
+# clipboard. Both default off so the existing dialog behavior is preserved.
+PASTEBOARD_AUTO_COPY_KEY = "settings/keymouse_pasteboard_auto_copy_host"
+UI_XML_AUTO_COPY_KEY = "settings/keymouse_ui_xml_auto_copy_host"
 
 
 def _settings(settings: QSettings | None = None) -> QSettings:
     return settings or QSettings()
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def get_pasteboard_auto_copy_host(settings: QSettings | None = None) -> bool:
+    return _as_bool(_settings(settings).value(PASTEBOARD_AUTO_COPY_KEY, False))
+
+
+def set_pasteboard_auto_copy_host(value: bool, settings: QSettings | None = None) -> None:
+    _settings(settings).setValue(PASTEBOARD_AUTO_COPY_KEY, bool(value))
+
+
+def get_ui_xml_auto_copy_host(settings: QSettings | None = None) -> bool:
+    return _as_bool(_settings(settings).value(UI_XML_AUTO_COPY_KEY, False))
+
+
+def set_ui_xml_auto_copy_host(value: bool, settings: QSettings | None = None) -> None:
+    _settings(settings).setValue(UI_XML_AUTO_COPY_KEY, bool(value))
 
 
 def get_wda_bundle_id(settings: QSettings | None = None) -> str:

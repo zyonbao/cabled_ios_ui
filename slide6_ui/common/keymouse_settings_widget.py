@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -35,6 +36,8 @@ from .keymouse_settings import (
     WDA_MJPEG_PORT_KEY,
     WDA_PORT_KEY,
     apply_wda_env,
+    get_pasteboard_auto_copy_host,
+    get_ui_xml_auto_copy_host,
     get_wda_bundle_id,
     get_wda_mjpeg_port,
     get_wda_port,
@@ -46,6 +49,8 @@ from .keymouse_settings import (
     normalize_wda_mjpeg_port,
     normalize_wda_port,
     save_bottom_edge_gesture_rows,
+    set_pasteboard_auto_copy_host,
+    set_ui_xml_auto_copy_host,
 )
 
 
@@ -194,12 +199,32 @@ class KeyMouseSettingsWidget(QWidget):
         gesture_col.addLayout(btn_row)
         col.addWidget(gesture_box)
 
+        copy_box = QGroupBox(i18n.t("settings.keymouse.auto_copy.group"), self)
+        copy_col = QVBoxLayout(copy_box)
+        self.pasteboard_auto_copy_check = QCheckBox(
+            i18n.t("settings.keymouse.auto_copy.pasteboard"), copy_box
+        )
+        self.pasteboard_auto_copy_check.setChecked(get_pasteboard_auto_copy_host(self.settings))
+        self.ui_xml_auto_copy_check = QCheckBox(
+            i18n.t("settings.keymouse.auto_copy.ui_xml"), copy_box
+        )
+        self.ui_xml_auto_copy_check.setChecked(get_ui_xml_auto_copy_host(self.settings))
+        copy_col.addWidget(self.pasteboard_auto_copy_check)
+        copy_col.addWidget(self.ui_xml_auto_copy_check)
+        col.addWidget(copy_box)
+
         col.addStretch(1)
 
     def _wire(self) -> None:
         self.bundle_edit.editingFinished.connect(self._save_bundle)
         self.port_spin.valueChanged.connect(self._save_port)
         self.mjpeg_port_spin.valueChanged.connect(self._save_mjpeg_port)
+        self.pasteboard_auto_copy_check.toggled.connect(
+            lambda on: set_pasteboard_auto_copy_host(on, self.settings)
+        )
+        self.ui_xml_auto_copy_check.toggled.connect(
+            lambda on: set_ui_xml_auto_copy_host(on, self.settings)
+        )
         self.table.itemSelectionChanged.connect(self._refresh_override_buttons)
         self.add_btn.clicked.connect(self._add_row)
         self.edit_btn.clicked.connect(self._edit_row)
@@ -290,6 +315,24 @@ class KeyMouseSettingsWidget(QWidget):
         if self.state["rows"] and self.table.currentRow() < 0:
             self.table.selectRow(0)
         self._refresh_override_buttons()
+        self._fit_table_height()
+
+    def _fit_table_height(self) -> None:
+        """Pin the table to exactly the height its rows need.
+
+        The default QTableWidget sizeHint is a fixed ~192px regardless of row
+        count, which makes the Preferences dialog (sized to the tallest tab)
+        either waste space or clip rows behind a scrollbar. Sizing to content —
+        header + per-row heights + frame — lets the dialog "just fit" the page.
+        """
+        table = self.table
+        total = table.horizontalHeader().sizeHint().height() + 2 * table.frameWidth()
+        default_row = table.verticalHeader().defaultSectionSize()
+        for row in range(table.rowCount()):
+            total += table.rowHeight(row) or default_row
+        if table.horizontalScrollBar().isVisible():
+            total += table.horizontalScrollBar().sizeHint().height()
+        table.setFixedHeight(total)
 
     def _persist_rows(self, *, select_device_id: str | None = None) -> None:
         save_bottom_edge_gesture_rows(self.state["rows"], self.settings)
