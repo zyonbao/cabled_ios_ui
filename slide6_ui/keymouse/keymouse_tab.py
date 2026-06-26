@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -47,7 +48,9 @@ from ..common.keymouse_settings import (
     SWIPE_UP_DISABLED,
     SWIPE_UP_HOLD_APP_SWITCHER,
     SWIPE_UP_HOLD_DISABLED,
+    get_kbd_popup_translucent_unfocused,
     get_pasteboard_auto_copy_host,
+    get_remember_kbd_popup_pos,
     get_ui_xml_auto_copy_host,
     resolve_bottom_edge_gesture_row,
 )
@@ -462,6 +465,9 @@ class _KeyboardInputPopup(QWidget):
     so no part of the window ever leaves the tab.
     """
 
+    # Opacity applied while the popup is unfocused (when the feature is on).
+    _UNFOCUSED_OPACITY = 0.5
+
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         # Opaque rounded panel is hand-painted in paintEvent. A stylesheet
@@ -473,6 +479,19 @@ class _KeyboardInputPopup(QWidget):
         # Re-clamp into view when the tab resizes (window shrink / sidebar width
         # change), otherwise a once-placed popup can end up partly off-screen.
         parent.installEventFilter(self)
+
+        # Fade-when-unfocused support. A child widget cannot use windowOpacity,
+        # so dim via a graphics effect — but only while actually unfocused, so
+        # the effect never sits over the focused IME-active field (it can break
+        # input rendering). When focused/disabled the effect is turned off.
+        self._translucent_when_unfocused = False
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(self._UNFOCUSED_OPACITY)
+        self._opacity_effect.setEnabled(False)
+        self.setGraphicsEffect(self._opacity_effect)
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._on_focus_changed)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(6, 4, 6, 4)
@@ -491,18 +510,40 @@ class _KeyboardInputPopup(QWidget):
         row.addWidget(self.capture, 1)
         row.addWidget(self.close_btn)
 
-    def show_over(self, anchor: QWidget) -> None:
-        """Show over the entry button: button width, natural (symmetric) height."""
+    def show_over(self, anchor: QWidget, at: QPoint | None = None) -> None:
+        """Show at `at` (parent-local), or over the entry button when `at` is None.
+
+        Width always follows the button; height is the row's natural height (max
+        of field/button) plus margins, keeping the contents vertically centered.
+        Use sizeHint directly — adjustSize() takes a different layout path that
+        top-aligns the shorter field and unbalances the margins.
+        """
         parent = self.parentWidget()
-        # Width follows the button; height is the row's natural height (max of
-        # field/button) plus margins, keeping the contents vertically centered.
-        # Use sizeHint directly — adjustSize() takes a different layout path that
-        # top-aligns the shorter field and unbalances the margins.
         self.resize(anchor.width(), self.sizeHint().height())
-        top_left = anchor.mapTo(parent, anchor.rect().topLeft())
-        self.move(self._clamped(top_left))
+        if at is None:
+            at = anchor.mapTo(parent, anchor.rect().topLeft())
+        self.move(self._clamped(at))
         self.show()
         self.raise_()
+
+    def set_translucent_when_unfocused(self, enabled: bool) -> None:
+        """Enable/disable the fade-while-unfocused behavior (read from settings)."""
+        self._translucent_when_unfocused = enabled
+        self._apply_translucency()
+
+    def _has_focus_within(self) -> bool:
+        focused = QApplication.focusWidget()
+        return focused is not None and (focused is self or self.isAncestorOf(focused))
+
+    def _apply_translucency(self) -> None:
+        # Dim only when the feature is on, the popup is showing, and focus has
+        # left it. Otherwise turn the effect fully off so the focused field
+        # renders natively.
+        dim = self._translucent_when_unfocused and self.isVisible() and not self._has_focus_within()
+        self._opacity_effect.setEnabled(dim)
+
+    def _on_focus_changed(self, _old, _now) -> None:  # noqa: N802 - Qt slot
+        self._apply_translucency()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
         # Only background presses reach here (the field / ✕ consume their own).
@@ -655,6 +696,10 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.kbd_capture = self.kbd_popup.capture
         self.kbd_close_btn = self.kbd_popup.close_btn
         self.kbd_popup.hide()
+        # Last popup position for the current device (parent-local), restored on
+        # reopen when the "remember position" setting is on. Kept in memory only,
+        # so it is intentionally dropped on device switch and app restart.
+        self._kbd_popup_pos: QPoint | None = None
 
         # Text send row: a standalone field + send button, independent of the
         # keyboard-mirroring capture above. The field is multi-line and grows
@@ -721,7 +766,7 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.screen.tap.connect(self.on_tap)
         self.screen.long_press.connect(self.on_long_press)
         self.screen.swipe.connect(self.on_swipe)
-        self.screen.gesture_finished.connect(self._refocus_keyboard)
+        # No gesture_finished → refocus: focus stays where the user put it.
         self.screen.file_dropped.connect(self.on_file_dropped)
 
         self.kbd_capture.text_typed.connect(self.kbd_sender.enqueue_text)
@@ -757,6 +802,8 @@ class KeymouseTab(GatedTabMixin, QWidget):
         self.stop_stream()
         self.target = target or ""
         self.dev = dev
+        # The remembered popup position is per-device; drop it on every switch.
+        self._kbd_popup_pos = None
         self.win_size = None
         self.orientation = {"orientation": "PORTRAIT", "degrees": 0}
         self.screen.set_window_size(0, 0)
@@ -1053,7 +1100,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
                 on_done=lambda r: self._set_status(i18n.t("keymouse.connected")) if r.get("ok") else self._flash(i18n.t("keymouse.bottom_edge.failed", name=label)),
                 on_error=lambda e: self._flash(i18n.t("keymouse.bottom_edge.failed_detail", name=label, error=e)),
             )
-        self._refocus_keyboard()
 
     def on_screenshot(self) -> None:
         target = self.target
@@ -1090,7 +1136,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
             self._set_status(i18n.t("keymouse.screenshot_saved", path=path))
         except OSError as exc:
             self._flash(i18n.t("keymouse.save_failed", error=exc))
-        self._refocus_keyboard()
 
     def _orient_screenshot(self, png: bytes) -> bytes:
         # WDA's screenshot already corrects the 90° landscape rotation but not the
@@ -1130,18 +1175,23 @@ class KeymouseTab(GatedTabMixin, QWidget):
             if not self.kbd_sender.isRunning():
                 self.kbd_sender.start()
             self.kbd_capture.clear()
-            # Float the capture popup over the entry button, then focus it.
-            self.kbd_popup.show_over(self.kbd_btn)
+            # Float the capture popup over the entry button, or at its last
+            # remembered position for this device when the setting is enabled.
+            settings = QSettings()
+            at = self._kbd_popup_pos if get_remember_kbd_popup_pos(settings) else None
+            self.kbd_popup.set_translucent_when_unfocused(
+                get_kbd_popup_translucent_unfocused(settings)
+            )
+            self.kbd_popup.show_over(self.kbd_btn, at)
             self.kbd_capture.setFocus()
             self.kbd_btn.setText(i18n.t("keymouse.kbd_on"))
         else:
+            # Remember where the popup ended up so the next open can restore it.
+            if self.kbd_popup.isVisible():
+                self._kbd_popup_pos = self.kbd_popup.pos()
             self.kbd_capture.clearFocus()
             self.kbd_popup.hide()
             self.kbd_btn.setText(i18n.t("keymouse.kbd_off"))
-
-    def _refocus_keyboard(self) -> None:
-        if self.kbd_on:
-            self.kbd_capture.setFocus()
 
     def should_preserve_focus(self) -> bool:
         return self.kbd_on
@@ -1175,14 +1225,12 @@ class KeymouseTab(GatedTabMixin, QWidget):
         else:
             msg = localize_error(result.get("error"))
             self._flash(i18n.t("keymouse.send_failed_msg", msg=msg))
-        self._refocus_keyboard()
 
     def on_set_pasteboard(self) -> None:
         if not self.target:
             return
         dlg = _SetPasteboardDialog(self)
         if dlg.exec() != QDialog.Accepted:
-            self._refocus_keyboard()
             return
         kind, payload = dlg.result_content()
         if kind == "image":
@@ -1190,7 +1238,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
             return
         text = payload
         if not text:
-            self._refocus_keyboard()
             return
         # A bare URL is written as a `url` pasteboard item; otherwise plaintext.
         content_type = "url" if _looks_like_url(text) else "plaintext"
@@ -1202,7 +1249,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
             else self._flash(i18n.t("keymouse.pb_set_failed") + ": " + localize_error(r.get("error"))),
             on_error=lambda e: self._flash(i18n.t("keymouse.pb_set_failed_detail", error=e)),
         )
-        self._refocus_keyboard()
 
     def on_file_dropped(self, path: str) -> None:
         # Drag-to-pasteboard only makes sense once the device is connected; the
@@ -1222,14 +1268,12 @@ class KeymouseTab(GatedTabMixin, QWidget):
 
     def _send_image_pasteboard(self, data: bytes) -> None:
         if not self.target or not data:
-            self._refocus_keyboard()
             return
         if len(data) > _PASTEBOARD_IMAGE_WARN_BYTES:
             answer = QMessageBox.question(
                 self, i18n.t("keymouse.pb_set_title"), i18n.t("keymouse.pb_image_too_large")
             )
             if answer != QMessageBox.Yes:
-                self._refocus_keyboard()
                 return
         target = self.target
         self._set_status(i18n.t("keymouse.pb_setting"))
@@ -1239,7 +1283,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
             else self._flash(i18n.t("keymouse.pb_set_failed") + ": " + localize_error(r.get("error"))),
             on_error=lambda e: self._flash(i18n.t("keymouse.pb_set_failed_detail", error=e)),
         )
-        self._refocus_keyboard()
 
     def on_get_pasteboard(self) -> None:
         if not self.target:
@@ -1267,7 +1310,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
                 self._copy_to_host(text)  # flashes "已拷贝到本机"
             else:
                 self._flash(i18n.t("keymouse.pb_empty"))
-            self._refocus_keyboard()
             return
 
         self._flash(i18n.t("keymouse.pb_read_ok") if is_text else i18n.t("keymouse.pb_empty"))
@@ -1292,7 +1334,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
         layout.addWidget(buttons)
         dlg.resize(420, 320)
         dlg.exec()
-        self._refocus_keyboard()
 
     def _copy_to_host(self, text: str) -> None:
         from PySide6.QtWidgets import QApplication
@@ -1325,7 +1366,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
                 self._copy_to_host(raw)  # flashes "已拷贝到本机"
             else:
                 self._flash(i18n.t("keymouse.ui_xml_ready"))
-            self._refocus_keyboard()
             return
 
         self._flash(i18n.t("keymouse.ui_xml_ready"))
@@ -1347,7 +1387,6 @@ class KeymouseTab(GatedTabMixin, QWidget):
         layout.addWidget(buttons)
         dlg.resize(760, 520)
         dlg.exec()
-        self._refocus_keyboard()
 
     # ------------------------------------------------------------- helpers
 

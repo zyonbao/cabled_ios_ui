@@ -37,6 +37,13 @@ BOTTOM_EDGE_GESTURES_KEY = "settings/keymouse_bottom_edge_gestures"
 # clipboard. Both default off so the existing dialog behavior is preserved.
 PASTEBOARD_AUTO_COPY_KEY = "settings/keymouse_pasteboard_auto_copy_host"
 UI_XML_AUTO_COPY_KEY = "settings/keymouse_ui_xml_auto_copy_host"
+# When on, the keyboard-input popup reopens at its last position. Only this
+# on/off preference is persisted; the position itself is kept in memory and is
+# intentionally dropped on device switch / app restart. Default off.
+REMEMBER_KBD_POPUP_POS_KEY = "settings/keymouse_remember_kbd_popup_pos"
+# When on, the keyboard-input popup fades to semi-transparent while keyboard
+# focus is elsewhere and returns to opaque once it regains focus. Default off.
+KBD_POPUP_TRANSLUCENT_KEY = "settings/keymouse_kbd_popup_translucent_unfocused"
 
 
 def _settings(settings: QSettings | None = None) -> QSettings:
@@ -65,6 +72,22 @@ def get_ui_xml_auto_copy_host(settings: QSettings | None = None) -> bool:
 
 def set_ui_xml_auto_copy_host(value: bool, settings: QSettings | None = None) -> None:
     _settings(settings).setValue(UI_XML_AUTO_COPY_KEY, bool(value))
+
+
+def get_remember_kbd_popup_pos(settings: QSettings | None = None) -> bool:
+    return _as_bool(_settings(settings).value(REMEMBER_KBD_POPUP_POS_KEY, False))
+
+
+def set_remember_kbd_popup_pos(value: bool, settings: QSettings | None = None) -> None:
+    _settings(settings).setValue(REMEMBER_KBD_POPUP_POS_KEY, bool(value))
+
+
+def get_kbd_popup_translucent_unfocused(settings: QSettings | None = None) -> bool:
+    return _as_bool(_settings(settings).value(KBD_POPUP_TRANSLUCENT_KEY, False))
+
+
+def set_kbd_popup_translucent_unfocused(value: bool, settings: QSettings | None = None) -> None:
+    _settings(settings).setValue(KBD_POPUP_TRANSLUCENT_KEY, bool(value))
 
 
 def get_wda_bundle_id(settings: QSettings | None = None) -> str:

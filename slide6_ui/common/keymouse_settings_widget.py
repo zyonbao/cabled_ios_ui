@@ -36,7 +36,9 @@ from .keymouse_settings import (
     WDA_MJPEG_PORT_KEY,
     WDA_PORT_KEY,
     apply_wda_env,
+    get_kbd_popup_translucent_unfocused,
     get_pasteboard_auto_copy_host,
+    get_remember_kbd_popup_pos,
     get_ui_xml_auto_copy_host,
     get_wda_bundle_id,
     get_wda_mjpeg_port,
@@ -49,7 +51,9 @@ from .keymouse_settings import (
     normalize_wda_mjpeg_port,
     normalize_wda_port,
     save_bottom_edge_gesture_rows,
+    set_kbd_popup_translucent_unfocused,
     set_pasteboard_auto_copy_host,
+    set_remember_kbd_popup_pos,
     set_ui_xml_auto_copy_host,
 )
 
@@ -223,6 +227,22 @@ class KeyMouseSettingsWidget(QWidget):
         copy_col.addWidget(self.ui_xml_auto_copy_check)
         col.addWidget(copy_box)
 
+        keyboard_box = QGroupBox(i18n.t("settings.keymouse.keyboard_input.group"), self)
+        keyboard_col = QVBoxLayout(keyboard_box)
+        self.remember_kbd_popup_pos_check = QCheckBox(
+            i18n.t("settings.keymouse.keyboard_input.remember_popup_pos"), keyboard_box
+        )
+        self.remember_kbd_popup_pos_check.setChecked(get_remember_kbd_popup_pos(self.settings))
+        keyboard_col.addWidget(self.remember_kbd_popup_pos_check)
+        self.kbd_popup_translucent_check = QCheckBox(
+            i18n.t("settings.keymouse.keyboard_input.translucent_unfocused"), keyboard_box
+        )
+        self.kbd_popup_translucent_check.setChecked(
+            get_kbd_popup_translucent_unfocused(self.settings)
+        )
+        keyboard_col.addWidget(self.kbd_popup_translucent_check)
+        col.addWidget(keyboard_box)
+
         col.addStretch(1)
 
     def _wire(self) -> None:
@@ -234,6 +254,12 @@ class KeyMouseSettingsWidget(QWidget):
         )
         self.ui_xml_auto_copy_check.toggled.connect(
             lambda on: set_ui_xml_auto_copy_host(on, self.settings)
+        )
+        self.remember_kbd_popup_pos_check.toggled.connect(
+            lambda on: set_remember_kbd_popup_pos(on, self.settings)
+        )
+        self.kbd_popup_translucent_check.toggled.connect(
+            lambda on: set_kbd_popup_translucent_unfocused(on, self.settings)
         )
         self.table.itemSelectionChanged.connect(self._refresh_override_buttons)
         self.add_btn.clicked.connect(self._add_row)

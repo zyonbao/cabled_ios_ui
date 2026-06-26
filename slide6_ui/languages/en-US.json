@@ -164,6 +164,11 @@
         "group": "Copy to Host After Reading",
         "pasteboard": "After reading the device clipboard, skip the dialog and copy straight to the host clipboard",
         "ui_xml": "After fetching the UI XML, skip the dialog and copy straight to the host clipboard"
+      },
+      "keyboard_input": {
+        "group": "Keyboard Input",
+        "remember_popup_pos": "Remember the keyboard input window position for the current device",
+        "translucent_unfocused": "Fade the keyboard input window to semi-transparent while it is not focused, and restore it when focus returns"
       }
     }
   },

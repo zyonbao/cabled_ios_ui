@@ -164,6 +164,11 @@
         "group": "读取后拷贝到本机",
         "pasteboard": "读取设备剪贴板后不弹窗，直接拷贝到本机系统剪贴板",
         "ui_xml": "获取 UI XML 后不弹窗，直接拷贝到本机系统剪贴板"
+      },
+      "keyboard_input": {
+        "group": "键盘输入",
+        "remember_popup_pos": "记住当前设备的键盘输入浮窗位置",
+        "translucent_unfocused": "鼠标不聚焦时输入浮窗半透明，重新聚焦后恢复不透明"
       }
     }
   },
