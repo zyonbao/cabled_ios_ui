@@ -1034,4 +1034,7 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 tunnel.stop_tunneld()
+        # Flush settings now: app exit is a hard os._exit (see app.main) that
+        # skips QSettings' destructor sync, so persist any pending changes here.
+        self.settings.sync()
         event.accept()

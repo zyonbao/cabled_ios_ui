@@ -28,7 +28,7 @@ from ios_toolkit import toolkit_api as api
 
 from .. import i18n
 from ..common.errors import localize_error
-from ..common.workers import AsyncRunner
+from ..common.workers import AsyncRunner, fire_and_forget
 
 
 class _MultiMetricChart(QWidget):
@@ -364,12 +364,12 @@ class PerformanceDialog(QDialog):
 
     def _stop(self) -> None:
         self._poll_timer.stop()
-        if self._stream is not None:
-            try:
-                self._stream.close()
-            except Exception:
-                pass
-        self._stream = None
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            # close() blocks up to 3s waiting for stream cleanup; closeEvent calls
+            # _stop on exit, so run it on a daemon thread to keep the UI thread (and
+            # app exit) from blocking on it.
+            fire_and_forget(stream.close, name="performance-stream-close")
         self._running = False
         self._paused = False
         self.state_label.setText(i18n.t("performance.state.idle"))

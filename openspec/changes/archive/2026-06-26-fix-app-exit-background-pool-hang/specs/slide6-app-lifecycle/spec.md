@@ -1,21 +1,6 @@
-# slide6-app-lifecycle Specification
+# slide6-app-lifecycle (delta)
 
-## Purpose
-定义桌面应用的进程生命周期能力：处理 SIGINT（Ctrl+C），经周期性定时器让信号处理函数在 Qt 事件循环中执行，并走与窗口关闭一致的清理路径（停止屏幕镜像、键盘发送线程等）后干净退出，避免进程崩溃。
-## Requirements
-### Requirement: Ctrl+C（SIGINT）干净退出
-
-桌面应用 SHALL 处理 SIGINT（Ctrl+C），使其触发**干净退出**而非进程崩溃。应用 SHALL 安装 SIGINT 处理函数并通过周期性定时器让 Python 解释器在 Qt 事件循环运行期间得以执行该处理函数；收到 SIGINT 时 SHALL 走与窗口关闭一致的清理路径（停止屏幕镜像、停止键盘发送线程等既有 `closeEvent` 清理）后退出事件循环。
-
-#### Scenario: 终端运行时按 Ctrl+C
-
-- **WHEN** 应用在终端前台运行且用户按下 Ctrl+C
-- **THEN** 应用执行与正常关闭一致的清理后退出，进程不崩溃
-
-#### Scenario: 镜像进行中按 Ctrl+C
-
-- **WHEN** 屏幕镜像或后台任务进行中收到 SIGINT
-- **THEN** 先停止镜像/后台线程再退出，不在 C++ 事件循环中崩溃
+## ADDED Requirements
 
 ### Requirement: 退出不被后台设备操作阻塞
 
@@ -37,4 +22,3 @@
 
 - **WHEN** 用户关闭正在运行的性能监控对话框（其数据流 `close()` 内部可能阻塞数秒）
 - **THEN** 对话框立即关闭，UI 不冻结
-

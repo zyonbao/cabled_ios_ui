@@ -23,7 +23,24 @@
 #   secrets.py.)
 #
 # Usage:
-#   packaging/build_macos_app.sh
+#   packaging/build_macos_app.sh [icon options]
+#
+# App icon (dual-format, works on macOS 26 AND older — see the ICON_* block):
+#   By default both assets are generated from slide6_ui/AppIcon.png (a
+#   full-bleed square master) via slide6_ui/appicon.py: a ROUNDED .icns for
+#   macOS < 26 and a full-bleed Assets.car (Liquid Glass) for macOS 26+. (If
+#   actool is unavailable, only a full-bleed .icns is produced.) Overrides:
+#
+#   --icon-master <path>  full-bleed square PNG to build both assets from
+#                         (env: ICON_MASTER_OVERRIDE)
+#   --icns <path>         use this prebuilt legacy .icns as-is
+#                         (env: ICON_ICNS_OVERRIDE)
+#   --assets-car <path>   use this prebuilt macOS 26 Assets.car as-is
+#                         (env: ASSETS_CAR_OVERRIDE)
+#
+#   e.g.  packaging/build_macos_app.sh
+#         packaging/build_macos_app.sh --icon-master slide6_ui/AppIcon.png
+#         packaging/build_macos_app.sh --icns my.icns --assets-car my/Assets.car
 #
 # The script is idempotent: it cleans its own output dir before each build.
 #
@@ -49,8 +66,31 @@ APP_NAME="CablediOS"
 # would otherwise pull in (xonsh/pygments/IPython/traitlets/pygnuutils). See
 # packaging/stubs/README.md. Prepended to PYTHONPATH for the build only.
 STUBS_DIR="$SCRIPT_DIR/stubs"
-ICON_SRC="$REPO_ROOT/slide6_ui/AppIcon.png"
+# --- App icon (rounded .icns + macOS 26 full-bleed Assets.car) --------------
+# macOS 26 squircle-jails anything that isn't a full-bleed Liquid Glass asset,
+# while older macOS shows the .icns as-is and needs the rounded shape baked in.
+# So when Xcode 26's actool is available each OS gets its ideal form, selected
+# by two Info.plist keys, like Xcode 26 does:
+#   - CFBundleIconName -> AppIcon        (macOS 26+; full-bleed asset in Assets.car)
+#   - CFBundleIconFile -> AppIcon.icns   (macOS < 26; rounded + margin baked in)
+# Without actool, only a full-bleed .icns is produced: macOS 26 masks it to a
+# squircle (no gray jail), older macOS shows square corners (the best compromise).
+# slide6_ui/appicon.py builds these from one full-bleed master (AppIcon.png):
+# iconutil for the .icns, `xcrun actool` (Xcode 26) for the Assets.car. Nuitka's
+# --macos-app-icon only handles the .icns, so the Assets.car + CFBundleIconName
+# are injected into the bundle in post-processing (embed_assets_car()).
+ICON_NAME="AppIcon"
+ICON_MASTER="$REPO_ROOT/slide6_ui/AppIcon.png"   # full-bleed square master
 ICON_ICNS="$BUILD_DIR/AppIcon.icns"
+ASSETS_CAR="$BUILD_DIR/Assets.car"
+APPICON_PY="$REPO_ROOT/slide6_ui/appicon.py"
+# Optional overrides (prebuilt assets); set via flags or env. Skip generation.
+#   --icns <path>        legacy .icns                 (ICON_ICNS_OVERRIDE)
+#   --assets-car <path>  macOS 26 Assets.car          (ASSETS_CAR_OVERRIDE)
+#   --icon-master <path> full-bleed master to build from (ICON_MASTER_OVERRIDE)
+ICON_ICNS_OVERRIDE="${ICON_ICNS_OVERRIDE:-}"
+ASSETS_CAR_OVERRIDE="${ASSETS_CAR_OVERRIDE:-}"
+ICON_MASTER_OVERRIDE="${ICON_MASTER_OVERRIDE:-}"
 # GUI entry is a top-level launcher (absolute imports) so multidist does not
 # break on relative imports; its basename becomes CFBundleExecutable.
 GUI_MAIN="$REPO_ROOT/CablediOS.py"
@@ -84,8 +124,8 @@ preflight() {
     "$PY" -c "import pillow_heif" 2>/dev/null \
         || die "pillow-heif is not installed for $PY (needed for album HEIC decoding). Install with: $PY -m pip install -r slide6_ui/requirements.txt"
 
-    command -v iconutil >/dev/null 2>&1 || warn "iconutil not found; icon generation may fail."
-    command -v sips >/dev/null 2>&1 || warn "sips not found; icon generation may fail."
+    command -v iconutil >/dev/null 2>&1 || warn "iconutil not found; legacy .icns generation may fail."
+    xcrun --find actool >/dev/null 2>&1 || warn "actool (Xcode 26) not found; macOS 26 Assets.car will be skipped (legacy .icns only)."
 
     PYMOBILEDEVICE3_RES_DIR="$("$PY" -c 'import pathlib, pymobiledevice3; print(pathlib.Path(pymobiledevice3.__file__).resolve().parent / "resources")')"
     [[ -d "$PYMOBILEDEVICE3_RES_DIR" ]] || die "pymobiledevice3 resources directory not found: $PYMOBILEDEVICE3_RES_DIR"
@@ -96,44 +136,85 @@ preflight() {
     log "pymobiledevice3 resources: $PYMOBILEDEVICE3_RES_DIR"
 }
 
-# --- Icon generation (PNG -> .icns) -----------------------------------------
-# Returns 0 and sets ICON_FLAG when an icns is produced; otherwise leaves
-# ICON_FLAG empty so the build proceeds with the default icon.
+# --- Icon generation (full-bleed master -> .icns + Assets.car) --------------
+# Produces the dual-format pair (see the ICON_* block above):
+#   ICON_ICNS   legacy .icns embedded by Nuitka via ICON_FLAG (CFBundleIconFile)
+#   ASSETS_CAR  macOS 26 Assets.car embedded later by embed_assets_car()
+# Prebuilt assets passed via --icns / --assets-car are used as-is; otherwise both
+# are built from the full-bleed master with slide6_ui/appicon.py.
+# ICON_FLAG stays empty (default icon) only if no .icns can be produced.
 ICON_FLAG=""
 generate_icon() {
-    if [[ ! -f "$ICON_SRC" ]]; then
-        warn "App icon not found at $ICON_SRC; building with the default icon."
-        return 0
+    [[ -n "$ICON_MASTER_OVERRIDE" ]] && ICON_MASTER="$ICON_MASTER_OVERRIDE"
+
+    # Honour prebuilt overrides; only generate what was not supplied.
+    if [[ -n "$ICON_ICNS_OVERRIDE" ]]; then
+        [[ -f "$ICON_ICNS_OVERRIDE" ]] || die "--icns path not found: $ICON_ICNS_OVERRIDE"
+        ICON_ICNS="$ICON_ICNS_OVERRIDE"
     fi
-    if ! command -v sips >/dev/null 2>&1 || ! command -v iconutil >/dev/null 2>&1; then
-        warn "sips/iconutil unavailable; building with the default icon."
-        return 0
+    if [[ -n "$ASSETS_CAR_OVERRIDE" ]]; then
+        [[ -f "$ASSETS_CAR_OVERRIDE" ]] || die "--assets-car path not found: $ASSETS_CAR_OVERRIDE"
+        ASSETS_CAR="$ASSETS_CAR_OVERRIDE"
     fi
 
-    local iconset="$BUILD_DIR/AppIcon.iconset"
-    rm -rf "$iconset"
-    mkdir -p "$iconset"
+    # Generate the missing asset(s) from the master via appicon.py. Only SKIP
+    # generation here (never return early): any override already accepted above
+    # must still take effect downstream — e.g. a valid --icns with no master
+    # present should still be embedded, not silently dropped to the default icon.
+    if [[ -z "$ICON_ICNS_OVERRIDE" || -z "$ASSETS_CAR_OVERRIDE" ]]; then
+        if [[ ! -f "$ICON_MASTER" ]]; then
+            warn "Icon master not found at $ICON_MASTER; skipping generation (using overrides only)."
+        elif [[ ! -f "$APPICON_PY" ]]; then
+            warn "appicon.py not found at $APPICON_PY; skipping generation (using overrides only)."
+        else
+            log "Generating icon assets from $ICON_MASTER via appicon.py…"
+            # Contract: appicon.py exits 0 once the .icns is written (Assets.car is
+            # best-effort — present only when Xcode 26 actool is available). A
+            # non-zero exit means a REAL failure producing the .icns itself
+            # (bad source image, iconutil missing/failed); its diagnostics stream
+            # to this log above. Whether macOS 26 gets Liquid Glass is decided
+            # separately by the Assets.car file-existence check below, not here.
+            local appicon_rc=0
+            "$PY" "$APPICON_PY" "$ICON_MASTER" -d "$BUILD_DIR" --name "$ICON_NAME" || appicon_rc=$?
+            if [[ $appicon_rc -ne 0 ]]; then
+                warn "appicon.py exited $appicon_rc while generating the .icns (see its output above)."
+            fi
+            # Adopt generated paths only where no override was given.
+            [[ -z "$ICON_ICNS_OVERRIDE"  ]] && ICON_ICNS="$BUILD_DIR/$ICON_NAME.icns"
+            [[ -z "$ASSETS_CAR_OVERRIDE" ]] && ASSETS_CAR="$BUILD_DIR/Assets.car"
+        fi
+    fi
 
-    # Standard macOS iconset matrix (1x and 2x for each base size).
-    local sizes=(16 32 128 256 512)
-    for s in "${sizes[@]}"; do
-        sips -z "$s" "$s"           "$ICON_SRC" --out "$iconset/icon_${s}x${s}.png"     >/dev/null
-        sips -z $((s * 2)) $((s * 2)) "$ICON_SRC" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
-    done
-
-    # Capture iconutil's real error instead of discarding it.  A misleading
-    # "Invalid Iconset" here is most often an environment issue (e.g. iconutil
-    # cannot reach the system IconServices daemon when run inside a sandbox),
-    # NOT a problem with the iconset itself, so surface the message to help
-    # diagnosis rather than silently falling back to the default icon.
-    local iconutil_err
-    if iconutil_err="$(iconutil -c icns "$iconset" -o "$ICON_ICNS" 2>&1)"; then
+    if [[ -f "$ICON_ICNS" ]]; then
         ICON_FLAG="--macos-app-icon=$ICON_ICNS"
-        log "Generated icon: $ICON_ICNS"
+        log "Legacy icon: $ICON_ICNS"
     else
-        warn "iconutil failed; building with the default icon."
-        [[ -n "$iconutil_err" ]] && warn "iconutil: $iconutil_err"
+        warn "No .icns available; building with the default icon."
     fi
+    if [[ -f "$ASSETS_CAR" ]]; then
+        log "macOS 26 icon: $ASSETS_CAR"
+    else
+        ASSETS_CAR=""   # signal embed_assets_car() to skip
+        warn "No Assets.car available; macOS 26 will use the legacy .icns (may be squircle-jailed)."
+    fi
+}
+
+# --- Embed the macOS 26 Assets.car + CFBundleIconName -----------------------
+# Nuitka only wires up the legacy .icns (CFBundleIconFile). For Liquid Glass on
+# macOS 26 we drop the Assets.car into Contents/Resources and add
+# CFBundleIconName so Tahoe selects it. Must run BEFORE the final (re-)sign,
+# since it edits bundle files. No-op if no Assets.car was produced.
+embed_assets_car() {
+    local app="$1"
+    [[ -n "$ASSETS_CAR" && -f "$ASSETS_CAR" ]] || return 0
+    local res_dir="$app/Contents/Resources"
+    local plist="$app/Contents/Info.plist"
+    mkdir -p "$res_dir"
+    cp -f "$ASSETS_CAR" "$res_dir/Assets.car"
+    /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$plist" >/dev/null 2>&1 || true
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string $ICON_NAME" "$plist" >/dev/null 2>&1 \
+        || warn "Could not set CFBundleIconName in Info.plist; macOS 26 may not use Assets.car."
+    log "Embedded macOS 26 icon: Resources/Assets.car (CFBundleIconName=$ICON_NAME)."
 }
 
 # Common Nuitka flags that shrink the binary and improve startup.
@@ -484,15 +565,68 @@ verify_bundle() {
     if [[ -n "$ICON_FLAG" ]]; then
         # Use a glob expansion (globs do not expand inside [[ ... ]]).
         if compgen -G "$app/Contents/Resources/*.icns" >/dev/null; then
-            log "Verified: app icon embedded."
+            log "Verified: legacy .icns embedded (macOS < 26)."
         else
             warn "App icon not found in Resources (Nuitka may name it differently)."
         fi
     fi
+    if [[ -n "$ASSETS_CAR" ]]; then
+        if [[ -f "$app/Contents/Resources/Assets.car" ]] \
+           && /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$app/Contents/Info.plist" >/dev/null 2>&1; then
+            log "Verified: macOS 26 Assets.car embedded + CFBundleIconName set."
+        else
+            warn "Assets.car / CFBundleIconName missing; macOS 26 may squircle-jail the icon."
+        fi
+    fi
+}
+
+# --- Argument parsing -------------------------------------------------------
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --icns)
+                [[ $# -ge 2 ]] || die "--icns requires a path argument."
+                ICON_ICNS_OVERRIDE="$2"
+                shift 2
+                ;;
+            --icns=*)
+                ICON_ICNS_OVERRIDE="${1#*=}"
+                shift
+                ;;
+            --assets-car)
+                [[ $# -ge 2 ]] || die "--assets-car requires a path argument."
+                ASSETS_CAR_OVERRIDE="$2"
+                shift 2
+                ;;
+            --assets-car=*)
+                ASSETS_CAR_OVERRIDE="${1#*=}"
+                shift
+                ;;
+            --icon-master)
+                [[ $# -ge 2 ]] || die "--icon-master requires a path argument."
+                ICON_MASTER_OVERRIDE="$2"
+                shift 2
+                ;;
+            --icon-master=*)
+                ICON_MASTER_OVERRIDE="${1#*=}"
+                shift
+                ;;
+            -h|--help)
+                # Print the top comment block (after the shebang) verbatim, up to
+                # the first non-comment line — no hardcoded ranges to drift.
+                awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"
+                exit 0
+                ;;
+            *)
+                die "Unknown argument: $1 (see --help)"
+                ;;
+        esac
+    done
 }
 
 # --- Main -------------------------------------------------------------------
 main() {
+    parse_args "$@"
     preflight
 
     # Shadow the interactive-shell libraries with build-time stubs so Nuitka
@@ -547,6 +681,9 @@ main() {
     prune_unused_qt "$app"
     prune_unused_avif "$app"
     strip_bundle "$app"
+    # Inject the macOS 26 Liquid Glass icon (Assets.car + CFBundleIconName) that
+    # Nuitka's --macos-app-icon can't add. Before verify + final sign.
+    embed_assets_car "$app"
     verify_bundle "$app"
     # codesign_app re-seals the bundle (ad-hoc when unsigned); MUST run last, after
     # all post-processing that edits bundle files, or arm64 macOS SIGKILLs the app.

@@ -10,6 +10,7 @@ with administrator authorization after a device is selected.
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 
@@ -94,7 +95,14 @@ def main() -> None:
         exit_code = app.exec()
     finally:
         logsys.shutdown_logging()
-    sys.exit(exit_code)
+    # Best-effort device operations (e.g. WDA "prepare", which can run for tens
+    # of seconds) may still be running on the global QThreadPool when the user
+    # quits. Normal interpreter/Qt teardown calls QThreadPool::waitForDone() with
+    # no timeout and would hang the app until the slowest one finishes. All
+    # persistent state is already flushed in MainWindow.closeEvent, and the
+    # in-flight work is best-effort (the device cleans up when its connections
+    # drop), so exit immediately instead of waiting on it.
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

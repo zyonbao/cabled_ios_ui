@@ -13,12 +13,33 @@ older generation are dropped instead of mutating the current UI state.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Callable
 
 import shiboken6
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 logger = logging.getLogger(__name__)
+
+
+def fire_and_forget(fn: Callable[[], Any], *, name: str = "fire-and-forget") -> None:
+    """Run a best-effort, non-critical call on a daemon thread.
+
+    Unlike :class:`AsyncRunner` (which dispatches to the global ``QThreadPool``
+    that Qt's app teardown waits on via ``waitForDone()``), a daemon thread
+    never blocks process exit. Use this for best-effort teardown on the exit
+    path — e.g. closing a device service handle in a dialog ``closeEvent`` —
+    where a slow/blocked call MUST NOT hang shutdown. Errors are swallowed; if
+    the process exits before the call finishes, the daemon thread is reclaimed
+    (the dropped device connection cleans up server-side as a backstop).
+    """
+    def _run() -> None:
+        try:
+            fn()
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, name=name, daemon=True).start()
 
 
 class _CallSignals(QObject):
