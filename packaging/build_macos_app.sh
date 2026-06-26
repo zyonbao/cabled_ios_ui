@@ -162,10 +162,29 @@ generate_icon() {
 #       so excluding Jedi is safe and saves ~28 MB (≈14 MB compiled into the
 #       binary + ≈14.5 MB of bundled grammar/typeshed data). parso has no other
 #       importer, so it drops with Jedi.
+#   --nofollow-import-to=pymobiledevice3.cli,prompt_toolkit
+#       --include-package=pymobiledevice3 (below) force-compiles the WHOLE package,
+#       including the click-based CLI command tree the GUI never imports (verified:
+#       loading every pymobiledevice3 module the app actually uses never pulls in
+#       cli). The CLI is reached only via `python -m pymobiledevice3`, never by the
+#       app. cli/webinspector.py is the sole importer of prompt_toolkit (~13 MB),
+#       so excluding cli already orphans it; prompt_toolkit is listed explicitly as
+#       a belt-and-suspenders guard against future pymobiledevice3 changes. Other
+#       pymobiledevice3 modules (services, restore, irecv, bonjour, osu, …) are
+#       genuinely reachable and intentionally kept.
+#   --nofollow-import-to=psutil._pslinux,psutil._psbsd,psutil._pssunos,...
+#       psutil picks its backend at runtime (`if LINUX: from . import _pslinux`),
+#       but Nuitka can't evaluate the platform guard so it compiles EVERY backend.
+#       On macOS only _psosx/_psposix run, so the Linux/BSD/SunOS/AIX/Windows
+#       backends (~2 MB) are dead code.
+# NOTE: --lto=yes was tried and REVERTED — it made the binary ~10 MB *larger*
+# (183 → 193 MB) and roughly doubled build time. LTO's aggressive cross-module
+# inlining duplicates code across the many call sites in this large codebase,
+# outweighing its dead-code elimination. Net loss here; do not re-add.
 COMMON_FLAGS=(
     --python-flag=no_docstrings
     --deployment
-    --nofollow-import-to=jedi,parso
+    --nofollow-import-to=jedi,parso,pymobiledevice3.cli,prompt_toolkit,psutil._pslinux,psutil._psbsd,psutil._pssunos,psutil._psaix,psutil._pswindows
     --assume-yes-for-downloads
     --output-dir="$BUILD_DIR"
 )
@@ -346,6 +365,30 @@ prune_unused_qt() {
     log "Qt prune done (saved ~$(( (before - after) / 1024 )) MB)."
 }
 
+# --- Prune the unused AVIF image codec --------------------------------------
+# Pillow 11 ships a native AVIF plugin (PIL/_avif.so) that links libavif
+# (~3 MB). The app only ever decodes HEIC (via pillow_heif → libheif, which does
+# NOT depend on libavif) plus the usual JPEG/PNG; it never opens AVIF. PIL's
+# AvifImagePlugin imports _avif under try/except ImportError and just sets
+# SUPPORTED=False when it (or libavif) is missing, so dropping both degrades
+# gracefully. Verified by launch test. (NOTE: re-signed afterward by codesign_app.)
+prune_unused_avif() {
+    local app="$1"
+    local macos_dir="$app/Contents/MacOS"
+    [[ -f "$macos_dir/PIL/_avif.so" || -n "$(echo "$macos_dir"/libavif*)" ]] || return 0
+    log "Pruning unused AVIF codec (libavif, PIL/_avif.so)…"
+    local before after
+    before="$(du -sk "$app" | cut -f1)"
+    rm -f "$macos_dir"/libavif* "$macos_dir/PIL/_avif.so"
+    after="$(du -sk "$app" | cut -f1)"
+    # Guard: warn if anything surviving still links libavif (it shouldn't).
+    local refs
+    refs="$(find "$macos_dir" -maxdepth 2 \( -name '*.so' -o -name '*.dylib' \) -type f \
+        -exec sh -c 'otool -L "$1" 2>/dev/null | grep -q libavif && basename "$1"' _ {} \; 2>/dev/null)"
+    [[ -n "$refs" ]] && warn "Removed libavif but still referenced by:$(echo "$refs" | tr '\n' ' ')"
+    log "AVIF prune done (saved ~$(( (before - after) / 1024 )) MB)."
+}
+
 # --- Strip symbols from the compiled binary and native libs -----------------
 # Nuitka/clang leave symbol tables in the (large) main binary and in the bundled
 # .dylib/.so files. `strip -x` removes local (non-global) symbols only, keeping
@@ -502,6 +545,7 @@ main() {
 
     dedup_dylibs "$app/Contents/MacOS"
     prune_unused_qt "$app"
+    prune_unused_avif "$app"
     strip_bundle "$app"
     verify_bundle "$app"
     # codesign_app re-seals the bundle (ad-hoc when unsigned); MUST run last, after

@@ -1,8 +1,8 @@
 # CablediOS.app 包体积优化记录
 
-记录将 `packaging/build_macos_app.sh` 产出的 macOS app 从 **305MB 压缩到 200MB
-(-105MB，-34%)** 的分析过程与方案。所有改动均已落地到构建脚本，且经真机验证
-（启动正常、两台 iOS 设备成功配对、功能可用）。
+记录将 `packaging/build_macos_app.sh` 产出的 macOS app 从 **305MB 压缩到 183MB
+(-122MB，-40%)** 的分析过程与方案。所有改动均已落地到构建脚本，且经真机验证
+（启动正常、两台 iOS 设备成功配对、WebDriverAgent/XCUITest 等功能可用）。
 
 ## 结果总览
 
@@ -10,7 +10,9 @@
 |---|---|---|---|
 | 原始 | 305MB | 160MB | — |
 | + 剔除 jedi/parso + strip + Qt 裁剪 | 239MB | 131MB | -66MB |
-| + 交互式 shell 依赖 stub | **200MB** | **100MB** | -39MB |
+| + 交互式 shell 依赖 stub | 200MB | 100MB | -39MB |
+| + 排除 pymobiledevice3.cli + prompt_toolkit | 188MB | 87MB | -12MB |
+| + 删 libavif 编解码 + 排除 psutil 非 mac 后端 | **183MB** | **86MB** | -5MB |
 
 ## 一、体积分析方法
 
@@ -126,13 +128,81 @@ stub 只暴露被导入的符号（详见 `packaging/stubs/README.md`），例�
   pymobiledevice3 模块 + 实例化 `AfcService/CrashReportsManager/ServiceConnection`，
   确认导入成功且无真包泄漏（秒级，省去 16 分钟构建试错）。
 
+### 6. 排除 pymobiledevice3.cli + prompt_toolkit（约 -12MB，主二进制 -12.5MB）
+
+stub 方案挡住了 xonsh/IPython 那条链，但 `--include-package=pymobiledevice3`
+仍强制编译**整个**包，包括 GUI 从不使用的 click 命令行树 `pymobiledevice3.cli`。
+而 `cli/webinspector.py` 是 `prompt_toolkit`（约 13MB）的**唯一**导入方，于是
+prompt_toolkit 被连带编进了二进制。
+
+- **安全依据**（实测，非推断）：用 meta-path finder 硬性禁用
+  `pymobiledevice3.cli` 与 `prompt_toolkit` 后，把 app 实际用到的全部 32 个
+  pymobiledevice3 模块逐个 `import`，**零失败**。app 只调 library API，CLI 仅在
+  `python -m pymobiledevice3` 时触发，永不被 GUI 走到。
+- **实现**：`COMMON_FLAGS` 的 `--nofollow-import-to` 追加
+  `pymobiledevice3.cli,prompt_toolkit`。排除 cli 即孤立 prompt_toolkit；显式再列
+  prompt_toolkit 作为防 pymobiledevice3 版本漂移的双保险。
+- **保留**：`mobile_activation` 及其连带的 `inquirer3 → blessed`（约 3MB）按保守
+  原则保留——它是 service 模块，且与 prompt_toolkit 是**互不相干的两条链**
+  （inquirer3 用 blessed/readchar，不依赖 prompt_toolkit），保留它不会把
+  prompt_toolkit 拉回来。restore/irecv/bonjour/osu/pyimg4 等经实测会被 app 连带
+  加载（DDI 挂载 / tunnel 发现 / OS 抽象），同样保留。
+
+### 7. 删 libavif 编解码 + 排除 psutil 非 macOS 后端（约 -5MB）
+
+- **libavif + PIL/_avif.so（约 3MB）**：Pillow 11 自带原生 AVIF 插件
+  `PIL/_avif.so`，它链接 `libavif`（约 3MB）。app 只解码 HEIC（走 `pillow_heif`
+  → `_pillow_heif.so` → `libheif`，而 libheif 只链 libx265/libde265，**不依赖
+  libavif**）和常规 JPEG/PNG，从不打开 AVIF。PIL 的 `AvifImagePlugin` 以
+  `try: from . import _avif except ImportError: SUPPORTED=False` 保护，删掉两者
+  即优雅禁用 AVIF。实现：新增 `prune_unused_avif()`（在 `prune_unused_qt` 后调用，
+  带 libavif 残链守卫）。已实删 + 重签 + 启动验证。
+- **psutil 非 macOS 后端（约 2MB .o → 约 1MB 二进制）**：psutil 运行期按平台选后端
+  （`if LINUX: from . import _pslinux …`），但 Nuitka 无法求值平台判断，会把
+  `_pslinux/_psbsd/_pssunos/_psaix/_pswindows` 全部编进来。macOS 只用 `_psosx`/
+  `_psposix`，其余是死代码。实现：`--nofollow-import-to` 追加这 5 个后端。已模拟
+  屏蔽验证 psutil 在 macOS 仍正常工作。
+
+### 8. 试过但放弃：`--lto=yes`（链接期优化，净亏损）
+
+C 层唯一可调的体积杠杆是 Nuitka 的 `--lto=yes`。实测**反而让产物变大、构建变慢**：
+
+| | App 体积 | 主二进制 | 构建时间 |
+|---|---|---|---|
+| 无 LTO | **183MB** | 86MB | ~16 分钟 |
+| `--lto=yes` | 193MB | 95MB | ~翻倍 |
+
+原因：LTO 的跨模块激进**内联**会把函数复制到大量调用点，对这种"调用点极多的大代码
+库"，内联导致的代码膨胀盖过了死代码消除的收益 → 净增大 10MB。
+
+关于"LTO 是否提速"：理论上成立（跨模块内联/优化减少调用开销），但对本 app **几乎感
+知不到**——它是 I/O + UI 密集型（瓶颈在 USB/隧道设备 I/O、Qt 事件循环与等待），真正
+吃 CPU 的 cryptography `_rust.so`、qh3、Qt、libheif 都是**预编译原生库**，不受 LTO
+（只作用于 Nuitka 生成的 C）影响；Nuitka 生成的 C 又只是 CPython 语义薄封装层。所以
+"用 10MB + 翻倍构建时间换不可感知的提速"不划算，已回退（脚本里留注释防止再加）。
+仅当将来出现纯算法、CPU 密集的子工具时，LTO 才值得重新评估。
+
+### 附：顺带修复的崩溃（与体积无关）
+
+打包验证时发现一个偶现崩溃（`CablediOS-*.ips`，`EXC_BREAKPOINT` / PAC trap）：
+`keymouse_tab.py` 给可拖动浮层设了 `Qt.SizeAllCursor`，而 macOS 无此原生
+NSCursor，Qt 改用内置位图经 `QImage::toCGImage()` 渲染，在 macOS 26 上命中非法
+CoreGraphics colorspace 而崩。改为 macOS 用 `Qt.OpenHandCursor`（原生、不走位图），
+其它平台仍用 `SizeAllCursor`。与本次体积优化（strip/裁剪/stub）无关。
+
 ## 三、已确认无法安全移除的部分
 
 - **libx265（8MB）**：HEVC 编码器，但 `libheif` 在**链接期硬依赖**它（非 dlopen），
   删除会导致 dyld 加载 libheif 失败 → 破坏全部 HEIC 相册解码。
 - **xonsh/pygments 等被 stub 后剩余的真实必需依赖**：cryptography、qh3、pydantic、
   construct、pykdebugparser、fastapi、anyio 等均为运行期实际使用。
-- 主二进制剩余约 100MB 为 pymobiledevice3 核心 + 上述必需依赖的编译产物，已是干净极限。
+- 主二进制剩余约 86MB 为 pymobiledevice3 核心 + 上述必需依赖（construct、
+  pykdebugparser、qh3、`fastapi`（Web Inspector CDP server 实际功能）、pydantic、
+  cryptography `_rust.so` 9MB 等）的编译产物，已是干净极限。
+- 仅剩的小候选（均 <2MB 且有风险，未采用）：`QtSvg` + svg 插件（约 1MB，但 Qt
+  图标引擎可能内部依赖）、`arrow` 的全 locale 数据、PIL 未用图片格式插件。
+- 若需进一步缩小**分发体积**（非安装体积）：183MB 的 app 压缩率约 55%，打包成
+  DMG/zip 后下载体积约 90-100MB。
 
 ## 四、维护注意
 

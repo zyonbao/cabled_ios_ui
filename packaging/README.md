@@ -26,8 +26,9 @@ packaging/build_macos_app.sh
 
 脚本是幂等的：每次运行会先清空 `build/nuitka/` 再构建。
 
-> 包体积优化（jedi/parso 剔除、strip、Qt 裁剪、交互式 shell 依赖 stub、ad-hoc
-> 重签等，已将 app 从 305MB 压到 200MB）的分析过程与方案详见
+> 包体积优化（jedi/parso 剔除、strip、Qt 裁剪、交互式 shell 依赖 stub、排除
+> pymobiledevice3.cli + prompt_toolkit、删 libavif/psutil 死代码、ad-hoc 重签等，
+> 已将 app 从 305MB 压到 183MB）的分析过程与方案详见
 > [pkg_size_reduce.md](pkg_size_reduce.md)；构建期 stub 见
 > [stubs/README.md](stubs/README.md)。
 

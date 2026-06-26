@@ -473,7 +473,13 @@ class _KeyboardInputPopup(QWidget):
         # Opaque rounded panel is hand-painted in paintEvent. A stylesheet
         # border would be folded into the box model and unbalance the row's
         # top/bottom margins, so it is intentionally not used here.
-        self.setCursor(Qt.SizeAllCursor)
+        # macOS has no native NSCursor for SizeAllCursor, so Qt renders it from
+        # an internal bitmap via QImage::toCGImage(); on macOS 26 that path hits
+        # an invalid CoreGraphics colorspace and crashes (EXC_BREAKPOINT, PAC
+        # trap) when the mouse enters this panel. OpenHandCursor maps to a native
+        # NSCursor and conveys the same "draggable" affordance. Other platforms
+        # keep SizeAllCursor (the four-way move arrow).
+        self.setCursor(Qt.OpenHandCursor if sys.platform == "darwin" else Qt.SizeAllCursor)
         self._press_global: QPoint | None = None
         self._start_pos = QPoint()
         # Re-clamp into view when the tab resizes (window shrink / sidebar width
