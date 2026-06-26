@@ -167,8 +167,8 @@
       },
       "keyboard_input": {
         "group": "键盘输入",
-        "remember_popup_pos": "记住当前设备的键盘输入浮窗位置",
-        "translucent_unfocused": "鼠标不聚焦时输入浮窗半透明，重新聚焦后恢复不透明"
+        "remember_popup_pos": "记住当前设备的浮窗位置",
+        "translucent_unfocused": "失焦时浮窗半透明，回焦恢复"
       }
     }
   },

@@ -167,8 +167,8 @@
       },
       "keyboard_input": {
         "group": "Keyboard Input",
-        "remember_popup_pos": "Remember the keyboard input window position for the current device",
-        "translucent_unfocused": "Fade the keyboard input window to semi-transparent while it is not focused, and restore it when focus returns"
+        "remember_popup_pos": "Remember input window position per device",
+        "translucent_unfocused": "Dim the input window while unfocused"
       }
     }
   },
