@@ -45,6 +45,10 @@ BUILD_DIR="$REPO_ROOT/build/nuitka"
 CACHE_DIR="$REPO_ROOT/build/.nuitka-cache"
 export NUITKA_CACHE_DIR="$CACHE_DIR"
 APP_NAME="CablediOS"
+# Build-time stub packages that shadow heavy interactive-shell libraries Nuitka
+# would otherwise pull in (xonsh/pygments/IPython/traitlets/pygnuutils). See
+# packaging/stubs/README.md. Prepended to PYTHONPATH for the build only.
+STUBS_DIR="$SCRIPT_DIR/stubs"
 ICON_SRC="$REPO_ROOT/slide6_ui/AppIcon.png"
 ICON_ICNS="$BUILD_DIR/AppIcon.icns"
 # GUI entry is a top-level launcher (absolute imports) so multidist does not
@@ -149,9 +153,19 @@ generate_icon() {
 #   desyncs the stream framing — the oslog stream then returns a single giant,
 #   mis-parsed entry (raw bytes, pid=0). The plain `python CablediOS.py` run
 #   keeps asserts, which is why it works; the packaged app must do the same.
+#   --nofollow-import-to=jedi,parso  Drop the Jedi static-analysis engine and
+#       its parser. pymobiledevice3 hard-imports IPython (utils.py) and xonsh
+#       (afc.py, crash_reports.py) at module top level, so those must stay — but
+#       Jedi is only IPython's *optional* tab-completion backend, guarded by
+#       `try: import jedi ... except: JEDI_INSTALLED = False`
+#       (IPython/core/completer.py). This app never opens an IPython/xonsh shell,
+#       so excluding Jedi is safe and saves ~28 MB (≈14 MB compiled into the
+#       binary + ≈14.5 MB of bundled grammar/typeshed data). parso has no other
+#       importer, so it drops with Jedi.
 COMMON_FLAGS=(
     --python-flag=no_docstrings
     --deployment
+    --nofollow-import-to=jedi,parso
     --assume-yes-for-downloads
     --output-dir="$BUILD_DIR"
 )
@@ -299,6 +313,61 @@ build_fallback() {
     echo "$app"
 }
 
+# --- Prune Qt modules the app never imports ---------------------------------
+# The Nuitka pyside6 plugin bundles a few Qt frameworks the GUI never uses. The
+# code only imports QtCore/QtGui/QtWidgets. Two frameworks are dead weight:
+#   - QtNetwork  : Qt's own HTTP/SSL stack. All networking here goes through
+#                  pymobiledevice3 / requests, never Qt — so its framework,
+#                  Python binding and TLS backend plugins are unused.
+#   - QtPdf      : pulled only by the imageformats/libqpdf plugin (renders a PDF
+#                  as an image). The album shows photos, never PDFs.
+# Verified safe by launch test: the app starts and pairs devices without them.
+# NOTE: deleting bundle files invalidates the code seal — codesign_app re-signs
+# (ad-hoc) afterward, which is mandatory or arm64 macOS SIGKILLs the app.
+prune_unused_qt() {
+    local app="$1"
+    local macos_dir="$app/Contents/MacOS"
+    log "Pruning unused Qt modules (QtNetwork, QtPdf)…"
+    local before after
+    before="$(du -sk "$app" | cut -f1)"
+    rm -f  "$macos_dir/QtPdf"     "$macos_dir/PySide6/QtPdf.so"
+    rm -f  "$macos_dir/PySide6/qt-plugins/imageformats/libqpdf.dylib"
+    rm -f  "$macos_dir/QtNetwork" "$macos_dir/PySide6/QtNetwork.so"
+    rm -rf "$macos_dir/PySide6/qt-plugins/tls"
+    after="$(du -sk "$app" | cut -f1)"
+    # Safety guard: warn (do not fail) if a surviving Mach-O still links a
+    # removed framework, which would mean the prune list is too aggressive.
+    local cand refs
+    for cand in QtPdf QtNetwork; do
+        refs="$(find "$macos_dir" -maxdepth 3 \( -name 'Qt*' -o -name '*.so' -o -name '*.dylib' \) -type f \
+            -exec sh -c 'otool -L "$1" 2>/dev/null | grep -q "/'"$cand"'\\." && basename "$1"' _ {} \; 2>/dev/null)"
+        [[ -n "$refs" ]] && warn "Removed $cand but still referenced by:$(echo "$refs" | tr '\n' ' ')"
+    done
+    log "Qt prune done (saved ~$(( (before - after) / 1024 )) MB)."
+}
+
+# --- Strip symbols from the compiled binary and native libs -----------------
+# Nuitka/clang leave symbol tables in the (large) main binary and in the bundled
+# .dylib/.so files. `strip -x` removes local (non-global) symbols only, keeping
+# the external/global symbols dynamic linking needs — safe for both the main
+# executable and shared libraries. Must run BEFORE code-signing (stripping a
+# signed binary invalidates its signature). Per-file failures are tolerated so a
+# single odd library never aborts the build.
+strip_bundle() {
+    local app="$1"
+    local macos_dir="$app/Contents/MacOS"
+    command -v strip >/dev/null 2>&1 || { warn "strip not found; skipping symbol strip."; return 0; }
+    log "Stripping local symbols from binary and native libs…"
+    local before after
+    before="$(du -sk "$app" | cut -f1)"
+    # The main executable plus every Mach-O dylib/so under MacOS/.
+    while IFS= read -r f; do
+        strip -x "$f" 2>/dev/null || true
+    done < <(find "$macos_dir" -type f \( -name '*.dylib' -o -name '*.so' -o -perm -111 \) ! -type l)
+    after="$(du -sk "$app" | cut -f1)"
+    log "Symbol strip done (saved ~$(( (before - after) / 1024 )) MB)."
+}
+
 # --- Optional: code-sign with hardened runtime + entitlements ---------------
 # Unsigned by default (first launch needs a manual Gatekeeper allow). Set
 # CODESIGN_IDENTITY to a signing identity to sign the bundle with
@@ -312,7 +381,18 @@ ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
 codesign_app() {
     local app="$1"
     if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
-        log "CODESIGN_IDENTITY not set; bundle left unsigned (native file panel stays disabled)."
+        # Our post-processing (dedup_dylibs, prune_unused_qt, strip_bundle) edits
+        # files inside the bundle, which invalidates the ad-hoc seal Nuitka
+        # applied. On Apple Silicon an invalid seal makes the kernel SIGKILL the
+        # app on launch (it dies silently with no output). Re-seal it ad-hoc so
+        # it launches; this still needs the usual first-launch Gatekeeper allow.
+        if command -v codesign >/dev/null 2>&1; then
+            log "CODESIGN_IDENTITY not set; re-sealing bundle with an ad-hoc signature."
+            codesign --force --deep -s - "$app" >/dev/null 2>&1 \
+                || warn "Ad-hoc re-sign failed; the app may be SIGKILL'd on launch."
+        else
+            warn "codesign not found; bundle left with an invalidated seal (may be SIGKILL'd on launch)."
+        fi
         return 0
     fi
     [[ -f "$ENTITLEMENTS" ]] || die "Entitlements file not found: $ENTITLEMENTS"
@@ -340,6 +420,24 @@ verify_bundle() {
     [[ -f "$app/Contents/MacOS/pymobiledevice3/resources/webinspector/find_nodes.js" ]] \
         || die "Web Inspector resource missing in app bundle: $app/Contents/MacOS/pymobiledevice3/resources/webinspector/find_nodes.js"
     log "Verified: Web Inspector resource bundled."
+
+    # Confirm the stubs shadowed the heavy shell libs (no real xonsh/pygments/
+    # prompt_toolkit got compiled in). A leak here means the stub surface drifted
+    # from pymobiledevice3 and the size win was silently lost.
+    if [[ -d "$STUBS_DIR" ]]; then
+        local macos_dir="$app/Contents/MacOS"
+        local leaked=""
+        # Real xonsh ships xonsh/parsers; real pygments ships pygments/lexers as a
+        # package dir; the stubs ship neither as a directory tree.
+        [[ -d "$macos_dir/xonsh/parsers" ]]        && leaked="$leaked xonsh"
+        [[ -d "$macos_dir/prompt_toolkit" ]]       && leaked="$leaked prompt_toolkit"
+        [[ -d "$macos_dir/pygments/lexers" ]]      && leaked="$leaked pygments"
+        if [[ -n "$leaked" ]]; then
+            warn "Shell-dep stubbing leaked — real packages bundled:$leaked. Check packaging/stubs/ against the current pymobiledevice3."
+        else
+            log "Verified: shell deps stubbed (no real xonsh/pygments/prompt_toolkit bundled)."
+        fi
+    fi
     if [[ -n "$ICON_FLAG" ]]; then
         # Use a glob expansion (globs do not expand inside [[ ... ]]).
         if compgen -G "$app/Contents/Resources/*.icns" >/dev/null; then
@@ -353,6 +451,21 @@ verify_bundle() {
 # --- Main -------------------------------------------------------------------
 main() {
     preflight
+
+    # Shadow the interactive-shell libraries with build-time stubs so Nuitka
+    # compiles those (tiny) instead of the real packages. pymobiledevice3
+    # top-level-imports xonsh/pygments/IPython/traitlets/pygnuutils in shell code
+    # paths the packaged GUI never runs (AfcShell, ServiceConnection.shell(),
+    # start_ipython_shell). See packaging/stubs/README.md. Avoids ~70 MB of dead
+    # compiled object code. Done after preflight so its import checks see the
+    # real packages.
+    if [[ -d "$STUBS_DIR" ]]; then
+        export PYTHONPATH="$STUBS_DIR${PYTHONPATH:+:$PYTHONPATH}"
+        log "Shadowing shell deps with build-time stubs: $STUBS_DIR"
+    else
+        warn "Stub dir not found ($STUBS_DIR); building with full shell deps (larger binary)."
+    fi
+
     log "Cleaning output dir: $BUILD_DIR"
     # macOS (Finder/Spotlight) can recreate .DS_Store mid-deletion, making a
     # single `rm -rf` exit non-zero ("Directory not empty"). Retry a few times
@@ -388,7 +501,11 @@ main() {
     fi
 
     dedup_dylibs "$app/Contents/MacOS"
+    prune_unused_qt "$app"
+    strip_bundle "$app"
     verify_bundle "$app"
+    # codesign_app re-seals the bundle (ad-hoc when unsigned); MUST run last, after
+    # all post-processing that edits bundle files, or arm64 macOS SIGKILLs the app.
     codesign_app "$app"
 
     log "Done."

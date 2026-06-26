@@ -26,6 +26,11 @@ packaging/build_macos_app.sh
 
 脚本是幂等的：每次运行会先清空 `build/nuitka/` 再构建。
 
+> 包体积优化（jedi/parso 剔除、strip、Qt 裁剪、交互式 shell 依赖 stub、ad-hoc
+> 重签等，已将 app 从 305MB 压到 200MB）的分析过程与方案详见
+> [pkg_size_reduce.md](pkg_size_reduce.md)；构建期 stub 见
+> [stubs/README.md](stubs/README.md)。
+
 ## 架构：multidist 共享依赖
 
 GUI 与 tunneld 守护进程都依赖 `pymobiledevice3`。为避免公共依赖被打包两份，脚本用
