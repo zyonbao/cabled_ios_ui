@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
+from .table_perf import batch_table_fill
 from .keymouse_settings import (
     DEFAULT_ROW_DEVICE_ID,
     SWIPE_UP_BOTTOM,
@@ -336,13 +337,14 @@ class KeyMouseSettingsWidget(QWidget):
 
     def _render_rows(self, *, select_device_id: str | None = None) -> None:
         self.state["rows"] = load_normalized_bottom_edge_gesture_rows(self.state["rows"])
-        self.table.setRowCount(len(self.state["rows"]))
-        for row, item in enumerate(self.state["rows"]):
-            device_item = QTableWidgetItem(self._device_label(item["deviceId"]))
-            device_item.setData(Qt.ItemDataRole.UserRole, item["deviceId"])
-            self.table.setItem(row, 0, device_item)
-            self.table.setCellWidget(row, 1, self._make_hold_combo(row, item["swipeUpHold"]))
-            self.table.setCellWidget(row, 2, self._make_swipe_combo(row, item["swipeUp"]))
+        with batch_table_fill(self.table, auto_cols=(1, 2)):
+            self.table.setRowCount(len(self.state["rows"]))
+            for row, item in enumerate(self.state["rows"]):
+                device_item = QTableWidgetItem(self._device_label(item["deviceId"]))
+                device_item.setData(Qt.ItemDataRole.UserRole, item["deviceId"])
+                self.table.setItem(row, 0, device_item)
+                self.table.setCellWidget(row, 1, self._make_hold_combo(row, item["swipeUpHold"]))
+                self.table.setCellWidget(row, 2, self._make_swipe_combo(row, item["swipeUp"]))
         if select_device_id:
             for row, item in enumerate(self.state["rows"]):
                 if item["deviceId"] == select_device_id:

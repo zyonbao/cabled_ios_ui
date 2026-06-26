@@ -26,6 +26,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.errors import localize_error
 from ..common.focus import suppress_auto_focus
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 
@@ -111,11 +112,12 @@ class WebInspectorDialog(QDialog):
                 self._after_refresh(localize_error(error))
             return
         pages = result["data"].get("pages", [])
-        self.table.setRowCount(len(pages))
-        for r, p in enumerate(pages):
-            self.table.setItem(r, 0, QTableWidgetItem(str(p.get("app", ""))))
-            self.table.setItem(r, 1, QTableWidgetItem(str(p.get("title", ""))))
-            self.table.setItem(r, 2, QTableWidgetItem(str(p.get("url", ""))))
+        with batch_table_fill(self.table, auto_cols=(0,)):
+            self.table.setRowCount(len(pages))
+            for r, p in enumerate(pages):
+                self.table.setItem(r, 0, QTableWidgetItem(str(p.get("app", ""))))
+                self.table.setItem(r, 1, QTableWidgetItem(str(p.get("title", ""))))
+                self.table.setItem(r, 2, QTableWidgetItem(str(p.get("url", ""))))
         msg = i18n.t("webinspector.no_pages") if not pages else i18n.t("webinspector.pages_count", count=len(pages))
         self._after_refresh(msg)
 

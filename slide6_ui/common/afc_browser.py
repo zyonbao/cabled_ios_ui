@@ -55,6 +55,7 @@ from .. import i18n
 from .file_dialogs import open_directory, open_existing_files, save_file
 from .errors import localize_error
 from .focus import suppress_auto_focus
+from .table_perf import batch_table_fill
 from .workers import AsyncRunner
 
 
@@ -322,17 +323,20 @@ class AfcBrowserPanel(QWidget):
         entries = result["data"].get("entries", [])
         # Parent-dir navigation is provided by the top "上一级" button, so the
         # listing no longer carries a ".." row.
-        self.table.setRowCount(len(entries))
-        for row, entry in enumerate(entries):
-            is_dir = bool(entry.get("isDir"))
-            name = entry.get("name", "")
-            icon = "📁 " if is_dir else "📄 "
-            name_item = QTableWidgetItem(icon + name)
-            name_item.setData(Qt.UserRole, entry)
-            self.table.setItem(row, 0, name_item)
-            size_text = "" if is_dir else _human_size(entry.get("size", 0))
-            self.table.setItem(row, 1, QTableWidgetItem(size_text))
-            self.table.setCellWidget(row, 2, self._row_actions(entry))
+        # ResizeToContents on cols 1/2 makes a naive fill O(rows^2); a directory
+        # with hundreds/thousands of files would freeze the UI. Keep it O(N).
+        with batch_table_fill(self.table, auto_cols=(1, 2)):
+            self.table.setRowCount(len(entries))
+            for row, entry in enumerate(entries):
+                is_dir = bool(entry.get("isDir"))
+                name = entry.get("name", "")
+                icon = "📁 " if is_dir else "📄 "
+                name_item = QTableWidgetItem(icon + name)
+                name_item.setData(Qt.UserRole, entry)
+                self.table.setItem(row, 0, name_item)
+                size_text = "" if is_dir else _human_size(entry.get("size", 0))
+                self.table.setItem(row, 1, QTableWidgetItem(size_text))
+                self.table.setCellWidget(row, 2, self._row_actions(entry))
         self.status.setText(i18n.t("afc.item_count", count=len(entries)))
 
     def _row_actions(self, entry: dict) -> QWidget:

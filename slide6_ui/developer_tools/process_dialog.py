@@ -34,6 +34,7 @@ from .. import i18n
 from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.focus import suppress_auto_focus
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 
@@ -148,12 +149,15 @@ class ProcessDialog(QDialog):
 
     def _render(self) -> None:
         self._view = self._filtered()
-        self.table.setRowCount(len(self._view))
-        for row, p in enumerate(self._view):
-            self.table.setItem(row, 0, QTableWidgetItem(str(p.get("pid", ""))))
-            self.table.setItem(row, 1, QTableWidgetItem(str(p.get("name", ""))))
-            self.table.setItem(row, 2, QTableWidgetItem(i18n.t("process.yes") if p.get("isApplication") else ""))
-            self.table.setItem(row, 3, QTableWidgetItem(str(p.get("startDate", ""))))
+        # ResizeToContents on columns 0/2/3 makes a naive fill O(rows^2); ~580
+        # processes froze the UI for seconds. batch_table_fill keeps it O(N).
+        with batch_table_fill(self.table, auto_cols=(0, 2, 3)):
+            self.table.setRowCount(len(self._view))
+            for row, p in enumerate(self._view):
+                self.table.setItem(row, 0, QTableWidgetItem(str(p.get("pid", ""))))
+                self.table.setItem(row, 1, QTableWidgetItem(str(p.get("name", ""))))
+                self.table.setItem(row, 2, QTableWidgetItem(i18n.t("process.yes") if p.get("isApplication") else ""))
+                self.table.setItem(row, 3, QTableWidgetItem(str(p.get("startDate", ""))))
 
     # ----------------------------------------------------------- selection
 

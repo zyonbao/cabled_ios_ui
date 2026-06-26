@@ -30,6 +30,7 @@ from ios_toolkit import toolkit_api as api
 from .. import i18n
 from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 # Surface the most-asked-for identifiers first; everything else follows sorted.
@@ -151,10 +152,11 @@ class DeviceInfoTab(QWidget):
             (k, v) for k, v in self._ordered_items()
             if not kw or kw in k.lower() or kw in v.lower()
         ]
-        self.table.setRowCount(len(items))
-        for row, (key, value) in enumerate(items):
-            self.table.setItem(row, 0, QTableWidgetItem(key))
-            self.table.setItem(row, 1, QTableWidgetItem(value))
+        with batch_table_fill(self.table, auto_cols=(0,)):
+            self.table.setRowCount(len(items))
+            for row, (key, value) in enumerate(items):
+                self.table.setItem(row, 0, QTableWidgetItem(key))
+                self.table.setItem(row, 1, QTableWidgetItem(value))
 
     # ------------------------------------------------------------- copying
 

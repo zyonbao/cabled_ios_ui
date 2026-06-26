@@ -28,6 +28,7 @@ from .. import i18n
 from ..common.context_copy import install_plaintext_copy_menu, install_table_copy_menu
 from ..common.focus import suppress_auto_focus
 from ..common import tunnel
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 # Column indices for the process table.
@@ -131,21 +132,22 @@ class TunnelManagerDialog(QDialog):
             self.status.setText(i18n.t("tunnel_manager.empty"))
 
     def _render(self) -> None:
-        self.table.setRowCount(len(self._procs))
-        for row, proc in enumerate(self._procs):
-            self.table.setItem(row, _COL_PID, QTableWidgetItem(str(proc.get("pid", ""))))
-            self.table.setItem(row, _COL_USER, QTableWidgetItem(str(proc.get("user", ""))))
-            port = proc.get("port")
-            port_text = str(port) if port is not None else i18n.t("tunnel_manager.port_unknown")
-            self.table.setItem(row, _COL_PORT, QTableWidgetItem(port_text))
-            mode = proc.get("mode")
-            mode_text = (
-                i18n.t("tunnel_manager.mode_macho")
-                if mode == tunnel.TUNNEL_MODE_MACHO
-                else i18n.t("tunnel_manager.mode_python")
-            )
-            self.table.setItem(row, _COL_MODE, QTableWidgetItem(mode_text))
-            self.table.setItem(row, _COL_COMMAND, QTableWidgetItem(str(proc.get("command", ""))))
+        with batch_table_fill(self.table, auto_cols=(_COL_PID, _COL_USER, _COL_PORT, _COL_MODE)):
+            self.table.setRowCount(len(self._procs))
+            for row, proc in enumerate(self._procs):
+                self.table.setItem(row, _COL_PID, QTableWidgetItem(str(proc.get("pid", ""))))
+                self.table.setItem(row, _COL_USER, QTableWidgetItem(str(proc.get("user", ""))))
+                port = proc.get("port")
+                port_text = str(port) if port is not None else i18n.t("tunnel_manager.port_unknown")
+                self.table.setItem(row, _COL_PORT, QTableWidgetItem(port_text))
+                mode = proc.get("mode")
+                mode_text = (
+                    i18n.t("tunnel_manager.mode_macho")
+                    if mode == tunnel.TUNNEL_MODE_MACHO
+                    else i18n.t("tunnel_manager.mode_python")
+                )
+                self.table.setItem(row, _COL_MODE, QTableWidgetItem(mode_text))
+                self.table.setItem(row, _COL_COMMAND, QTableWidgetItem(str(proc.get("command", ""))))
         self._update_kill_button()
 
     # ----------------------------------------------------------- selection

@@ -38,6 +38,7 @@ from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_existing_file
 from ..common.gate_overlay import GatedTabMixin
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 
@@ -166,12 +167,15 @@ class AppManagerTab(GatedTabMixin, QWidget):
 
     def _render(self) -> None:
         apps = self._filtered()
-        self.table.setRowCount(len(apps))
-        for row, app in enumerate(apps):
-            self.table.setItem(row, 0, QTableWidgetItem(app.get("name", "")))
-            self.table.setItem(row, 1, QTableWidgetItem(app.get("bundleId", "")))
-            self.table.setItem(row, 2, QTableWidgetItem(app.get("version", "")))
-            self.table.setCellWidget(row, 3, self._action_cell(app))
+        # ResizeToContents on cols 2/3 makes a naive fill O(rows^2); devices with
+        # hundreds of apps would freeze the UI. batch_table_fill keeps it O(N).
+        with batch_table_fill(self.table, auto_cols=(2, 3)):
+            self.table.setRowCount(len(apps))
+            for row, app in enumerate(apps):
+                self.table.setItem(row, 0, QTableWidgetItem(app.get("name", "")))
+                self.table.setItem(row, 1, QTableWidgetItem(app.get("bundleId", "")))
+                self.table.setItem(row, 2, QTableWidgetItem(app.get("version", "")))
+                self.table.setCellWidget(row, 3, self._action_cell(app))
 
     def _action_cell(self, app: dict) -> QWidget:
         """Build the per-row action column: Documents / Sandbox / 卸载,

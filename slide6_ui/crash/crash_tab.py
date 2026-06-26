@@ -37,6 +37,7 @@ from ..common.context_copy import add_copy_value_action
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_directory
 from ..common.gate_overlay import GatedTabMixin
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 
@@ -202,15 +203,18 @@ class CrashReportsTab(GatedTabMixin, QWidget):
 
     def _render(self) -> None:
         self._view = self._filtered()
-        self.table.setRowCount(len(self._view))
-        for row, e in enumerate(self._view):
-            name_item = QTableWidgetItem(e.get("name", ""))
-            self.table.setItem(row, 0, name_item)
-            size_item = QTableWidgetItem(
-                "" if e.get("isDir") else _human_size(int(e.get("size", 0)))
-            )
-            self.table.setItem(row, 1, size_item)
-            self.table.setItem(row, 2, QTableWidgetItem(e.get("mtime", "")))
+        # ResizeToContents on cols 1/2 makes a naive fill O(rows^2); hundreds of
+        # crash reports would freeze the UI. batch_table_fill keeps it O(N).
+        with batch_table_fill(self.table, auto_cols=(1, 2)):
+            self.table.setRowCount(len(self._view))
+            for row, e in enumerate(self._view):
+                name_item = QTableWidgetItem(e.get("name", ""))
+                self.table.setItem(row, 0, name_item)
+                size_item = QTableWidgetItem(
+                    "" if e.get("isDir") else _human_size(int(e.get("size", 0)))
+                )
+                self.table.setItem(row, 1, size_item)
+                self.table.setItem(row, 2, QTableWidgetItem(e.get("mtime", "")))
 
     # ----------------------------------------------------------- selection
 

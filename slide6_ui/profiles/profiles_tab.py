@@ -38,6 +38,7 @@ from ..common.context_copy import install_table_copy_menu
 from ..common.errors import localize_error
 from ..common.file_dialogs import open_existing_file
 from ..common.gate_overlay import GatedTabMixin
+from ..common.table_perf import batch_table_fill
 from ..common.workers import AsyncRunner
 
 
@@ -137,12 +138,13 @@ class ProfilesTab(GatedTabMixin, QWidget):
         self.status.setText(message)
 
     def _render(self) -> None:
-        self.table.setRowCount(len(self._profiles))
-        for row, p in enumerate(self._profiles):
-            self.table.setItem(row, 0, QTableWidgetItem(p.get("name", "")))
-            self.table.setItem(row, 1, QTableWidgetItem(p.get("identifier", "")))
-            self.table.setItem(row, 2, QTableWidgetItem(p.get("type", "")))
-            self.table.setItem(row, 3, QTableWidgetItem(p.get("organization", "")))
+        with batch_table_fill(self.table, auto_cols=(2, 3)):
+            self.table.setRowCount(len(self._profiles))
+            for row, p in enumerate(self._profiles):
+                self.table.setItem(row, 0, QTableWidgetItem(p.get("name", "")))
+                self.table.setItem(row, 1, QTableWidgetItem(p.get("identifier", "")))
+                self.table.setItem(row, 2, QTableWidgetItem(p.get("type", "")))
+                self.table.setItem(row, 3, QTableWidgetItem(p.get("organization", "")))
 
     # --------------------------------------------------------------- install
 
