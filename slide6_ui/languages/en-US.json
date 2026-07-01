@@ -517,6 +517,11 @@
     "wda_starting_overlay": "Starting WebDriverAgent…\nThe first launch may take tens of seconds",
     "start_failed": "Start failed",
     "wda_failed_overlay": "Could not start WebDriverAgent\n{detail}",
+    "mirror": {
+      "connect_failed": "Failed to connect to the screen stream: {error}",
+      "interrupted": "Screen stream interrupted",
+      "interrupted_detail": "Screen stream interrupted: {error}"
+    },
     "stream_unavailable_overlay": "Screen stream unavailable (MJPEG port not ready)",
     "stream_unavailable": "Screen stream unavailable",
     "connected": "Connected",

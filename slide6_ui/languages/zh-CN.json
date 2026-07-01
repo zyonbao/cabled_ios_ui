@@ -517,6 +517,11 @@
     "wda_starting_overlay": "正在启动 WebDriverAgent…\n首次启动可能需要数十秒",
     "start_failed": "启动失败",
     "wda_failed_overlay": "无法启动 WebDriverAgent\n{detail}",
+    "mirror": {
+      "connect_failed": "连接画面流失败: {error}",
+      "interrupted": "画面流已中断",
+      "interrupted_detail": "画面流已中断: {error}"
+    },
     "stream_unavailable_overlay": "画面流不可用（MJPEG 端口未就绪）",
     "stream_unavailable": "画面流不可用",
     "connected": "已连接",
